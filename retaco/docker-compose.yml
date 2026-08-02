@@ -1,0 +1,277 @@
+name: homelab-retaco
+
+# =============================================================================
+# Stack del nodo Retaco (192.168.1.174)
+# Servicios: postgres-main, qdrant, n8n-main, registry
+#
+# postgres-main y qdrant migrados desde ryzen (192.168.1.150) para liberar al
+# Ryzen 9 de servicios de datos. n8n-main migrado después, para que las
+# automatizaciones (cron, webhooks) sigan funcionando aunque el stack de IA
+# de ryzen esté parado — retaco está siempre encendido, ryzen no. De paso,
+# n8n-main vuelve a conectar a postgres-main por nombre de contenedor (red
+# Docker local), ya no cross-host como durante la migración de solo datos.
+# Ver docs/05-instalacion-retaco.md para el procedimiento de ambas migraciones.
+# =============================================================================
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # postgres-main — Servidor PostgreSQL compartido, no solo para n8n-main.
+  # POSTGRES_ADMIN_USER es el administrador (superusuario) del servidor, no
+  # una credencial de aplicación. Cada proyecto tiene su propia base de datos
+  # y usuario, aislados entre sí (ver config/postgres/init/ y
+  # shared/scripts/create-postgres-db.sh para añadir proyectos nuevos).
+  # Publicado en la LAN (5432): postgres-exporter (en pi-obs) y sonarqube (en
+  # pi-sonar) necesitan alcanzarlo cross-node — protegido por contraseña, no
+  # por aislamiento de red. n8n-main, en cambio, está en este mismo nodo y le
+  # llega por nombre de contenedor (red retaco-net), sin pasar por la LAN.
+  # ---------------------------------------------------------------------------
+  postgres-main:
+    image: postgres:16-alpine
+    container_name: postgres-main
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_ADMIN_USER:-dbadmin}
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD}
+      POSTGRES_DB: postgres
+      PGDATA: /var/lib/postgresql/data/pgdata
+      # Solo las usa el script de init (config/postgres/init/01-init-n8n.sh)
+      # para crear la base y el usuario propios de n8n en el primer arranque.
+      N8N_DB_NAME: ${N8N_DB_NAME:-n8n}
+      N8N_DB_USER: ${N8N_DB_USER:-n8n}
+      N8N_DB_PASSWORD: ${N8N_DB_PASSWORD}
+    volumes:
+      - /srv/homelab/retaco/postgres/data:/var/lib/postgresql/data
+      - /srv/homelab/retaco/postgres/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      # Publicado a la LAN a propósito: postgres-exporter (pi-obs) y
+      # sonarqube (pi-sonar) necesitan alcanzarlo cross-node. n8n-main está
+      # en este mismo nodo, no necesita el puerto publicado. Protegido por
+      # contraseña fuerte, no por aislamiento de red — ver docs/13-troubleshooting.md.
+      - "5432:5432"
+    networks:
+      - retaco-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_ADMIN_USER:-dbadmin}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # n8n-main — Automatización de flujos de trabajo. Migrado desde ryzen para
+  # que cron/webhooks sigan funcionando aunque el stack de IA (GPU) esté
+  # parado — ver docs/05-instalacion-retaco.md.
+  # ---------------------------------------------------------------------------
+  n8n-main:
+    image: n8nio/n8n:latest
+    container_name: n8n-main
+    restart: unless-stopped
+    depends_on:
+      postgres-main:
+        condition: service_healthy
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres-main
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${N8N_DB_NAME:-n8n}
+      DB_POSTGRESDB_USER: ${N8N_DB_USER:-n8n}
+      DB_POSTGRESDB_PASSWORD: ${N8N_DB_PASSWORD}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+      N8N_BASIC_AUTH_ACTIVE: ${N8N_BASIC_AUTH_ACTIVE:-true}
+      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD}
+      N8N_HOST: ${N8N_HOST}
+      N8N_PORT: ${N8N_PORT:-5678}
+      N8N_PROTOCOL: ${N8N_PROTOCOL:-https}
+      WEBHOOK_URL: ${WEBHOOK_URL}
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-Europe/Madrid}
+      N8N_LOG_LEVEL: info
+      EXECUTIONS_PROCESS: main
+      # n8n (Node.js/axios) no usa el almacén de certificados del sistema para
+      # sus propias peticiones HTTP salientes (a markitdown.home.arpa, etc.) —
+      # mismo problema que pysonar con REQUESTS_CA_BUNDLE (docs/09, sección 8.1).
+      # Sin esto: "unable to verify the first certificate" al llamar a
+      # cualquier *.home.arpa protegido con el certificado de la CA interna.
+      NODE_EXTRA_CA_CERTS: /etc/ssl/certs/homelab-ca.crt
+    volumes:
+      - /srv/homelab/retaco/n8n/data:/home/node/.n8n
+      # CA interna del clúster, de solo lectura — ver docs/15-ca-interna.md.
+      # Descargar antes del primer arranque con NODE_EXTRA_CA_CERTS:
+      #   curl -s http://192.168.1.170/ca.crt -o /srv/homelab/retaco/n8n/ca/homelab-ca.crt
+      - /srv/homelab/retaco/n8n/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
+    ports:
+      - "5678:5678"
+    networks:
+      - retaco-net
+    healthcheck:
+      # n8nio/n8n no trae curl, solo wget (mismo caso que n8n-aux en pi-utils)
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5678/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # qdrant — Motor de búsqueda vectorial
+  # ---------------------------------------------------------------------------
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    restart: unless-stopped
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY}
+      QDRANT__SERVICE__READ_ONLY_API_KEY: ${QDRANT_READONLY_KEY}
+    volumes:
+      - /srv/homelab/retaco/qdrant/storage:/qdrant/storage
+      - /srv/homelab/retaco/qdrant/snapshots:/qdrant/snapshots
+    ports:
+      - "6333:6333"
+      - "127.0.0.1:6334:6334"
+    networks:
+      - retaco-net
+    healthcheck:
+      # qdrant/qdrant no trae curl ni wget; comprobamos solo que el puerto
+      # responda, con el /dev/tcp propio de bash (sí está disponible aquí).
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/6333' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # ---------------------------------------------------------------------------
+  # registry — Registry Docker privado (imágenes locales del clúster:
+  # apikey-service, markitdown-service, whisper-service). Auth propia con
+  # htpasswd (bcrypt) — un único usuario compartido para pull y push por
+  # ahora (ver docs/22-mejoras-futuras.md para separar lectura/escritura más
+  # adelante, que necesitaría un servicio de auth por tokens aparte). NO va
+  # protegido con apikey-service: los clientes Docker (docker login/push/pull)
+  # hablan Basic Auth nativo contra el propio registry, no mandan X-Api-Key.
+  # REGISTRY_STORAGE_DELETE_ENABLED=true habilita la API DELETE que hará
+  # falta el día que se implemente garbage collection (docs/17) — no borra
+  # nada por sí solo.
+  # ---------------------------------------------------------------------------
+  registry:
+    image: registry:2.8.3
+    container_name: registry
+    restart: unless-stopped
+    environment:
+      REGISTRY_AUTH: htpasswd
+      REGISTRY_AUTH_HTPASSWD_REALM: "Homelab Cluster Registry"
+      REGISTRY_AUTH_HTPASSWD_PATH: /auth/htpasswd
+      REGISTRY_STORAGE_DELETE_ENABLED: "true"
+      # Sin esto, cada arranque genera un secreto aleatorio distinto — sin
+      # consecuencia real con una sola instancia (solo importa para
+      # coordinar réplicas detrás de un balanceador, que no tenemos), pero
+      # evita el warning en el log y es gratis fijarlo.
+      REGISTRY_HTTP_SECRET: ${REGISTRY_HTTP_SECRET}
+    volumes:
+      - /srv/homelab/retaco/registry/data:/var/lib/registry
+      - /srv/homelab/retaco/registry/auth:/auth:ro
+    ports:
+      # Publicado a la LAN: nginx (pi-dns) le hace proxy cross-host, igual
+      # que qdrant/n8n-main. Gestionable con toggle-direct-access.sh (docs/18).
+      - "5000:5000"
+    networks:
+      - retaco-net
+    healthcheck:
+      # registry:2 no trae bash (solo /bin/sh de busybox, el truco
+      # "</dev/tcp/..." de qdrant no vale aquí) — sí trae wget de busybox.
+      # 401 es la respuesta esperada sin credenciales, cuenta como "vivo".
+      test: ["CMD-SHELL", "wget -q -O /dev/null --server-response http://localhost:5000/v2/ 2>&1 | grep -q '401\\|200' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # node-exporter — Métricas del sistema host, scrapeadas por Prometheus en pi-obs
+  # ---------------------------------------------------------------------------
+  node-exporter:
+    image: prom/node-exporter:v1.8.0
+    container_name: node-exporter
+    restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.rootfs=/rootfs"
+      - "--path.sysfs=/host/sys"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    ports:
+      - "9100:9100"
+    networks:
+      - retaco-net
+    pid: host
+
+  # ---------------------------------------------------------------------------
+  # cadvisor — Métricas de contenedores Docker, scrapeadas por Prometheus en pi-obs
+  # ---------------------------------------------------------------------------
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: cadvisor
+    restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    ports:
+      - "8081:8080"
+    networks:
+      - retaco-net
+    privileged: true
+    devices:
+      - /dev/kmsg
+
+  # ---------------------------------------------------------------------------
+  # portainer-agent — Expone el Docker de este nodo a Portainer (servidor en
+  # pi-utils). Ver docs/10-instalacion-pi4-utils.md.
+  # ---------------------------------------------------------------------------
+  portainer-agent:
+    image: portainer/agent:2.42.0
+    container_name: portainer-agent
+    restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    environment:
+      AGENT_CLUSTER_ADDR: ""
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/docker/volumes:/var/lib/docker/volumes
+    ports:
+      - "9001:9001"
+    networks:
+      - retaco-net
+
+  # ---------------------------------------------------------------------------
+  # watchtower — Auto-actualiza SOLO los contenedores con la label
+  # com.centurylinklabs.watchtower.enable=true (node-exporter, cadvisor,
+  # portainer-agent) — servicios sin estado. postgres-main, n8n-main y qdrant
+  # NUNCA se auto-actualizan — ver docs/16-mantenimiento-actualizaciones.md.
+  # ---------------------------------------------------------------------------
+  watchtower:
+    image: nickfedor/watchtower:latest
+    container_name: watchtower
+    restart: unless-stopped
+    environment:
+      WATCHTOWER_LABEL_ENABLE: "true"
+      WATCHTOWER_CLEANUP: "true"
+      WATCHTOWER_SCHEDULE: "0 0 4 * * *"
+      WATCHTOWER_INCLUDE_RESTARTING: "true"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - retaco-net
+
+networks:
+  retaco-net:
+    name: retaco-net
+    driver: bridge

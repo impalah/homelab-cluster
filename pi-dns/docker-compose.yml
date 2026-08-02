@@ -1,0 +1,281 @@
+name: homelab-pi-dns
+
+# =============================================================================
+# Stack del nodo pi-dns (192.168.1.170)
+# Servicios: unbound (DNS recursivo), pihole (DNS autoritativo + ad-block), nginx (proxy inverso)
+# IMPORTANTE: systemd-resolved debe estar deshabilitado en el host antes de arrancar.
+# =============================================================================
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # unbound — Resolvedor DNS recursivo local
+  # Escucha en puerto 5335 (interno al host), usado por Pi-hole como upstream
+  # ---------------------------------------------------------------------------
+  unbound:
+    image: mvance/unbound-rpi:latest
+    container_name: unbound
+    restart: unless-stopped
+    volumes:
+      - /srv/homelab/pi-dns/unbound/config/unbound.conf:/opt/unbound/etc/unbound/unbound.conf:ro
+    networks:
+      pi-dns-net:
+        ipv4_address: 172.20.0.2
+    healthcheck:
+      test: ["CMD-SHELL", "drill -p 5335 @127.0.0.1 example.com || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # ---------------------------------------------------------------------------
+  # pihole — Servidor DNS con bloqueo de anuncios
+  # Escucha en puerto 53 del host (requiere systemd-resolved deshabilitado)
+  # ---------------------------------------------------------------------------
+  pihole:
+    image: pihole/pihole:latest
+    container_name: pihole
+    restart: unless-stopped
+    depends_on:
+      unbound:
+        condition: service_healthy
+    environment:
+      TZ: ${TZ:-Europe/Madrid}
+      # Pi-hole v6 ya no usa WEBPASSWORD (variable de v5, ignorada silenciosamente)
+      FTLCONF_webserver_api_password: ${PIHOLE_PASSWORD}
+      PIHOLE_DNS_: ${PIHOLE_DNS_1:-172.20.0.2#5335}
+      DNSSEC: ${PIHOLE_DNSSEC:-false}
+      VIRTUAL_HOST: ${VIRTUAL_HOST:-pi-dns.home.arpa}
+      # Pi-hole v6 ya no usa DNSMASQ_LISTENING (variable de v5, ignorada
+      # silenciosamente). Sin esto, Pi-hole rechaza consultas de cualquier
+      # IP que no considere "red local" (ve la red interna de Docker como
+      # local, pero no la LAN real 192.168.1.0/24) con el error de log
+      # "dnsmasq: ignoring query from non-local network".
+      FTLCONF_dns_listeningMode: ALL
+      # Deshabilitar DHCP de Pi-hole (el router gestiona DHCP)
+      DHCP_ACTIVE: "false"
+    volumes:
+      - /srv/homelab/pi-dns/pihole/etc-pihole:/etc/pihole
+      - /srv/homelab/pi-dns/pihole/etc-dnsmasq.d:/etc/dnsmasq.d
+    ports:
+      - "53:53/tcp"
+      - "53:53/udp"
+      - "127.0.0.1:8053:80"
+    networks:
+      pi-dns-net:
+        ipv4_address: 172.20.0.3
+    cap_add:
+      - NET_ADMIN
+    healthcheck:
+      test: ["CMD-SHELL", "dig +short +norecurse +retry=0 @127.0.0.1 pi.hole || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # ---------------------------------------------------------------------------
+  # apikey-service — Emisión/validación de API keys propias, usado por nginx
+  # vía auth_request para proteger servicios que no tienen su propia
+  # autenticación (p. ej. ollama). Ver docs/06-instalacion-pi1-dns.md.
+  # Imagen del registry privado del clúster (registry.home.arpa), NO se
+  # construye aquí — build/push vive en services/apikey-service/Makefile
+  # ("make build"). Requiere "docker login registry.home.arpa" una vez en
+  # este nodo (docs/05-instalacion-retaco.md, sección 5.3) antes del primer
+  # "docker compose pull"/"up -d". Sin label de watchtower a propósito —
+  # mismo criterio que markitdown-service/whisper-service, ver
+  # docs/16-mantenimiento-actualizaciones.md.
+  # ---------------------------------------------------------------------------
+  apikey-service:
+    image: registry.home.arpa/apikey-service:latest
+    container_name: apikey-service
+    restart: unless-stopped
+    environment:
+      APIKEY_DATABASE_URL: ${APIKEY_DATABASE_URL}
+      APIKEY_ADMIN_TOKEN: ${APIKEY_ADMIN_TOKEN}
+      APIKEY_OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: ${APIKEY_OTEL_EXPORTER_OTLP_LOGS_ENDPOINT:-http://192.168.1.171:4318/v1/logs}
+    networks:
+      pi-dns-net:
+        ipv4_address: 172.20.0.9
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8090/health')\" || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # nginx — Proxy inverso HTTPS para todos los servicios del clúster
+  # Certificado autofirmado propio de larga duración, generado con
+  # config/nginx/generate-cert.sh (ver README de este nodo)
+  # ---------------------------------------------------------------------------
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: nginx
+    restart: unless-stopped
+    depends_on:
+      pihole:
+        condition: service_healthy
+      apikey-service:
+        condition: service_healthy
+    volumes:
+      - /srv/homelab/pi-dns/nginx/conf/nginx.conf:/etc/nginx/nginx.conf:ro
+      - /srv/homelab/pi-dns/nginx/conf/proxy-common.conf:/etc/nginx/proxy-common.conf:ro
+      - /srv/homelab/pi-dns/nginx/conf/apikey-auth.conf:/etc/nginx/apikey-auth.conf:ro
+      - /srv/homelab/pi-dns/nginx/certs:/etc/nginx/certs:ro
+      # Solo el .crt público de la CA (nunca la clave), para poder
+      # descargarla por HTTP en /ca.crt — ver docs/15-ca-interna.md
+      - /srv/homelab/pi-dns/nginx/ca/ca.crt:/etc/nginx/ca.crt:ro
+      # Panel estático de servicios (index.home.arpa) — HTML/CSS/iconos, sin backend
+      - /srv/homelab/pi-dns/nginx/html:/etc/nginx/index-html:ro
+    ports:
+      - "80:80"
+      - "443:443"
+    networks:
+      pi-dns-net:
+        ipv4_address: 172.20.0.4
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # tailscale — Subnet router: acceso remoto autenticado a toda la LAN
+  # (192.168.1.0/24) vía Tailscale, incluida la resolución de *.home.arpa
+  # (Split DNS configurado en el panel de Tailscale, apuntando a este mismo
+  # nodo — ver docs/18-tailscale.md). network_mode: host a propósito — un
+  # subnet router necesita la interfaz de red real del host, no la red bridge
+  # de Docker. TS_ACCEPT_DNS=false porque este nodo YA es el servidor DNS del
+  # clúster (Pi-hole+Unbound) — dejar que Tailscale reescriba su propio
+  # resolv.conf rompería esa configuración. Sin label de watchtower a
+  # propósito — es la puerta de acceso remoto al clúster entero, no se
+  # auto-actualiza sin revisión (docs/16-mantenimiento-actualizaciones.md).
+  # ---------------------------------------------------------------------------
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: tailscale
+    hostname: pi-dns
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    devices:
+      # Con "volumes:" en vez de "devices:" el contenedor no ve un nodo TUN
+      # real y tailscaled cae solo a "--tun=userspace-networking", que no
+      # sirve para hacer de subnet router (no puede enrutar tráfico ajeno a
+      # nivel de kernel) — pasó de verdad al desplegar por primera vez.
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      TS_USERSPACE: "false"
+      TS_EXTRA_ARGS: --advertise-routes=192.168.1.0/24 --accept-dns=false
+      TS_STATE_DIR: /var/lib/tailscale
+    volumes:
+      - /srv/homelab/pi-dns/tailscale/state:/var/lib/tailscale
+      # Sin esto, el iptables (legacy) del contenedor no encuentra los módulos
+      # del kernel del host (modprobe: can't change directory to
+      # '/lib/modules') y falla al montar la tabla "filter" — necesaria para
+      # las reglas NAT/forwarding del subnet router. Pasó de verdad en el
+      # primer despliegue (Raspberry Pi OS, kernel raspi).
+      - /lib/modules:/lib/modules:ro
+
+  # ---------------------------------------------------------------------------
+  # node-exporter — Métricas del sistema host, scrapeadas por Prometheus en pi-obs
+  # ---------------------------------------------------------------------------
+  node-exporter:
+    image: prom/node-exporter:v1.8.0
+    container_name: node-exporter
+    restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.rootfs=/rootfs"
+      - "--path.sysfs=/host/sys"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    ports:
+      - "9100:9100"
+    networks:
+      pi-dns-net:
+        ipv4_address: 172.20.0.5
+    pid: host
+
+  # ---------------------------------------------------------------------------
+  # cadvisor — Métricas de contenedores Docker, scrapeadas por Prometheus en pi-obs
+  # ---------------------------------------------------------------------------
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: cadvisor
+    restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    ports:
+      - "8081:8080"
+    networks:
+      pi-dns-net:
+        ipv4_address: 172.20.0.6
+    privileged: true
+    devices:
+      - /dev/kmsg
+
+  # ---------------------------------------------------------------------------
+  # portainer-agent — Expone el Docker de este nodo a Portainer (servidor en
+  # pi-utils). Ver docs/10-instalacion-pi4-utils.md.
+  # ---------------------------------------------------------------------------
+  portainer-agent:
+    image: portainer/agent:2.42.0
+    container_name: portainer-agent
+    restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    environment:
+      AGENT_CLUSTER_ADDR: ""
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/docker/volumes:/var/lib/docker/volumes
+    ports:
+      - "9001:9001"
+    networks:
+      pi-dns-net:
+        ipv4_address: 172.20.0.7
+
+  # ---------------------------------------------------------------------------
+  # watchtower — Auto-actualiza SOLO los contenedores con la label
+  # com.centurylinklabs.watchtower.enable=true (node-exporter, cadvisor,
+  # portainer-agent) — servicios sin estado. pihole, unbound y nginx NUNCA se
+  # auto-actualizan — ver docs/16-mantenimiento-actualizaciones.md.
+  # ---------------------------------------------------------------------------
+  watchtower:
+    image: nickfedor/watchtower:latest
+    container_name: watchtower
+    restart: unless-stopped
+    environment:
+      WATCHTOWER_LABEL_ENABLE: "true"
+      WATCHTOWER_CLEANUP: "true"
+      WATCHTOWER_SCHEDULE: "0 0 4 * * *"
+      WATCHTOWER_INCLUDE_RESTARTING: "true"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      pi-dns-net:
+        ipv4_address: 172.20.0.8
+
+networks:
+  pi-dns-net:
+    name: pi-dns-net
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24

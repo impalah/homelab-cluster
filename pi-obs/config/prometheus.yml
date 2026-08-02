@@ -1,0 +1,108 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: homelab
+    node: pi-obs
+
+scrape_configs:
+
+  # OTel Collector — métricas propias del collector
+  - job_name: otel-collector
+    static_configs:
+      - targets: ["otel-collector:8889"]
+        labels:
+          node: pi-obs
+
+  # Node Exporter — métricas del sistema pi-obs
+  - job_name: node-exporter-pi-obs
+    static_configs:
+      - targets: ["node-exporter:9100"]
+        labels:
+          node: pi-obs
+
+  # cAdvisor — métricas de contenedores pi-obs
+  - job_name: cadvisor-pi-obs
+    static_configs:
+      - targets: ["cadvisor:8080"]
+        labels:
+          node: pi-obs
+
+  # PostgreSQL Exporter — métricas de postgres-main (retaco)
+  - job_name: postgres-retaco
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+        labels:
+          node: retaco
+          db: postgres-main
+
+  # Prometheus itself
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # ---------------------------------------------------------------------------
+  # Scrape remoto de node-exporter y cadvisor en el resto de nodos del clúster.
+  # Cada nodo publica node-exporter en :9100 y cadvisor en :8081 (host:contenedor
+  # 8081:8080) — ver docs/14-monitorizacion-completa-cluster.md.
+  # ---------------------------------------------------------------------------
+
+  - job_name: node-exporter-ryzen
+    static_configs:
+      - targets: ["192.168.1.150:9100"]
+        labels:
+          node: ryzen
+
+  - job_name: cadvisor-ryzen
+    static_configs:
+      - targets: ["192.168.1.150:8081"]
+        labels:
+          node: ryzen
+
+  - job_name: node-exporter-retaco
+    static_configs:
+      - targets: ["192.168.1.174:9100"]
+        labels:
+          node: retaco
+
+  - job_name: cadvisor-retaco
+    static_configs:
+      - targets: ["192.168.1.174:8081"]
+        labels:
+          node: retaco
+
+  - job_name: node-exporter-pi-dns
+    static_configs:
+      - targets: ["192.168.1.170:9100"]
+        labels:
+          node: pi-dns
+
+  - job_name: cadvisor-pi-dns
+    static_configs:
+      - targets: ["192.168.1.170:8081"]
+        labels:
+          node: pi-dns
+
+  - job_name: node-exporter-pi-sonar
+    static_configs:
+      - targets: ["192.168.1.172:9100"]
+        labels:
+          node: pi-sonar
+
+  - job_name: cadvisor-pi-sonar
+    static_configs:
+      - targets: ["192.168.1.172:8081"]
+        labels:
+          node: pi-sonar
+
+  - job_name: node-exporter-pi-utils
+    static_configs:
+      - targets: ["192.168.1.173:9100"]
+        labels:
+          node: pi-utils
+
+  - job_name: cadvisor-pi-utils
+    static_configs:
+      - targets: ["192.168.1.173:8081"]
+        labels:
+          node: pi-utils

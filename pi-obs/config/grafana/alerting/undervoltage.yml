@@ -1,0 +1,44 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: hardware-power
+    folder: Homelab Alerts
+    interval: 10s
+    rules:
+      - uid: rpi-undervoltage
+        title: "Raspberry Pi - Undervoltage detectado"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: node_hwmon_in_lcrit_alarm_volts
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        annotations:
+          summary: "Undervoltage en {{ $labels.node }}"
+          description: >-
+            El sensor hwmon (in0) de {{ $labels.node }} ha marcado alarma de
+            baja tensión. Ver docs/13-troubleshooting.md, sección
+            "Raspberry Pi - Undervoltage", para diagnóstico y solución
+            (fuente/cable de alimentación).
+        labels:
+          severity: warning
+          category: hardware

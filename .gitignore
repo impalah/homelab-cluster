@@ -1,0 +1,63 @@
+# =============================================================================
+# .gitignore — homelab-cluster (raíz del repo)
+# Los microservicios bajo services/*/ ya traen su propio .gitignore (.venv,
+# .env, cachés de pytest/mypy/ruff...) — este cubre el resto del repositorio.
+# =============================================================================
+
+# Asistentes de IA / herramientas de desarrollo — no se versionan a propósito
+.claude/
+CLAUDE.md
+.github/copilot-instructions.md
+.copilot/
+
+# graphify — grafo de conocimiento generado localmente, no forma parte del proyecto
+graphify-out/
+
+# Variables de entorno reales — solo los .env.example se versionan
+.env
+*/.env
+**/.env
+!**/.env.example
+
+# Entornos virtuales / dependencias
+.venv/
+venv/
+node_modules/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Cachés de herramientas
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.sonar/
+.scannerwork/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Empaquetado
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Certificados y claves privadas — nunca se versionan (se generan en el propio
+# servidor, fuera de este checkout, pero se excluyen aquí como red de seguridad)
+*.key
+*.pem
+*.p12
+*.crt
+
+# Copias de seguridad / volcados
+*.sql.gz
+*.tar.gz
+backups/
+
+# Editores / SO
+.DS_Store
+*.swp
+.idea/
+.vscode/

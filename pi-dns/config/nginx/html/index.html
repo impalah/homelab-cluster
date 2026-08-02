@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Homelab Cluster — Servicios</title>
+<style>
+  :root {
+    --bg: #f2f3f5;
+    --card-bg: #ffffff;
+    --text: #1a1d21;
+    --text-muted: #62676d;
+    --border: #e2e4e8;
+    --accent: #3f66f0;
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+    --shadow-hover: 0 8px 20px rgba(0, 0, 0, 0.12);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15171a;
+      --card-bg: #1e2126;
+      --text: #eef0f2;
+      --text-muted: #9aa0a8;
+      --border: #2c3036;
+      --accent: #6c8bff;
+      --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+      --shadow-hover: 0 8px 24px rgba(0, 0, 0, 0.5);
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: 48px 24px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+
+  header {
+    max-width: 1080px;
+    margin: 0 auto 40px auto;
+    text-align: center;
+  }
+
+  header h1 {
+    margin: 0 0 8px 0;
+    font-size: 1.9rem;
+    font-weight: 700;
+  }
+
+  header p {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.95rem;
+  }
+
+  .grid {
+    max-width: 1080px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 20px;
+  }
+
+  @media (max-width: 860px) {
+    .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+
+  @media (max-width: 560px) {
+    .grid { grid-template-columns: 1fr; }
+    body { padding: 32px 16px; }
+  }
+
+  .card {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px;
+    text-decoration: none;
+    color: inherit;
+    box-shadow: var(--shadow);
+    transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+  }
+
+  .card:hover,
+  .card:focus-visible {
+    transform: translateY(-3px);
+    box-shadow: var(--shadow-hover);
+    border-color: var(--accent);
+  }
+
+  .card-top {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .card-top img {
+    width: 32px;
+    height: 32px;
+    object-fit: contain;
+    flex-shrink: 0;
+  }
+
+  .card-name {
+    font-size: 1.05rem;
+    font-weight: 600;
+    line-height: 1.2;
+  }
+
+  .card-node {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .card-url {
+    font-size: 0.8rem;
+    color: var(--accent);
+    word-break: break-all;
+  }
+
+  .card-desc {
+    font-size: 0.88rem;
+    color: var(--text-muted);
+    line-height: 1.4;
+    margin: 0;
+  }
+
+  footer {
+    max-width: 1080px;
+    margin: 40px auto 0 auto;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🏠 Homelab Cluster</h1>
+  <p>Panel de acceso a los servicios del clúster — pulsa una tarjeta para abrirla en una pestaña nueva.</p>
+</header>
+
+<div class="grid">
+
+  <a class="card" href="https://portainer.home.arpa" target="_blank" rel="noopener">
+    <div class="card-top">
+      <img src="icons/portainer.svg" alt="">
+      <div>
+        <div class="card-name">Portainer</div>
+        <div class="card-node">pi-utils</div>
+      </div>
+    </div>
+    <div class="card-url">portainer.home.arpa</div>
+    <p class="card-desc">Gestión visual de Docker: contenedores, logs y consola de los seis nodos del clúster.</p>
+  </a>
+
+  <a class="card" href="https://grafana.home.arpa" target="_blank" rel="noopener">
+    <div class="card-top">
+      <img src="icons/grafana.svg" alt="">
+      <div>
+        <div class="card-name">Grafana</div>
+        <div class="card-node">pi-obs</div>
+      </div>
+    </div>
+    <div class="card-url">grafana.home.arpa</div>
+    <p class="card-desc">Dashboards de métricas, logs y trazas de todo el clúster.</p>
+  </a>
+
+  <a class="card" href="https://prometheus.home.arpa" target="_blank" rel="noopener">
+    <div class="card-top">
+      <img src="icons/prometheus.svg" alt="">
+      <div>
+        <div class="card-name">Prometheus</div>
+        <div class="card-node">pi-obs</div>
+      </div>
+    </div>
+    <div class="card-url">prometheus.home.arpa</div>
+    <p class="card-desc">Consultas PromQL directas y estado de los targets de monitorización.</p>
+  </a>
+
+  <a class="card" href="https://n8n.home.arpa" target="_blank" rel="noopener">
+    <div class="card-top">
+      <img src="icons/n8n.svg" alt="">
+      <div>
+        <div class="card-name">n8n</div>
+        <div class="card-node">retaco</div>
+      </div>
+    </div>
+    <div class="card-url">n8n.home.arpa</div>
+    <p class="card-desc">Automatización principal: ingesta RSS, embeddings, resúmenes semanales.</p>
+  </a>
+
+  <a class="card" href="https://n8n-aux.home.arpa" target="_blank" rel="noopener">
+    <div class="card-top">
+      <img src="icons/n8n.svg" alt="">
+      <div>
+        <div class="card-name">n8n-aux</div>
+        <div class="card-node">pi-utils</div>
+      </div>
+    </div>
+    <div class="card-url">n8n-aux.home.arpa</div>
+    <p class="card-desc">Instancia secundaria de n8n para utilidades y notificaciones.</p>
+  </a>
+
+  <a class="card" href="https://sonarqube.home.arpa" target="_blank" rel="noopener">
+    <div class="card-top">
+      <img src="icons/sonarqube.svg" alt="">
+      <div>
+        <div class="card-name">SonarQube</div>
+        <div class="card-node">pi-sonar</div>
+      </div>
+    </div>
+    <div class="card-url">sonarqube.home.arpa</div>
+    <p class="card-desc">Análisis estático de calidad de código.</p>
+  </a>
+
+  <a class="card" href="https://vaultwarden.home.arpa" target="_blank" rel="noopener">
+    <div class="card-top">
+      <img src="icons/vaultwarden.svg" alt="">
+      <div>
+        <div class="card-name">Vaultwarden</div>
+        <div class="card-node">pi-utils</div>
+      </div>
+    </div>
+    <div class="card-url">vaultwarden.home.arpa</div>
+    <p class="card-desc">Gestor de contraseñas autoalojado, compatible con clientes Bitwarden.</p>
+  </a>
+
+  <a class="card" href="https://pihole.home.arpa/admin/" target="_blank" rel="noopener">
+    <div class="card-top">
+      <img src="icons/pihole.svg" alt="">
+      <div>
+        <div class="card-name">Pi-hole</div>
+        <div class="card-node">pi-dns</div>
+      </div>
+    </div>
+    <div class="card-url">pihole.home.arpa/admin</div>
+    <p class="card-desc">DNS interno del clúster y bloqueo de anuncios a nivel de red.</p>
+  </a>
+
+  <a class="card" href="https://openwebui.home.arpa" target="_blank" rel="noopener">
+    <div class="card-top">
+      <img src="icons/openwebui.png" alt="">
+      <div>
+        <div class="card-name">Open WebUI</div>
+        <div class="card-node">ryzen</div>
+      </div>
+    </div>
+    <div class="card-url">openwebui.home.arpa</div>
+    <p class="card-desc">Interfaz de chat para los modelos LLM servidos por Ollama.</p>
+  </a>
+
+  <a class="card" href="https://rsshub.home.arpa" target="_blank" rel="noopener">
+    <div class="card-top">
+      <img src="icons/rsshub.svg" alt="">
+      <div>
+        <div class="card-name">RSSHub</div>
+        <div class="card-node">pi-utils</div>
+      </div>
+    </div>
+    <div class="card-url">rsshub.home.arpa</div>
+    <p class="card-desc">Agregador universal de feeds RSS/Atom para fuentes sin RSS nativo.</p>
+  </a>
+
+  <a class="card" href="https://qdrant.home.arpa/dashboard" target="_blank" rel="noopener">
+    <div class="card-top">
+      <img src="icons/qdrant.svg" alt="">
+      <div>
+        <div class="card-name">Qdrant</div>
+        <div class="card-node">retaco</div>
+      </div>
+    </div>
+    <div class="card-url">qdrant.home.arpa/dashboard</div>
+    <p class="card-desc">Base de datos vectorial — panel de colecciones y estado.</p>
+  </a>
+
+  <a class="card" href="https://ketekasko.home.arpa:9443" target="_blank" rel="noopener">
+    <div class="card-top">
+      <img src="icons/ugreen-nas.png" alt="">
+      <div>
+        <div class="card-name">UGREEN NAS</div>
+        <div class="card-node">ketekasko</div>
+      </div>
+    </div>
+    <div class="card-url">ketekasko.home.arpa:9443</div>
+    <p class="card-desc">Gestor UGOS Pro del NAS UGREEN NASync DH2300 (RAID 1, 3.6 TB).</p>
+  </a>
+
+</div>
+
+<footer>
+  homelab-cluster · index.home.arpa · servido desde pi-dns
+</footer>
+
+</body>
+</html>

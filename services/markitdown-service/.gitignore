@@ -1,0 +1,44 @@
+# =============================================================================
+# .gitignore — markitdown-service
+# Pensado para cuando el repo entero pase a estar bajo git (ver
+# docs/22-mejoras-futuras.md, punto 2) — hasta entonces no tiene efecto,
+# pero así queda listo sin tener que recordarlo luego.
+# =============================================================================
+
+# Entorno virtual de uv — se recrea con "uv sync" / "make test", nunca se versiona
+.venv/
+
+# uv.lock SÍ se versiona a propósito (reproducibilidad del build) — no lo añadas aquí
+
+# Bytecode y cachés de Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Empaquetado (hatchling / uv build)
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Tests y cobertura
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Otros cachés de herramientas (si se usan alguna vez en local)
+.mypy_cache/
+.ruff_cache/
+
+# pysonar (make sonar / sonar-check) — directorio de trabajo local del análisis
+.scannerwork/
+.sonar/
+
+# Variables de entorno reales — solo .env.example se versiona
+.env
+
+# Editores / SO
+.DS_Store
+*.swp

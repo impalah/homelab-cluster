@@ -1,0 +1,219 @@
+name: homelab-ryzen
+
+# =============================================================================
+# Stack de OPERACIÓN IA del nodo Ryzen 9 (192.168.1.150)
+# Servicios: ollama, open-webui, whisper-service
+#
+# Separado de docker-compose.observability.yml a propósito: este stack es el
+# pesado (GPU, LLMs) y se quiere poder parar/arrancar independientemente de
+# la observabilidad del host, que debe seguir viva aunque esto esté parado.
+#
+# postgres-main, qdrant y n8n-main se migraron al nodo "retaco"
+# (192.168.1.174), que está siempre encendido — ver
+# docs/05-instalacion-retaco.md. Ollama y whisper-service son los únicos
+# servicios que necesitan GPU, así que se quedan aquí.
+#
+# Si algún workflow de n8n llama a ollama/whisper-service por su nombre de
+# contenedor (red Docker interna, p. ej. "http://ollama:11434"), ya NO
+# funcionará — n8n vive ahora en otro host. Debe usar el hostname público
+# (https://ollama.home.arpa, https://whisper.home.arpa) en su lugar.
+# =============================================================================
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # ollama — Servidor de inferencia LLM con GPU NVIDIA
+  # ---------------------------------------------------------------------------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    environment:
+      OLLAMA_ORIGINS: ${OLLAMA_ORIGINS:-*}
+    volumes:
+      - /srv/homelab/ryzen/ollama/models:/root/.ollama
+    ports:
+      - "11434:11434"
+    networks:
+      - ryzen-net
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      # ollama/ollama no trae curl ni wget; usamos el propio binario del
+      # servidor, que sí puede consultarse a sí mismo.
+      test: ["CMD-SHELL", "ollama list || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ---------------------------------------------------------------------------
+  # open-webui — Interfaz web para Ollama
+  # ---------------------------------------------------------------------------
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    restart: unless-stopped
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+      WEBUI_SECRET_KEY: ${OPENWEBUI_SECRET_KEY}
+    volumes:
+      - /srv/homelab/ryzen/open-webui/data:/app/backend/data
+    ports:
+      - "8080:8080"
+    networks:
+      - ryzen-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # whisper-service — Transcripción de audio con CUDA
+  # Imagen del registry privado del clúster (registry.home.arpa), NO se
+  # construye aquí — build/push vive en services/whisper-service/Makefile
+  # ("make build"). Requiere "docker login registry.home.arpa" una vez en
+  # este nodo (docs/05-instalacion-retaco.md, sección 5.3) antes del primer
+  # "docker compose pull"/"up -d".
+  # ---------------------------------------------------------------------------
+  whisper-service:
+    image: registry.home.arpa/whisper-service:latest
+    container_name: whisper-service
+    restart: unless-stopped
+    environment:
+      WHISPER_MODEL: ${WHISPER_MODEL:-large-v3}
+      WHISPER_DEVICE: ${WHISPER_DEVICE:-cuda}
+      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-float16}
+      WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-es}
+    volumes:
+      - /srv/homelab/ryzen/whisper/models:/root/.cache/whisper
+      - /srv/homelab/ryzen/whisper/cache:/tmp/whisper-cache
+    ports:
+      # 9800, no 8000: 8000 es el puerto por defecto de muchísimos servicios
+      # FastAPI/dev — cambiado para evitar colisiones/confusión.
+      - "9800:9800"
+    networks:
+      - ryzen-net
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              # Fijado a la RTX 3070 (GPU 1, 8GB) — antes era "count: all" y
+              # CUDA elegía la GPU 0 (la 5070) por defecto, dejando muy poca
+              # VRAM libre para que vllm pudiera arrancar con
+              # gpu_memory_utilization=0.90 en esa misma tarjeta (vLLM exige
+              # esa fracción de memoria LIBRE en el momento de arrancar, no
+              # solo del total). whisper-service no expone forma de elegir
+              # device_index en su config (siempre "cuda" genérico) — la
+              # única forma de controlarlo es no dejarle ver más que una GPU.
+              device_ids: ["1"]
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9800/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+
+  # ---------------------------------------------------------------------------
+  # vllm — Servidor de inferencia de alto rendimiento (API compatible OpenAI)
+  # Alterna con ollama, NUNCA a la vez — ambos compiten por la misma VRAM.
+  # Arrancar/parar solo vía ./switch-llm-backend.sh, no con "docker compose
+  # up -d" a secas (ver README de este nodo). Modelo/cuantización elegidos
+  # en docs/07-instalacion-ryzen.md.
+  #
+  # Sin "--api-key" propio a propósito — mismo modelo de confianza que
+  # ollama: la red ryzen-net (tráfico interno de open-webui) es de por sí
+  # privada, y la protección real está en nginx (apikey-service) para el
+  # acceso vía vllm.home.arpa. Añadir también auth nativa de vLLM obligaría
+  # a que open-webui mandase una API key incluso en la llamada interna,
+  # rompiendo la simetría con cómo está configurado ollama hoy.
+  # ---------------------------------------------------------------------------
+  vllm:
+    image: vllm/vllm-openai:latest
+    container_name: vllm
+    restart: unless-stopped
+    environment:
+      HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN:-}
+    volumes:
+      - /srv/homelab/ryzen/vllm/models:/root/.cache/huggingface
+    ports:
+      # 8010, no 8000 (el puerto por defecto del propio servidor OpenAI de
+      # vLLM) — mismo motivo que whisper-service/apikey-service: evitar
+      # colisiones con el resto del ecosistema FastAPI/dev.
+      - "8010:8000"
+    networks:
+      - ryzen-net
+    command: >
+      --model ${VLLM_MODEL:-RedHatAI/Qwen3-14B-quantized.w4a16}
+      --served-model-name ${VLLM_SERVED_NAME:-qwen3-14b}
+      --gpu-memory-utilization ${VLLM_GPU_MEM_UTIL:-0.90}
+      --max-model-len ${VLLM_MAX_MODEL_LEN:-8192}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]   # fija a la RTX 5070 (12GB) — nunca "all"
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
+
+  # ---------------------------------------------------------------------------
+  # comfyui — Generación de imágenes (Stable Diffusion y derivados)
+  # Alterna con whisper-service en la GPU 1 (3070, 8GB) — NUNCA a la vez,
+  # mismo motivo que ollama/vllm en la GPU 0: comparten tarjeta. Coexiste
+  # sin problema con ollama/vllm (GPU 0), que es justo el objetivo: poder
+  # generar imágenes mientras usas el LLM. Ver docs/07-instalacion-ryzen.md.
+  # Arrancar/parar solo vía ./switch-gpu1-backend.sh, no con
+  # "docker compose up -d" a secas.
+  # ---------------------------------------------------------------------------
+  comfyui:
+    image: yanwk/comfyui-boot:cu126-slim
+    container_name: comfyui
+    restart: unless-stopped
+    environment:
+      CLI_ARGS: ${COMFYUI_CLI_ARGS:-}
+    volumes:
+      - /srv/homelab/ryzen/comfyui/models:/root/ComfyUI/models
+      - /srv/homelab/ryzen/comfyui/input:/root/ComfyUI/input
+      - /srv/homelab/ryzen/comfyui/output:/root/ComfyUI/output
+      - /srv/homelab/ryzen/comfyui/user:/root/ComfyUI/user
+      - /srv/homelab/ryzen/comfyui/custom_nodes:/root/ComfyUI/custom_nodes
+    ports:
+      - "8188:8188"
+    networks:
+      - ryzen-net
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["1"]   # fija a la RTX 3070 (8GB) — comparte con whisper-service, nunca a la vez
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8188/system_stats || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+networks:
+  ryzen-net:
+    name: ryzen-net
+    driver: bridge

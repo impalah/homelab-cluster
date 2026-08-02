@@ -1,0 +1,73 @@
+# Registros DNS internos — home.arpa
+
+Estos registros deben añadirse en la interfaz de Pi-hole:
+**Local DNS → DNS Records**
+
+## Nodos del clúster
+
+| Nombre de host | IP | Descripción |
+|---|---|---|
+| `ryzen.home.arpa` | `192.168.1.150` | PC Ryzen 9 (cómputo principal) |
+| `retaco.home.arpa` | `192.168.1.174` | MiniPC Ryzen 5 (postgres-main + qdrant) |
+| `pi-dns.home.arpa` | `192.168.1.170` | Raspberry Pi 5 #1 (DNS + proxy) |
+| `pi-obs.home.arpa` | `192.168.1.171` | Raspberry Pi 5 #2 (observabilidad) |
+| `pi-sonar.home.arpa` | `192.168.1.172` | Raspberry Pi 5 #3 (SonarQube) |
+| `pi-utils.home.arpa` | `192.168.1.173` | Raspberry Pi 5 #4 (utilidades) |
+
+## Servicios (apuntan a pi-dns — nginx hace el proxy)
+
+| Nombre de host | IP | Servicio real | Puerto real |
+|---|---|---|---|
+| `pihole.home.arpa` | `192.168.1.170` | Panel admin de Pi-hole (contenedor `pihole`) | 80 |
+| `index.home.arpa` | `192.168.1.170` | Panel estático de acceso a los servicios del clúster (HTML servido directo por nginx, sin proxy) | — |
+| `openwebui.home.arpa` | `192.168.1.170` | Open-WebUI en ryzen | 8080 |
+| `n8n.home.arpa` | `192.168.1.170` | n8n-main en retaco | 5678 |
+| `ollama.home.arpa` | `192.168.1.170` | Ollama en ryzen — protegido con apikey-service | 11434 |
+| `vllm.home.arpa` | `192.168.1.170` | vLLM en ryzen (alterna con ollama) — protegido con apikey-service | 8010 |
+| `comfyui.home.arpa` | `192.168.1.170` | ComfyUI en ryzen (alterna con whisper-service en GPU 1) — protegido con apikey-service | 8188 |
+| `qdrant.home.arpa` | `192.168.1.170` | Qdrant en retaco | 6333 |
+| `whisper.home.arpa` | `192.168.1.170` | Whisper-service en ryzen | 9800 |
+| `grafana.home.arpa` | `192.168.1.170` | Grafana en pi-obs | 3000 |
+| `prometheus.home.arpa` | `192.168.1.170` | Prometheus en pi-obs | 9090 |
+| `sonarqube.home.arpa` | `192.168.1.170` | SonarQube en pi-sonar | 9000 |
+| `rsshub.home.arpa` | `192.168.1.170` | RSSHub en pi-utils | 1200 |
+| `markitdown.home.arpa` | `192.168.1.170` | Markitdown-service en pi-utils — protegido con apikey-service | 8001 |
+| `crawl4ai.scraper.home.arpa` | `192.168.1.170` | crawl4ai-scraper-service en pi-utils — protegido con apikey-service. Sub-subdominio a propósito, no un error de nomenclatura. | 8002 |
+| `n8n-aux.home.arpa` | `192.168.1.170` | n8n-aux en pi-utils | 5679 |
+| `portainer.home.arpa` | `192.168.1.170` | Portainer en pi-utils | 9000 |
+| `vaultwarden.home.arpa` | `192.168.1.170` | Vaultwarden en pi-utils | 8222 |
+| `apikey.home.arpa` | `192.168.1.170` | apikey-service (gestión de API keys) en pi-dns | 8090 |
+| `registry.home.arpa` | `192.168.1.170` | Registry Docker privado en retaco — autenticación propia (htpasswd), no protegido con apikey-service (los clientes Docker no mandan `X-Api-Key`) | 5000 |
+
+## Alias directos (sin proxy — no son HTTP)
+
+| Nombre de host | IP | Servicio real | Puerto real |
+|---|---|---|---|
+| `postgresql.home.arpa` | `192.168.1.174` | postgres-main en retaco | 5432 |
+| `ketekasko.home.arpa` | `192.168.1.180` | NAS UGREEN NASync DH2300 (UGOS Pro) — no forma parte del clúster Docker | 9443 |
+
+`postgresql.home.arpa` **no** pasa por `pi-dns`/nginx como el resto de la tabla anterior — es un alias directo a la IP de `retaco`. Motivo: Postgres habla su propio protocolo binario por TCP, no HTTP, así que no puede convivir con los vhosts HTTP/HTTPS de nginx del mismo modo. El cliente conecta directamente a `retaco:5432`, exactamente igual que si usara la IP a secas, solo que con un nombre más cómodo de recordar. Ver `docs/05-instalacion-retaco.md`.
+
+`ketekasko.home.arpa` tampoco pasa por nginx — es HTTP(S), pero UGOS Pro sirve su propia interfaz con su propio certificado TLS en el puerto `9443` (no el 443 que usa nginx), así que un alias directo a la IP es más simple que meterlo detrás del proxy inverso. El NAS tiene IP fija `192.168.1.180` configurada en el propio dispositivo (fuera del rango que gestiona este repo), no en `pi-dns`.
+
+`qdrant.home.arpa`, en cambio, **sí** pasa por el proxy (es HTTP) — ya está en la tabla de arriba.
+
+## Flujo de resolución DNS
+
+```
+Cliente
+  └─► Pi-hole (192.168.1.170:53)
+        ├─► home.arpa → responde con IP local (tabla anterior)
+        └─► internet → Unbound (127.0.0.1:5335)
+                         └─► resolución recursiva (raíz → TLD → autoritativo)
+```
+
+## Notas
+
+- Pi-hole está configurado con `home.arpa` como dominio local. Todos los registros anteriores se añaden manualmente una sola vez.
+- Unbound NO necesita conocer los registros `home.arpa`; Pi-hole los resuelve directamente sin reenviar al upstream.
+- Si Pi-hole está caído, la resolución DNS falla para `*.home.arpa`. Tener siempre el nodo pi-dns en alta disponibilidad.
+- Para acceso temporal sin Pi-hole (emergencia), añadir entradas en `/etc/hosts` del cliente:
+  ```
+  192.168.1.170  openwebui.home.arpa grafana.home.arpa n8n.home.arpa
+  ```
