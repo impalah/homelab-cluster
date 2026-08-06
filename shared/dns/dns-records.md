@@ -20,7 +20,7 @@ Estos registros deben añadirse en la interfaz de Pi-hole:
 |---|---|---|---|
 | `pihole.home.arpa` | `192.168.1.170` | Panel admin de Pi-hole (contenedor `pihole`) | 80 |
 | `index.home.arpa` | `192.168.1.170` | Panel estático de acceso a los servicios del clúster (HTML servido directo por nginx, sin proxy) | — |
-| `openwebui.home.arpa` | `192.168.1.170` | Open-WebUI en ryzen | 8080 |
+| `openwebui.home.arpa` | `192.168.1.170` | Open-WebUI en retaco (migrado desde ryzen, ver `docs/23-bifrost-gateway-llm.md`) | 8080 |
 | `n8n.home.arpa` | `192.168.1.170` | n8n-main en retaco | 5678 |
 | `ollama.home.arpa` | `192.168.1.170` | Ollama en ryzen — protegido con apikey-service | 11434 |
 | `vllm.home.arpa` | `192.168.1.170` | vLLM en ryzen (alterna con ollama) — protegido con apikey-service | 8010 |
@@ -30,6 +30,7 @@ Estos registros deben añadirse en la interfaz de Pi-hole:
 | `grafana.home.arpa` | `192.168.1.170` | Grafana en pi-obs | 3000 |
 | `prometheus.home.arpa` | `192.168.1.170` | Prometheus en pi-obs | 9090 |
 | `sonarqube.home.arpa` | `192.168.1.170` | SonarQube en pi-sonar | 9000 |
+| `bifrost.home.arpa` | `192.168.1.170` | Bifrost (gateway LLM / AWS Bedrock) en pi-sonar — auth propia (virtual keys), no protegido con apikey-service | 8080 |
 | `rsshub.home.arpa` | `192.168.1.170` | RSSHub en pi-utils | 1200 |
 | `markitdown.home.arpa` | `192.168.1.170` | Markitdown-service en pi-utils — protegido con apikey-service | 8001 |
 | `crawl4ai.scraper.home.arpa` | `192.168.1.170` | crawl4ai-scraper-service en pi-utils — protegido con apikey-service. Sub-subdominio a propósito, no un error de nomenclatura. | 8002 |
@@ -38,6 +39,8 @@ Estos registros deben añadirse en la interfaz de Pi-hole:
 | `vaultwarden.home.arpa` | `192.168.1.170` | Vaultwarden en pi-utils | 8222 |
 | `apikey.home.arpa` | `192.168.1.170` | apikey-service (gestión de API keys) en pi-dns | 8090 |
 | `registry.home.arpa` | `192.168.1.170` | Registry Docker privado en retaco — autenticación propia (htpasswd), no protegido con apikey-service (los clientes Docker no mandan `X-Api-Key`) | 5000 |
+| `epub2pdf.home.arpa` | `192.168.1.170` | epub2pdf-service en retaco — protegido con apikey-service | 8003 |
+| `pdf2chunks.home.arpa` | `192.168.1.170` | pdf2chunks-service en retaco — protegido con apikey-service | 8004 |
 
 ## Alias directos (sin proxy — no son HTTP)
 

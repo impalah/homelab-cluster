@@ -56,6 +56,10 @@ DOMAINS=(
   vllm.home.arpa
   comfyui.home.arpa
   crawl4ai.scraper.home.arpa
+  apikey.home.arpa
+  epub2pdf.home.arpa
+  pdf2chunks.home.arpa
+  bifrost.home.arpa
 )
 
 mkdir -p "${CERT_DIR}"

@@ -1,0 +1,108 @@
+{
+  "$schema": "https://www.getbifrost.ai/schema",
+
+  "client": {
+    "drop_excess_requests": false,
+    "enforce_auth_on_inference": true
+  },
+
+  "framework": {
+    "pricing": {
+      "live_models_sync_interval": 60
+    }
+  },
+
+  "providers": {
+    "bedrock": {
+      "keys": [
+        {
+          "name": "bedrock-primary",
+          "models": ["*"],
+          "weight": 1.0,
+          "aliases": {
+            "anthropic.claude-sonnet-4-20250514-v1:0": "eu.anthropic.claude-sonnet-4-20250514-v1:0",
+            "anthropic.claude-sonnet-4-5-20250929-v1:0": "eu.anthropic.claude-sonnet-4-5-20250929-v1:0",
+            "anthropic.claude-sonnet-4-6": "eu.anthropic.claude-sonnet-4-6",
+            "anthropic.claude-sonnet-5": "eu.anthropic.claude-sonnet-5",
+            "anthropic.claude-haiku-4-5-20251001-v1:0": "eu.anthropic.claude-haiku-4-5-20251001-v1:0",
+            "anthropic.claude-opus-4-5-20251101-v1:0": "eu.anthropic.claude-opus-4-5-20251101-v1:0",
+            "anthropic.claude-opus-4-6-v1": "eu.anthropic.claude-opus-4-6-v1",
+            "anthropic.claude-opus-4-7": "eu.anthropic.claude-opus-4-7",
+            "anthropic.claude-opus-4-8": "eu.anthropic.claude-opus-4-8",
+            "anthropic.claude-opus-5": "eu.anthropic.claude-opus-5",
+            "anthropic.claude-fable-5": "eu.anthropic.claude-fable-5"
+          },
+          "bedrock_key_config": {
+            "region": "env.AWS_REGION",
+            "access_key": "env.AWS_ACCESS_KEY_ID",
+            "secret_key": "env.AWS_SECRET_ACCESS_KEY",
+            "role_arn": "env.AWS_ROLE_ARN",
+            "session_name": "bifrost-pi-sonar"
+          }
+        }
+      ]
+    },
+    "ollama": {
+      "keys": [
+        {
+          "name": "ollama-ryzen",
+          "models": ["*"],
+          "weight": 1.0,
+          "ollama_key_config": {
+            "url": "env.OLLAMA_UPSTREAM_URL"
+          }
+        }
+      ],
+      "network_config": {
+        "allow_private_network": true
+      }
+    }
+  },
+
+  "governance": {
+    "auth_config": {
+      "is_enabled": true,
+      "admin_username": "env.BIFROST_ADMIN_USERNAME",
+      "admin_password": "env.BIFROST_ADMIN_PASSWORD"
+    },
+    "virtual_keys": [
+      {
+        "id": "vk-homelab-cluster",
+        "name": "homelab-cluster",
+        "value": "env.BIFROST_VIRTUAL_KEY",
+        "description": "Open WebUI y n8n del clúster homelab-cluster, vía bifrost.home.arpa",
+        "is_active": true,
+        "provider_configs": [
+          {
+            "provider": "bedrock",
+            "weight": 1.0,
+            "allowed_models": ["*"],
+            "key_ids": ["*"]
+          },
+          {
+            "provider": "ollama",
+            "weight": 1.0,
+            "allowed_models": ["*"],
+            "key_ids": ["*"]
+          }
+        ]
+      }
+    ],
+    "budgets": [
+      {
+        "id": "budget-test",
+        "virtual_key_id": "vk-homelab-cluster",
+        "max_limit": 5,
+        "reset_duration": "1M"
+      }
+    ]
+  },
+
+  "config_store": {
+    "enabled": true,
+    "type": "sqlite",
+    "config": {
+      "path": "/app/data/config.db"
+    }
+  }
+}

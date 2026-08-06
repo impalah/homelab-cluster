@@ -1,4 +1,4 @@
-# pi-sonar — SonarQube
+# pi-sonar — SonarQube + Bifrost
 
 **IP:** `192.168.1.172`  
 **Hardware:** Raspberry Pi 5 (8 GB RAM recomendado — SonarQube usa ~2.5 GB)
@@ -8,8 +8,10 @@
 | Servicio | Puerto (host) | URL pública |
 |---|---|---|
 | sonarqube | 127.0.0.1:9000 | https://sonarqube.home.arpa |
+| bifrost | 8080 | https://bifrost.home.arpa |
 
-> La base de datos vive en `retaco` (`postgres-main`), no en este nodo — ver `docs/05-instalacion-retaco.md`.
+> La base de datos de SonarQube vive en `retaco` (`postgres-main`), no en este nodo — ver `docs/05-instalacion-retaco.md`.
+> Bifrost es un gateway LLM hacia AWS Bedrock (sin base de datos externa, solo su propio SQLite en `bifrost/data/`) — ver `docs/23-bifrost-gateway-llm.md` para la instalación completa, la política IAM y el manual de operación.
 
 ## Prerrequisitos obligatorios del kernel
 
@@ -57,3 +59,29 @@ Se hace desde `retaco`, donde vive la base de datos (ver `docs/05-instalacion-re
 ```bash
 bash /srv/homelab/shared/scripts/backup-postgres.sh retaco postgres-main sonarqube
 ```
+
+## bifrost — arranque rápido
+
+Detalle completo (política IAM, virtual keys, prueba manual, troubleshooting) en `docs/23-bifrost-gateway-llm.md`. Resumen:
+
+```bash
+mkdir -p /srv/homelab/pi-sonar/bifrost/data
+sudo chown 1000:0 /srv/homelab/pi-sonar/bifrost/data && chmod 770 /srv/homelab/pi-sonar/bifrost/data
+cp config/bifrost/config.json /srv/homelab/pi-sonar/bifrost/data/config.json
+nano .env    # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (usuario base) / AWS_ROLE_ARN / AWS_REGION / BIFROST_VIRTUAL_KEY
+docker compose up -d bifrost
+docker compose logs -f bifrost
+```
+
+> `/app/data` dentro del contenedor corre como UID:GID `1000:0` — el directorio del host debe ser propiedad de ese UID y escribible por el grupo 0, si no Bifrost falla al arrancar con `is not writable by UID:GID 1000:0`.
+
+Prueba rápida (desde cualquier nodo del clúster):
+
+```bash
+curl -sk https://bifrost.home.arpa/v1/chat/completions \
+  -H "Authorization: Bearer ${BIFROST_VIRTUAL_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "bedrock/eu.anthropic.claude-sonnet-4-6", "messages": [{"role": "user", "content": "di 'hola' y nada más"}]}'
+```
+
+`bifrost` **nunca se auto-actualiza** (sin label de watchtower, mismo criterio que `sonarqube`) — actualizar la versión de la imagen en `docker-compose.yml` a mano y de forma consciente.

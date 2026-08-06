@@ -45,6 +45,7 @@ HOSTS='[
   "192.168.1.170 grafana.home.arpa",
   "192.168.1.170 prometheus.home.arpa",
   "192.168.1.170 sonarqube.home.arpa",
+  "192.168.1.170 bifrost.home.arpa",
   "192.168.1.170 rsshub.home.arpa",
   "192.168.1.170 markitdown.home.arpa",
   "192.168.1.170 crawl4ai.scraper.home.arpa",
@@ -52,7 +53,9 @@ HOSTS='[
   "192.168.1.170 portainer.home.arpa",
   "192.168.1.170 vaultwarden.home.arpa",
   "192.168.1.170 apikey.home.arpa",
-  "192.168.1.170 registry.home.arpa"
+  "192.168.1.170 registry.home.arpa",
+  "192.168.1.170 epub2pdf.home.arpa",
+  "192.168.1.170 pdf2chunks.home.arpa"
 ]'
 
 echo "[INFO] Autenticando en ${PIHOLE_URL}..."

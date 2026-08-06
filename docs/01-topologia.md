@@ -7,10 +7,10 @@ Se trata de seis nodos conectados a la misma red local doméstica, sin Kubernete
 | Nodo | IP | Función en una frase |
 |---|---|---|
 | `ryzen` (alias `mole`) | 192.168.1.150 | Cómputo con GPU: modelos de lenguaje (Ollama/vLLM), transcripción de audio, generación de imágenes |
-| `retaco` | 192.168.1.174 | Datos y automatización: PostgreSQL compartido, Qdrant, n8n |
+| `retaco` | 192.168.1.174 | Datos y automatización: PostgreSQL compartido, Qdrant, n8n, Open WebUI |
 | `pi-dns` | 192.168.1.170 | DNS interno y puerta de entrada HTTPS de todo el clúster |
 | `pi-obs` | 192.168.1.171 | Observabilidad: métricas, registros, trazas, paneles |
-| `pi-sonar` | 192.168.1.172 | Análisis estático de código (SonarQube) |
+| `pi-sonar` | 192.168.1.172 | Análisis estático de código (SonarQube) + gateway LLM hacia AWS Bedrock y Ollama (Bifrost) |
 | `pi-utils` | 192.168.1.173 | Utilidades: RSS, conversión de documentos, gestión de Docker, contraseñas |
 
 > La misma red local aloja además un séptimo dispositivo, el NAS UGREEN NASync `ketekasko` (192.168.1.180) — no es un nodo del clúster Docker (no tiene `docker-compose.yml` ni directorio propio en este repo), pero sí resuelve por DNS interno y aparece como tarjeta en el panel `index.home.arpa`. Detalle completo en `docs/21-configuracion-nas-ugreen.md`.
@@ -57,10 +57,13 @@ flowchart LR
     ts -.->|"ruta 192.168.1.0/24"| nginx
     nginx -->|"auth_request\n(solo servicios sin\nauth propia)"| apikey
 
-    nginx --> ryzen["ryzen\nollama · vllm · comfyui\nwhisper · open-webui"]
-    nginx --> retaco["retaco\nn8n-main · qdrant · registry"]
+    nginx --> ryzen["ryzen\nollama · vllm · comfyui · whisper"]
+    nginx --> retaco["retaco\nn8n-main · qdrant · registry\nopen-webui"]
     nginx --> piobs["pi-obs\ngrafana · prometheus"]
-    nginx --> pisonar["pi-sonar\nsonarqube"]
+    nginx --> pisonar["pi-sonar\nsonarqube · bifrost"]
+    retaco -.->|"chat: Bedrock + Ollama\nvía virtual key"| pisonar
+    pisonar -.->|"IAM: InvokeModel\nsobre modelos Bedrock"| bedrock["AWS Bedrock\n(eu-west-1)"]
+    pisonar -.->|"IP directa :11434"| ryzen
     nginx --> piutils["pi-utils\nrsshub · markitdown\nn8n-aux · portainer\nvaultwarden"]
 ```
 
@@ -105,7 +108,7 @@ flowchart TD
     MD --> N8N
     N8N -->|"texto"| EMB["Ollama\n(ryzen)\nembeddings"]
     EMB --> QD["Qdrant\n(retaco)\nalmacenamiento vectorial"]
-    QD -->|"RAG"| WEBUI["Open WebUI\n(ryzen)\nconsultas"]
+    QD -->|"RAG"| WEBUI["Open WebUI\n(retaco)\nconsultas"]
 
     AUDIO["Audio (podcast, nota de voz)"] --> WHISPER["whisper-service\n(ryzen)\ntranscripción"]
     WHISPER -->|"texto"| N8N
@@ -232,7 +235,7 @@ las dependencias reales entre los nodos:
 | 04 | `docs/04-servicios-comunes.md` | node-exporter, cadvisor, portainer-agent, watchtower: comunes a los 6 nodos |
 | 05 | `docs/05-instalacion-retaco.md` | Instalación de `retaco`: postgres-main, Qdrant, n8n-main, registro privado |
 | 06 | `docs/06-instalacion-pi1-dns.md` | Instalación de `pi-dns`: Unbound, Pi-hole, nginx, apikey-service |
-| 07 | `docs/07-instalacion-ryzen.md` | Instalación de `ryzen`: Ollama, vLLM, Open WebUI, whisper-service, ComfyUI |
+| 07 | `docs/07-instalacion-ryzen.md` | Instalación de `ryzen`: Ollama, vLLM, whisper-service, ComfyUI (Open WebUI se instaló aquí originalmente, migrado a `retaco` después — ver `docs/23`) |
 | 08 | `docs/08-instalacion-pi2-observabilidad.md` | Instalación de `pi-obs`: OTel, Prometheus, Grafana, Loki, Tempo |
 | 09 | `docs/09-instalacion-pi3-sonarqube.md` | Instalación de `pi-sonar`: SonarQube |
 | 10 | `docs/10-instalacion-pi4-utils.md` | Instalación de `pi-utils`: RSSHub, markitdown-service, n8n-aux, Portainer, Vaultwarden |
@@ -247,4 +250,5 @@ las dependencias reales entre los nodos:
 | 19 | `docs/19-wake-on-lan.md` | Wake-on-LAN: cómo encender `mole`/`ryzen` en remoto |
 | 20 | `docs/20-apagado-y-encendido-cluster.md` | Apagado y encendido ordenado del clúster (mantenimiento físico) |
 | 21 | `docs/21-configuracion-nas-ugreen.md` | NAS UGREEN NASync DH2300 (`ketekasko`): DNS, SMB, NFSv4, carpetas compartidas |
-| 22 | `docs/22-mejoras-futuras.md` | Mejoras futuras propuestas (lista de tareas pendientes): deliberadamente, el último documento |
+| 22 | `docs/22-mejoras-futuras.md` | Mejoras futuras propuestas (backlog) — no todo lo que sale de aquí acaba con un documento numerado propio; cuando pasa (como el 23), este índice se actualiza |
+| 23 | `docs/23-bifrost-gateway-llm.md` | Bifrost: gateway LLM hacia AWS Bedrock y Ollama (`pi-sonar`), conectado a Open WebUI y n8n; incluye la migración de Open WebUI de `ryzen` a `retaco` |

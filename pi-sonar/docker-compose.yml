@@ -2,11 +2,17 @@ name: homelab-pi-sonar
 
 # =============================================================================
 # Stack del nodo pi-sonar (192.168.1.172)
-# Servicios: sonarqube (Community Edition)
+# Servicios: sonarqube (Community Edition), bifrost (gateway LLM / AWS Bedrock)
 #
 # La base de datos (antes "sonarqube-db" local) se migró a postgres-main en
 # retaco (192.168.1.174) — ver docs/05-instalacion-retaco.md. SonarQube se
 # conecta cross-host, ya no por nombre de contenedor en pi-sonar-net.
+#
+# bifrost se añadió después (docs/23-bifrost-gateway-llm.md): nodo elegido
+# porque SonarQube consume RAM solo a ráfagas (durante análisis), dejando
+# margen real la mayor parte del tiempo, y porque aísla las credenciales de
+# AWS del nodo más expuesto del clúster (pi-dns, puerta de entrada HTTPS +
+# Tailscale) — ver la discusión completa en docs/22-mejoras-futuras.md punto 21.
 #
 # PREREQUISITOS obligatorios en el host antes de arrancar:
 #   sysctl -w vm.max_map_count=524288
@@ -56,6 +62,73 @@ services:
       start_period: 120s
 
   # ---------------------------------------------------------------------------
+  # bifrost — Gateway unificado de LLM (AWS Bedrock, ver docs/22-mejoras-futuras.md
+  # punto 21 y docs/23-bifrost-gateway-llm.md para el detalle completo).
+  # Config declarativa en config/bifrost/config.json (montado en /app/data junto
+  # con el resto del estado de la app — Bifrost guarda ahí también config.db,
+  # su propio SQLite de gobernanza, y logs.db). El fichero de config solo
+  # referencia variables de entorno (prefijo "env."), nunca credenciales en
+  # claro — igual que el resto del repo.
+  #
+  # Credenciales AWS: el usuario IAM base ("bifrost-bedrock-base", en
+  # AWS_ACCESS_KEY_ID/SECRET) NO tiene permiso de Bedrock por sí mismo, solo
+  # sts:AssumeRole sobre AWS_ROLE_ARN ("bifrost-bedrock-invoke", el que sí lo
+  # tiene). El propio bedrock_key_config de Bifrost soporta "role_arn" de
+  # forma nativa (ver config/bifrost/config.json) — Bifrost hace el
+  # assume-role solo y renueva la sesión temporal solo, sin credenciales de
+  # Bedrock estáticas en ningún sitio. Ver docs/23-bifrost-gateway-llm.md
+  # sección IAM para el porqué completo (por qué no un usuario único con
+  # permiso directo, por qué no AmazonBedrockFullAccess).
+  #
+  # NUNCA se auto-actualiza (sin label de watchtower): a diferencia de
+  # node-exporter/cadvisor, un upgrade silencioso aquí puede cambiar el
+  # comportamiento de autenticación/gobernanza o romper la integración con
+  # Bedrock sin que nadie lo revise antes — mismo criterio que sonarqube en
+  # este mismo nodo.
+  # ---------------------------------------------------------------------------
+  bifrost:
+    image: maximhq/bifrost:v1.6.8
+    container_name: bifrost
+    restart: unless-stopped
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_ROLE_ARN: ${AWS_ROLE_ARN}
+      AWS_REGION: ${AWS_REGION:-eu-west-1}
+      # Ollama en ryzen, por IP:puerto directo (11434 publicado en el host,
+      # ver ryzen/docker-compose.yml) — a propósito NO vía ollama.home.arpa/
+      # nginx/apikey-service: es tráfico servicio-a-servicio dentro de la
+      # LAN, mismo patrón que el resto del clúster (n8n-main, Qdrant...
+      # llegan a sus backends por IP directa, apikey-service solo protege
+      # las rutas de nginx pensadas para clientes humanos/externos). Ollama
+      # no tiene autenticación propia — igual que hoy, sin cambios de
+      # superficie de riesgo real, solo cambia quién hace la llamada.
+      OLLAMA_UPSTREAM_URL: ${OLLAMA_UPSTREAM_URL:-http://192.168.1.150:11434}
+      BIFROST_VIRTUAL_KEY: ${BIFROST_VIRTUAL_KEY}
+      # Panel/API de administración (logs, coste por request, gobernanza) —
+      # SIN esto quedaba sin ninguna autenticación, accesible por cualquiera
+      # en la LAN (encontrado en producción: /api/logs devolvía historial de
+      # prompts y coste real sin credencial). enforce_auth_on_inference NO
+      # cubre esta parte, solo /v1/chat/completions.
+      BIFROST_ADMIN_USERNAME: ${BIFROST_ADMIN_USERNAME}
+      BIFROST_ADMIN_PASSWORD: ${BIFROST_ADMIN_PASSWORD}
+    volumes:
+      - /srv/homelab/pi-sonar/bifrost/data:/app/data
+    ports:
+      - "8080:8080"
+    networks:
+      - pi-sonar-net
+    healthcheck:
+      # La imagen NO trae bash (el truco /dev/tcp de qdrant no vale aquí —
+      # visto en el despliegue real: "bash: not found", contenedor marcado
+      # unhealthy pese a responder bien). Sí trae wget.
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # ---------------------------------------------------------------------------
   # node-exporter — Métricas del sistema host, scrapeadas por Prometheus en pi-obs
   # ---------------------------------------------------------------------------
   node-exporter:
@@ -83,9 +156,11 @@ services:
   # cadvisor — Métricas de contenedores Docker, scrapeadas por Prometheus en pi-obs
   # ---------------------------------------------------------------------------
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    image: gcr.io/cadvisor/cadvisor:v0.55.1
     container_name: cadvisor
     restart: unless-stopped
+    command:
+      - "-disable_metrics=advtcp,cpu_topology,cpuset,hugetlb,memory_numa,process,referenced_memory,resctrl,sched,tcp,udp,disk,diskIO"
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
     volumes:
@@ -99,6 +174,7 @@ services:
     networks:
       - pi-sonar-net
     privileged: true
+    cgroup: host
     devices:
       - /dev/kmsg
 
@@ -139,6 +215,25 @@ services:
       WATCHTOWER_INCLUDE_RESTARTING: "true"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - pi-sonar-net
+
+  # ---------------------------------------------------------------------------
+  # promtail — Envía los logs de todos los contenedores de este nodo a Loki
+  # (pi-obs), para verlos desde Grafana. Ver docs/04-servicios-comunes.md.
+  # ---------------------------------------------------------------------------
+  promtail:
+    image: grafana/promtail:3.0.0
+    container_name: promtail
+    restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    volumes:
+      - /srv/homelab/pi-sonar/promtail/promtail-config.yaml:/etc/promtail/config.yaml:ro
+      - /srv/homelab/pi-sonar/promtail/data:/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    command: -config.file=/etc/promtail/config.yaml
     networks:
       - pi-sonar-net
 
