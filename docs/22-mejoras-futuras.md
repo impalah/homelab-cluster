@@ -24,22 +24,17 @@ Bajo (crons + destino de copia) a medio (con rclone/nube).
 
 ---
 
-## 2. Poner el propio repositorio bajo control de versiones (y fuera de esta máquina)
+## 2. ~~Poner el propio repositorio bajo control de versiones (y fuera de esta máquina)~~ — hecho
 
-**Prioridad: alta**
+**Prioridad: alta** — **completado**
 
 ### Qué hay hoy
 
-`homelab-cluster/` **no es un repositorio git**. Toda la configuración vive únicamente como ficheros sueltos en el disco de `mole`.
+`homelab-cluster/` ya es un repositorio git, con `.gitignore` (excluye `.env` reales, `.venv/`, cachés de herramientas y demás ficheros que no deben versionarse) y remoto en GitHub: [`github.com/impalah/homelab-cluster`](https://github.com/impalah/homelab-cluster). Commit inicial hecho y verificado sin secretos colados.
 
 ### Qué haría falta
 
-1. `git init`, `.gitignore` para `.env` reales, commit inicial.
-2. Remoto: privado en GitHub/GitLab/Codeberg, o autoalojado (revisar antes que ningún secreto real quedara en un fichero versionado — los `.env.example` son plantillas `CHANGE_ME`, deberían ser seguros).
-3. Commits regulares a partir de ahora.
-
-### Esfuerzo estimado
-Muy bajo (15–30 min), alto impacto.
+Nada — se mantiene este punto en el documento solo como constancia histórica del backlog. Sí queda como hábito pendiente: hacer commits regulares a partir de ahora, en vez de dejar que se acumulen cambios sin versionar durante semanas.
 
 ---
 
