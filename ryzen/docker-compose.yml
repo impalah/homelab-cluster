@@ -95,6 +95,8 @@ services:
       WHISPER_DEVICE: ${WHISPER_DEVICE:-cuda}
       WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-float16}
       WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-es}
+      LOG_LEVEL: ${WHISPER_LOG_LEVEL:-INFO}
+      LOG_FORMAT: ${WHISPER_LOG_FORMAT:-json}
     volumes:
       - /srv/homelab/ryzen/whisper/models:/root/.cache/whisper
       - /srv/homelab/ryzen/whisper/cache:/tmp/whisper-cache

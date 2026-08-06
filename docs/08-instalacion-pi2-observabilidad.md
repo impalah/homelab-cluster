@@ -126,7 +126,7 @@ Datasources aprovisionadas automáticamente (`config/grafana/datasources.yml`): 
 | Dashboard | ID Grafana.com | Descripción |
 |---|---|---|
 | Node Exporter Full | 1860 | Métricas del host Linux, selector de nodo con los 6 del clúster |
-| Docker / cAdvisor | 14282 | Métricas de contenedores, todos los nodos |
+| Docker / cAdvisor | 19792 | Métricas de contenedores, todos los nodos (14282 dejó de funcionar: paneles Angular, deprecados desde Grafana 10.4) |
 | PostgreSQL Overview | 9628 | Métricas de PostgreSQL |
 | Loki Logs | 13639 | Explorador de logs |
 
@@ -141,17 +141,18 @@ Datasources aprovisionadas automáticamente (`config/grafana/datasources.yml`): 
 | otel-collector (OTLP) | 4317/4318 | LAN | Telemetría OTLP |
 | prometheus | 9090 | LAN (proxificado en pi-dns) | GET /-/healthy |
 | grafana | 3000 → nginx | LAN vía `https://grafana.home.arpa` | GET /api/health |
-| loki, tempo, node-exporter, cadvisor, postgres-exporter, otel-collector metrics | varios | Solo loopback | ver comandos abajo |
+| loki | 3100 | LAN | GET /ready — necesario para que promtail, en los otros 5 nodos, pueda empujar logs (`docs/04-servicios-comunes.md`, sección promtail) |
+| tempo, node-exporter, cadvisor, postgres-exporter, otel-collector metrics | varios | Solo loopback | ver comandos abajo |
 
 ```bash
 curl -s http://192.168.1.171:9090/-/healthy
+curl -s http://192.168.1.171:3100/ready
 curl -sk https://grafana.home.arpa/api/health | jq .
 ```
 
 Desde dentro de `pi-obs` (`ssh u-obs@192.168.1.171`):
 
 ```bash
-curl -s http://127.0.0.1:3100/ready
 curl -s http://127.0.0.1:3200/ready
 curl -s http://127.0.0.1:9100/metrics | head -5
 curl -s http://127.0.0.1:8080/healthz
@@ -164,9 +165,28 @@ curl -s http://127.0.0.1:8889/metrics | head -5
 OTEL_EXPORTER_OTLP_ENDPOINT=http://192.168.1.171:4317
 ```
 
-`apikey-service` (pi-dns) es, a día de hoy, el único que hace esto en la práctica — logs de auditoría de accesos fallidos, ver `docs/06-instalacion-pi1-dns.md`.
+`apikey-service` (pi-dns) es, a día de hoy, el único que hace esto en la práctica — logs de auditoría de accesos fallidos (canal aparte, ver `docs/06-instalacion-pi1-dns.md`), no confundir con la captura general de logs (siguiente sección), que aplica a todos los contenedores sin que el propio servicio tenga que hacer nada.
 
-## 10. Healthcheck manual
+## 10. Ver logs de contenedores en Grafana
+
+Desde la versión con `promtail` (ver `docs/04-servicios-comunes.md`, sección promtail), **todos** los contenedores de los 6 nodos mandan su stdout/stderr a Loki automáticamente — no hace falta instrumentar nada en el propio servicio, ni siquiera es una imagen propia (n8n, postgres, sonarqube, pihole... también salen).
+
+`https://grafana.home.arpa` → **Explore** → datasource **Loki**. Consultas LogQL típicas:
+
+```logql
+{container="crawl4ai-scraper-service"}
+{node="pi-utils"}
+{compose_project="homelab-retaco"}
+{container="crawl4ai-scraper-service"} |= "ERROR"
+```
+
+Verificación rápida desde cualquier nodo con acceso a `pi-obs`:
+
+```bash
+curl -s http://192.168.1.171:3100/loki/api/v1/label/container/values | jq .
+```
+
+## 11. Healthcheck manual
 
 ```bash
 bash /srv/homelab/shared/scripts/check-health.sh pi-obs
@@ -174,5 +194,5 @@ bash /srv/homelab/shared/scripts/check-health.sh pi-obs
 
 ## Ver también
 
-- `docs/04-servicios-comunes.md` — node-exporter/cadvisor/portainer-agent/watchtower.
+- `docs/04-servicios-comunes.md` — node-exporter/cadvisor/portainer-agent/watchtower/promtail.
 - `docs/14-monitorizacion-completa-cluster.md` — cómo se recopilan las métricas del resto de nodos, dashboards y alertas.

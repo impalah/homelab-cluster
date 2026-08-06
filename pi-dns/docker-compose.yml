@@ -93,6 +93,8 @@ services:
       APIKEY_DATABASE_URL: ${APIKEY_DATABASE_URL}
       APIKEY_ADMIN_TOKEN: ${APIKEY_ADMIN_TOKEN}
       APIKEY_OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: ${APIKEY_OTEL_EXPORTER_OTLP_LOGS_ENDPOINT:-http://192.168.1.171:4318/v1/logs}
+      APIKEY_LOG_LEVEL: ${APIKEY_LOG_LEVEL:-INFO}
+      APIKEY_LOG_FORMAT: ${APIKEY_LOG_FORMAT:-json}
     networks:
       pi-dns-net:
         ipv4_address: 172.20.0.9
@@ -210,9 +212,11 @@ services:
   # cadvisor — Métricas de contenedores Docker, scrapeadas por Prometheus en pi-obs
   # ---------------------------------------------------------------------------
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    image: gcr.io/cadvisor/cadvisor:v0.55.1
     container_name: cadvisor
     restart: unless-stopped
+    command:
+      - "-disable_metrics=advtcp,cpu_topology,cpuset,hugetlb,memory_numa,process,referenced_memory,resctrl,sched,tcp,udp,disk,diskIO"
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
     volumes:
@@ -227,6 +231,7 @@ services:
       pi-dns-net:
         ipv4_address: 172.20.0.6
     privileged: true
+    cgroup: host
     devices:
       - /dev/kmsg
 
@@ -271,6 +276,26 @@ services:
     networks:
       pi-dns-net:
         ipv4_address: 172.20.0.8
+
+  # ---------------------------------------------------------------------------
+  # promtail — Envía los logs de todos los contenedores de este nodo a Loki
+  # (pi-obs), para verlos desde Grafana. Ver docs/04-servicios-comunes.md.
+  # ---------------------------------------------------------------------------
+  promtail:
+    image: grafana/promtail:3.0.0
+    container_name: promtail
+    restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    volumes:
+      - /srv/homelab/pi-dns/promtail/promtail-config.yaml:/etc/promtail/config.yaml:ro
+      - /srv/homelab/pi-dns/promtail/data:/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    command: -config.file=/etc/promtail/config.yaml
+    networks:
+      pi-dns-net:
+        ipv4_address: 172.20.0.10
 
 networks:
   pi-dns-net:

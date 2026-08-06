@@ -20,7 +20,7 @@ services:
       - /srv/homelab/pi-obs/loki/loki.yaml:/etc/loki/loki.yaml:ro
       - /srv/homelab/pi-obs/loki/data:/loki
     ports:
-      - "127.0.0.1:3100:3100"
+      - "3100:3100"
     networks:
       - pi-obs-net
     healthcheck:
@@ -181,9 +181,11 @@ services:
   # cadvisor — Métricas de contenedores Docker
   # ---------------------------------------------------------------------------
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    image: gcr.io/cadvisor/cadvisor:v0.55.1
     container_name: cadvisor
     restart: unless-stopped
+    command:
+      - "-disable_metrics=advtcp,cpu_topology,cpuset,hugetlb,memory_numa,process,referenced_memory,resctrl,sched,tcp,udp,disk,diskIO"
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
     volumes:
@@ -197,6 +199,7 @@ services:
     networks:
       - pi-obs-net
     privileged: true
+    cgroup: host
     devices:
       - /dev/kmsg
 
@@ -254,6 +257,25 @@ services:
       WATCHTOWER_INCLUDE_RESTARTING: "true"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - pi-obs-net
+
+  # ---------------------------------------------------------------------------
+  # promtail — Envía los logs de todos los contenedores de este nodo a Loki
+  # (aquí mismo, en pi-obs), para verlos desde Grafana. Ver docs/04-servicios-comunes.md.
+  # ---------------------------------------------------------------------------
+  promtail:
+    image: grafana/promtail:3.0.0
+    container_name: promtail
+    restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    volumes:
+      - /srv/homelab/pi-obs/promtail/promtail-config.yaml:/etc/promtail/config.yaml:ro
+      - /srv/homelab/pi-obs/promtail/data:/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    command: -config.file=/etc/promtail/config.yaml
     networks:
       - pi-obs-net
 

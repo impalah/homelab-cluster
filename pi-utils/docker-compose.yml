@@ -52,6 +52,7 @@ services:
     environment:
       MARKITDOWN_PORT: ${MARKITDOWN_PORT:-8001}
       MARKITDOWN_LOG_LEVEL: ${MARKITDOWN_LOG_LEVEL:-INFO}
+      MARKITDOWN_LOG_FORMAT: ${MARKITDOWN_LOG_FORMAT:-json}
     volumes:
       - /srv/homelab/pi-utils/markitdown/cache:/tmp/markitdown-cache
     ports:
@@ -85,6 +86,15 @@ services:
     image: registry.home.arpa/crawl4ai-scraper-service:latest
     container_name: crawl4ai-scraper-service
     restart: unless-stopped
+    # Límite de memoria como red de seguridad: el navegador compartido de
+    # Crawl4AI puede acumular memoria bajo carga sostenida (visto en
+    # producción: 452MB -> 5.7GB en ~1h, hasta tumbar la RAM de todo el
+    # nodo pi-utils, no solo este contenedor). Con este límite, si vuelve a
+    # ocurrir, Docker mata y reinicia (restart: unless-stopped) solo este
+    # contenedor -- rsshub/markitdown-service/SSH del host quedan a salvo.
+    # "mem_limit" (no "deploy.resources.limits"), que es sintaxis de Swarm y
+    # "docker compose up" normal la ignora en silencio sin avisar de nada.
+    mem_limit: 2g
     environment:
       APP_NAME: ${CRAWL4AI_APP_NAME:-Crawl4AI Scraper Service}
       APP_ENV: ${CRAWL4AI_APP_ENV:-production}
@@ -94,11 +104,16 @@ services:
       MAX_CONCURRENT_SCRAPES: ${CRAWL4AI_MAX_CONCURRENT_SCRAPES:-12}
       MAX_CONCURRENT_DEDICATED_BROWSERS: ${CRAWL4AI_MAX_CONCURRENT_DEDICATED_BROWSERS:-2}
       SCRAPE_TIMEOUT_SECONDS: ${CRAWL4AI_SCRAPE_TIMEOUT_SECONDS:-60}
-      SEMAPHORE_ACQUIRE_TIMEOUT_SECONDS: ${CRAWL4AI_SEMAPHORE_ACQUIRE_TIMEOUT_SECONDS:-90}
+      # Por debajo del proxy_read_timeout de nginx para crawl4ai.scraper.home.arpa
+      # (90s) a propósito: si son iguales, gana la carrera quien complete antes,
+      # normalmente nginx -- el cliente ve un 504 genérico en vez del 503 propio
+      # de la app (con mensaje claro de "límite de concurrencia agotado").
+      SEMAPHORE_ACQUIRE_TIMEOUT_SECONDS: ${CRAWL4AI_SEMAPHORE_ACQUIRE_TIMEOUT_SECONDS:-75}
       CRAWLER_HEADLESS: ${CRAWL4AI_CRAWLER_HEADLESS:-true}
       CRAWLER_VERBOSE: ${CRAWL4AI_CRAWLER_VERBOSE:-false}
       CRAWLER_PAGE_TIMEOUT_MS: ${CRAWL4AI_CRAWLER_PAGE_TIMEOUT_MS:-60000}
       CRAWLER_WAIT_UNTIL: ${CRAWL4AI_CRAWLER_WAIT_UNTIL:-domcontentloaded}
+      MAX_PAGES_BEFORE_RECYCLE: ${CRAWL4AI_MAX_PAGES_BEFORE_RECYCLE:-15}
       ENABLE_STEALTH_MODE: ${CRAWL4AI_ENABLE_STEALTH_MODE:-false}
       ENABLE_UNDETECTED_BROWSER: ${CRAWL4AI_ENABLE_UNDETECTED_BROWSER:-false}
       ENABLE_MAGIC_MODE: ${CRAWL4AI_ENABLE_MAGIC_MODE:-false}
@@ -137,7 +152,7 @@ services:
       N8N_HOST: ${N8N_AUX_HOST:-n8n-aux.home.arpa}
       N8N_PORT: ${N8N_AUX_PORT:-5679}
       N8N_PROTOCOL: ${N8N_AUX_PROTOCOL:-https}
-      WEBHOOK_URL: ${N8N_AUX_WEBHOOK_URL:-https://n8n-aux.home.arpa/}
+      N8N_WEBHOOK_URL: ${N8N_AUX_WEBHOOK_URL:-https://n8n-aux.home.arpa/}
       GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-Europe/Madrid}
       N8N_LOG_LEVEL: info
       # El Task Broker interno de n8n usa por defecto el puerto 5679, el mismo
@@ -145,6 +160,15 @@ services:
       # principal, que usa 5678) — sin esto, n8n-aux entra en bucle de
       # reinicio ("Task Broker's port 5679 is already in use").
       N8N_RUNNERS_BROKER_PORT: "5680"
+      # Mismo motivo que n8n-main (retaco/docker-compose.yml) — ver ese
+      # fichero para el detalle de cada variable.
+      N8N_PROXY_HOPS: "1"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
+      N8N_UNVERIFIED_PACKAGES_ENABLED: "true"
+      N8N_RUNNERS_TASK_TIMEOUT: "300"
+      N8N_COMPRESSION_NODE_MAX_DECOMPRESSED_SIZE_BYTES: "2147483648"
+      N8N_COMPRESSION_NODE_MAX_ZIP_ENTRIES: "5000"
     volumes:
       - /srv/homelab/pi-utils/n8n-aux/data:/home/node/.n8n
     ports:
@@ -186,9 +210,11 @@ services:
   # cadvisor — Métricas de contenedores Docker, scrapeadas por Prometheus en pi-obs
   # ---------------------------------------------------------------------------
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    image: gcr.io/cadvisor/cadvisor:v0.55.1
     container_name: cadvisor
     restart: unless-stopped
+    command:
+      - "-disable_metrics=advtcp,cpu_topology,cpuset,hugetlb,memory_numa,process,referenced_memory,resctrl,sched,tcp,udp,disk,diskIO"
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
     volumes:
@@ -202,6 +228,7 @@ services:
     networks:
       - pi-utils-net
     privileged: true
+    cgroup: host
     devices:
       - /dev/kmsg
 
@@ -299,6 +326,25 @@ services:
       WATCHTOWER_INCLUDE_RESTARTING: "true"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - pi-utils-net
+
+  # ---------------------------------------------------------------------------
+  # promtail — Envía los logs de todos los contenedores de este nodo a Loki
+  # (pi-obs), para verlos desde Grafana. Ver docs/04-servicios-comunes.md.
+  # ---------------------------------------------------------------------------
+  promtail:
+    image: grafana/promtail:3.0.0
+    container_name: promtail
+    restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    volumes:
+      - /srv/homelab/pi-utils/promtail/promtail-config.yaml:/etc/promtail/config.yaml:ro
+      - /srv/homelab/pi-utils/promtail/data:/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    command: -config.file=/etc/promtail/config.yaml
     networks:
       - pi-utils-net
 
