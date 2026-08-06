@@ -2,7 +2,7 @@ name: homelab-ryzen
 
 # =============================================================================
 # Stack de OPERACIÓN IA del nodo Ryzen 9 (192.168.1.150)
-# Servicios: ollama, open-webui, whisper-service
+# Servicios: ollama, whisper-service
 #
 # Separado de docker-compose.observability.yml a propósito: este stack es el
 # pesado (GPU, LLMs) y se quiere poder parar/arrancar independientemente de
@@ -12,6 +12,11 @@ name: homelab-ryzen
 # (192.168.1.174), que está siempre encendido — ver
 # docs/05-instalacion-retaco.md. Ollama y whisper-service son los únicos
 # servicios que necesitan GPU, así que se quedan aquí.
+#
+# open-webui también migrado a retaco (docs/23-bifrost-gateway-llm.md) — ya
+# no vive en este nodo, así que sigue accesible con ryzen apagado. Habla con
+# Ollama a través de Bifrost (pi-sonar), por IP directa (192.168.1.150:11434),
+# no por nombre de contenedor ni por ollama.home.arpa.
 #
 # Si algún workflow de n8n llama a ollama/whisper-service por su nombre de
 # contenedor (red Docker interna, p. ej. "http://ollama:11434"), ya NO
@@ -51,32 +56,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
-
-  # ---------------------------------------------------------------------------
-  # open-webui — Interfaz web para Ollama
-  # ---------------------------------------------------------------------------
-  open-webui:
-    image: ghcr.io/open-webui/open-webui:main
-    container_name: open-webui
-    restart: unless-stopped
-    depends_on:
-      ollama:
-        condition: service_healthy
-    environment:
-      OLLAMA_BASE_URL: http://ollama:11434
-      WEBUI_SECRET_KEY: ${OPENWEBUI_SECRET_KEY}
-    volumes:
-      - /srv/homelab/ryzen/open-webui/data:/app/backend/data
-    ports:
-      - "8080:8080"
-    networks:
-      - ryzen-net
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8080 || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
 
   # ---------------------------------------------------------------------------
   # whisper-service — Transcripción de audio con CUDA

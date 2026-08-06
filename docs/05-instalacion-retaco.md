@@ -536,3 +536,29 @@ docker compose up -d n8n-main
 ```
 
 Tras esto, hay que revisar cualquier workflow que llamara a Ollama o a whisper-service por nombre de contenedor Docker — ya no comparten red, así que hay que usar el nombre de host público (`https://ollama.home.arpa`, `https://whisper.home.arpa`).
+
+## 12. Migración desde ryzen — open-webui (histórica)
+
+Traspaso de `open-webui`, para que siga accesible con `ryzen` apagado. Procedimiento completo, decisiones de arquitectura (por qué habla con Bifrost y no con Ollama directo) y troubleshooting real en `docs/23-bifrost-gateway-llm.md` — resumen aquí:
+
+Datos a migrar (sesión, chats, usuarios y la colección local de Knowledge/RAG si se ha usado — `cache/` se deja fuera a propósito, es solo caché regenerable):
+
+```bash
+ssh retaco "mkdir -p /srv/homelab/retaco/open-webui/data"
+rsync -av \
+  /srv/homelab/ryzen/open-webui/data/webui.db \
+  /srv/homelab/ryzen/open-webui/data/vector_db \
+  /srv/homelab/ryzen/open-webui/data/uploads \
+  retaco:/srv/homelab/retaco/open-webui/data/
+```
+
+> ⚠️ **`WEBUI_SECRET_KEY` debe ser exactamente la misma que tenía `ryzen`** (`OPENWEBUI_SECRET_KEY` en su `.env`) — firma las sesiones existentes; cambiarla obliga a todos los usuarios a volver a iniciar sesión (no es tan grave como el `N8N_ENCRYPTION_KEY`, pero tampoco hace falta provocarlo).
+
+```bash
+cd /srv/homelab/retaco
+docker compose up -d open-webui
+```
+
+Después, repuntar `openwebui.home.arpa` en `pi-dns/nginx/conf/nginx.conf` (**ruta real en el host**, no `pi-dns/config/nginx/` — ver aviso en `docs/23-bifrost-gateway-llm.md`) de `192.168.1.150:8080` a `192.168.1.174:8080`, recargar nginx, y solo entonces retirar el servicio de `ryzen/docker-compose.yml` (los datos originales se dejan en `ryzen` como backup, no se borran).
+
+> Este `webui.db`/`vector_db` migrados quedaron sin usarse poco después: se decidió pasar `open-webui` a Postgres (`DATABASE_URL`) y Qdrant (`VECTOR_DB`) centralizados en vez de SQLite/ChromaDB locales — ver `docs/23-bifrost-gateway-llm.md`, sección "Base de datos centralizada". La cuenta migrada aquí no sobrevivió a ese cambio; hubo que registrarse de nuevo.

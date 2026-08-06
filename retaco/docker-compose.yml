@@ -2,7 +2,7 @@ name: homelab-retaco
 
 # =============================================================================
 # Stack del nodo Retaco (192.168.1.174)
-# Servicios: postgres-main, qdrant, n8n-main, registry
+# Servicios: postgres-main, qdrant, n8n-main, registry, open-webui
 #
 # postgres-main y qdrant migrados desde ryzen (192.168.1.150) para liberar al
 # Ryzen 9 de servicios de datos. n8n-main migrado después, para que las
@@ -11,6 +11,10 @@ name: homelab-retaco
 # n8n-main vuelve a conectar a postgres-main por nombre de contenedor (red
 # Docker local), ya no cross-host como durante la migración de solo datos.
 # Ver docs/05-instalacion-retaco.md para el procedimiento de ambas migraciones.
+#
+# open-webui migrado después (docs/23-bifrost-gateway-llm.md), mismo motivo:
+# sigue accesible con ryzen apagado. Habla solo con Bifrost (pi-sonar), no
+# con Ollama directo — ver el comentario junto al propio servicio más abajo.
 # =============================================================================
 
 services:
@@ -265,6 +269,93 @@ services:
       - "8004:8004"
     networks:
       - retaco-net
+
+  # ---------------------------------------------------------------------------
+  # open-webui — Interfaz web de chat. Migrado desde ryzen (docs/23-bifrost-gateway-llm.md,
+  # sección de migración) para que siga accesible aunque ryzen esté apagado —
+  # retaco está siempre encendido, ryzen no.
+  #
+  # Backend LLM: SOLO Bifrost (pi-sonar), no Ollama directo. Antes, en ryzen,
+  # Open WebUI llegaba a Ollama por red Docker interna (http://ollama:11434,
+  # sin auth) — eso ya no es posible desde otro host. La alternativa hubiera
+  # sido hablar con https://ollama.home.arpa (nginx + apikey-service, exige
+  # X-Api-Key), pero no hay confirmación de que el tipo de conexión "Ollama"
+  # de Open WebUI sepa mandar esa cabecera custom — sí sabemos que la
+  # conexión "OpenAI API" manda Bearer correctamente (ya probado con
+  # Bedrock). Se optó por añadir Ollama como provider más dentro de Bifrost
+  # (bifrost/config.json en pi-sonar, provider "ollama" apuntando a
+  # 192.168.1.150:11434 directo) — así Open WebUI solo necesita UNA conexión
+  # (Bifrost), con el mismo virtual key para Bedrock y para Ollama.
+  # ENABLE_OLLAMA_API=false porque no se usa la conexión nativa en absoluto.
+  #
+  # WEBUI_SECRET_KEY: MISMO valor que tenía ryzen/.env (OPENWEBUI_SECRET_KEY)
+  # — cambiarlo invalida las sesiones existentes de los usuarios ya creados.
+  #
+  # Base de datos: Postgres centralizado (base "openwebui" en postgres-main,
+  # este mismo nodo), no el SQLite (webui.db) por defecto — decisión tomada
+  # tras la migración inicial desde ryzen, con muy poco todavía configurado,
+  # así que se pudo cambiar de backend sin migrar datos reales (usuarios se
+  # recrean desde cero). Vectores (RAG/Knowledge) igual: Qdrant centralizado
+  # en vez de ChromaDB local — mismo Qdrant que "articles"/"transcripts".
+  # Credenciales de ambos en Vaultwarden — ver docs/23-bifrost-gateway-llm.md.
+  # ---------------------------------------------------------------------------
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    restart: unless-stopped
+    depends_on:
+      postgres-main:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    environment:
+      WEBUI_SECRET_KEY: ${OPENWEBUI_SECRET_KEY}
+      ENABLE_OLLAMA_API: "false"
+      OPENAI_API_BASE_URLS: https://bifrost.home.arpa/v1
+      OPENAI_API_KEYS: ${BIFROST_VIRTUAL_KEY}
+      # Postgres centralizado en vez de SQLite (webui.db) — base aislada
+      # "openwebui", creada con create-postgres-db.sh, mismo patrón que
+      # n8n/sonarqube/apikeys. Por nombre de contenedor: mismo nodo, misma
+      # red retaco-net, no cross-host. Ver docs/23-bifrost-gateway-llm.md.
+      DATABASE_URL: postgresql://openwebui:${OPENWEBUI_DB_PASSWORD}@postgres-main:5432/openwebui
+      # Qdrant centralizado en vez de ChromaDB local — mismo Qdrant que ya
+      # usa el pipeline de contenido (colecciones "articles"/"transcripts").
+      # Prefijo de colección por defecto de Open WebUI ("open-webui_...")
+      # evita cualquier colisión de nombres, sin configurar nada aparte.
+      VECTOR_DB: qdrant
+      QDRANT_URI: http://qdrant:6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY}
+    volumes:
+      - /srv/homelab/retaco/open-webui/data:/app/backend/data
+      # CA interna del clúster (docs/15-ca-interna.md), de solo lectura.
+      - /srv/homelab/retaco/open-webui/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
+    # Open WebUI es Python (aiohttp) — no lee el almacén de certificados del
+    # sistema por defecto, usa el bundle de "certifi" (solo CAs públicas).
+    # Sin esto: SSLCertVerificationError contra CUALQUIER *.home.arpa por
+    # HTTPS (bifrost.home.arpa incluido) — visto en el despliegue real, el
+    # selector de modelos se quedaba vacío sin ningún error visible en la UI.
+    # Se combina certifi + la CA interna en un fichero nuevo en vez de
+    # sustituir certifi entero, para no romper la verificación de servicios
+    # públicos reales (descarga del modelo de embeddings, búsqueda web...).
+    # La ruta de certifi se resuelve en caliente (no se hardcodea la versión
+    # de Python de la imagen) para no romperse en una actualización futura.
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        CERTIFI_BUNDLE=$$(python3 -c "import certifi; print(certifi.where())") &&
+        cat "$$CERTIFI_BUNDLE" /etc/ssl/certs/homelab-ca.crt > /tmp/combined-ca.pem &&
+        export SSL_CERT_FILE=/tmp/combined-ca.pem &&
+        exec bash start.sh
+    ports:
+      - "8080:8080"
+    networks:
+      - retaco-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   # ---------------------------------------------------------------------------
   # node-exporter — Métricas del sistema host, scrapeadas por Prometheus en pi-obs

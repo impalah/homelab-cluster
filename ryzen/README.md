@@ -9,7 +9,7 @@ Este nodo tiene **dos** `docker-compose.yml` separados a propósito, para poder 
 
 | Fichero | Contiene | Depende de `.env` |
 |---|---|---|
-| `docker-compose.yml` | ollama, vllm, open-webui, whisper-service, comfyui | Sí |
+| `docker-compose.yml` | ollama, vllm, whisper-service, comfyui | Sí |
 | `docker-compose.observability.yml` | node-exporter, cadvisor, portainer-agent | No — cero variables de entorno, arranca sin configurar nada |
 
 Cada uno es su propio proyecto Compose (`homelab-ryzen` y `homelab-ryzen-observability`), con su propia red Docker — no comparten nada, se pueden parar/arrancar totalmente por separado.
@@ -20,7 +20,6 @@ Cada uno es su propio proyecto Compose (`homelab-ryzen` y `homelab-ryzen-observa
 |---|---|---|
 | ollama | 11434 | https://ollama.home.arpa (requiere API key — ver aviso abajo) |
 | vllm | 8010→8000 | https://vllm.home.arpa (requiere API key — ver aviso abajo) |
-| open-webui | 8080 | https://openwebui.home.arpa |
 | whisper-service | 9800 | https://whisper.home.arpa |
 | comfyui | 8188 | https://comfyui.home.arpa (requiere API key — ver aviso abajo) |
 | node-exporter | 9100 | — (consultado por Prometheus en pi-obs) |
@@ -29,7 +28,7 @@ Cada uno es su propio proyecto Compose (`homelab-ryzen` y `homelab-ryzen-observa
 
 > Los puertos HTTP se publican en todas las interfaces (no solo loopback) — nginx en `pi-dns`, que se ejecuta en *otro* nodo, necesita alcanzarlos por la LAN para hacer de proxy inverso y exponerlos mediante HTTPS. (Nota: esta tabla decía antes "127.0.0.1", pero no se corresponde con el `docker-compose.yml` real — corregido.)
 
-> `postgres-main`, `qdrant` y `n8n-main` se migraron al nodo `retaco` (192.168.1.174) — ver `docs/05-instalacion-retaco.md`. No hay ningún servicio de datos ni de automatización en este nodo; solo cómputo con GPU.
+> `postgres-main`, `qdrant` y `n8n-main` se migraron al nodo `retaco` (192.168.1.174) — ver `docs/05-instalacion-retaco.md`. `open-webui` se migró después, al mismo `retaco` — ver `docs/23-bifrost-gateway-llm.md`. No hay ningún servicio de datos, automatización o interfaz de usuario en este nodo; solo cómputo con GPU (`ollama`/`vllm`/`whisper-service`/`comfyui`), consumido por Open WebUI a través de Bifrost (`pi-sonar`) o directamente vía los hostnames públicos de abajo.
 
 ## ⚠️ ollama y vllm NUNCA a la vez
 
@@ -53,7 +52,7 @@ bash switch-gpu1-backend.sh comfyui           # para whisper-service si está ar
 
 ## Acceso externo con API key
 
-`ollama.home.arpa`, `vllm.home.arpa` y `comfyui.home.arpa` exigen la cabecera `X-Api-Key` (protegidos con `apikey-service`, ver `docs/06-instalacion-pi1-dns.md`) — cualquier cliente en la LAN o workflow de n8n que los llame por el nombre de host público necesita una key emitida ahí. **Open WebUI no se ve afectado**: le llega por la red Docker interna de este nodo (`http://ollama:11434`, `http://vllm:8000`), sin pasar por nginx. ComfyUI, si lo usas desde el propio navegador de esta máquina, tampoco necesita key: `http://localhost:8188` directo.
+`ollama.home.arpa`, `vllm.home.arpa` y `comfyui.home.arpa` exigen la cabecera `X-Api-Key` (protegidos con `apikey-service`, ver `docs/06-instalacion-pi1-dns.md`) — cualquier cliente en la LAN o workflow de n8n que los llame por el nombre de host público necesita una key emitida ahí. **Open WebUI, ahora en `retaco`, no usa ninguna de estas rutas**: llega a `ollama` por IP directa (`http://192.168.1.150:11434`) a través de Bifrost (`pi-sonar`), sin pasar por `nginx`/`apikey-service` — ver `docs/23-bifrost-gateway-llm.md`. ComfyUI, si lo usas desde el propio navegador de esta máquina, tampoco necesita key: `http://localhost:8188` directo.
 
 ## Arranque rápido
 
@@ -99,7 +98,7 @@ BIOS pendiente de confirmar) en `docs/19-wake-on-lan.md`.
 
 ```
 ryzen/
-├── docker-compose.yml                 ← stack de IA (ollama, vllm, open-webui, whisper-service, comfyui)
+├── docker-compose.yml                 ← stack de IA (ollama, vllm, whisper-service, comfyui)
 ├── docker-compose.observability.yml   ← stack de observabilidad (independiente, sin .env)
 ├── switch-llm-backend.sh              ← alterna ollama/vllm en GPU 0, nunca a la vez (ver aviso arriba)
 ├── switch-gpu1-backend.sh             ← alterna whisper-service/comfyui en GPU 1, nunca a la vez

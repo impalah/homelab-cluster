@@ -1,12 +1,13 @@
 # 07 — Instalación y configuración: ryzen (192.168.1.150)
 
+> **`open-webui` se instaló originalmente aquí (sección de más abajo, histórica), pero se migró después a `retaco`** para que siguiera accesible con este nodo apagado — ver `docs/23-bifrost-gateway-llm.md`. Las instrucciones de instalación de `open-webui` que aparecen en este documento ya no reflejan el despliegue real; se conservan como referencia histórica de cómo se montó la primera vez.
+
 ## Rol del nodo
 
 `ryzen` (alias `mole` — es también el puesto de trabajo físico del usuario) es el **único nodo con GPU** del clúster, y por tanto el único que hace cómputo pesado de IA:
 
-- **ollama** — Servidor de inferencia LLM flexible: carga/descarga modelos bajo demanda, cualquier tamaño que quepa en VRAM.
+- **ollama** — Servidor de inferencia LLM flexible: carga/descarga modelos bajo demanda, cualquier tamaño que quepa en VRAM. Consumido por Open WebUI (en `retaco`) a través de Bifrost (`pi-sonar`), no directo — ver `docs/23-bifrost-gateway-llm.md`.
 - **vllm** — Servidor de inferencia de alto rendimiento (API compatible OpenAI), para un único modelo fijo pero con mucho más rendimiento bajo carga concurrente que Ollama (PagedAttention + batching continuo). **Alterna con Ollama, nunca a la vez** — ver sección vLLM más abajo.
-- **open-webui** — Interfaz web de chat para Ollama/vLLM.
 - **whisper-service** — Transcripción de audio a texto (FastAPI + faster-whisper). Código en `services/whisper-service/` (raíz del repo); imagen publicada en `registry.home.arpa` — este nodo solo hace `docker compose pull`, no build.
 - **comfyui** — Generación de imágenes (Stable Diffusion y derivados). Coexiste con Ollama/vLLM (GPU distinta), pero **alterna con whisper-service**, con quien sí comparte GPU.
 
