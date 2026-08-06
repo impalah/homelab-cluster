@@ -56,10 +56,16 @@ class ScrapeService:
         """
         try:
             async with self._limiter.slot():
+                # `slot()` ya incrementó `active_count` para esta petición antes
+                # de llegar aquí (ver `ScrapeConcurrencyLimiter.slot`) -- sin el
+                # "+1" de antes, este log contaba la petición actual dos veces y
+                # mostraba siempre max_concurrent+1 (p. ej. "13/12"), pese a que
+                # el semáforo real nunca se pasaba del límite. Bug cosmético,
+                # sin impacto funcional, pero confuso al depurar incidentes.
                 logger.info(
                     "Iniciando scrape de {} ({}/{} slots activos){}",
                     url,
-                    self._limiter.active_count + 1,
+                    self._limiter.active_count,
                     self._limiter.max_concurrent,
                     " con overrides" if params is not None else "",
                 )

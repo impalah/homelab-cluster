@@ -244,6 +244,7 @@ agota `SEMAPHORE_ACQUIRE_TIMEOUT_SECONDS`.
 | `CRAWLER_VERBOSE` | Logging detallado de Crawl4AI | `false` |
 | `CRAWLER_PAGE_TIMEOUT_MS` | Timeout (ms) de carga de página | `60000` |
 | `CRAWLER_WAIT_UNTIL` | `domcontentloaded` / `load` / `networkidle` | `domcontentloaded` |
+| `MAX_PAGES_BEFORE_RECYCLE` | Nº de páginas servidas por el navegador compartido antes de reciclarlo (crea uno nuevo, drena y cierra el anterior). `0` = deshabilitado (default de la librería, no usar) | `50` |
 
 ### Anti-bot / anti-detección
 
@@ -283,6 +284,23 @@ entorno; toda la configuración se resuelve dinámicamente en
   implemente `start`, `stop`, `is_ready` y `scrape` puede inyectarse en
   `ScrapeService` sin cambiar la lógica de negocio (útil para tests o para
   sustituir Crawl4AI por otro motor en el futuro).
+- ⚠️ **`MAX_PAGES_BEFORE_RECYCLE` no es opcional en la práctica** — el
+  navegador Chromium compartido de Crawl4AI acumula procesos `renderer`
+  huérfanos con el uso (páginas que la propia librería no logra cerrar tras
+  un timeout/crash, error tragado internamente sin excepción visible). Con
+  el valor por defecto de la librería (`0`, deshabilitado) esto no tiene
+  límite: visto en producción, 39 procesos `renderer` huérfanos y ~5GB de
+  RAM en un contenedor sin scrapes en curso. Con el reciclado periódico
+  activado, el navegador se relanza cada N páginas y purga lo acumulado.
+  **Actualización (2026-08-05)**: el valor de 50 tampoco fue suficiente bajo
+  una tanda real con muchos bloqueos anti-bot (452MB -> 5,7GB en ~1h,
+  suficiente para agotar la RAM de todo el nodo `pi-utils`, no solo del
+  contenedor) — cada reintento de `MAX_RETRIES` sobre una URL bloqueada abre
+  más páginas de las que 50 páginas "buenas" compensaban a tiempo. Bajado a
+  `15` por defecto. Si vuelve a ocurrir, considerar además: (a) contar
+  reintentos, no solo páginas servidas, hacia el umbral de reciclado, o
+  (b) un límite de memoria a nivel de contenedor como red de seguridad
+  (ver `deploy.resources.limits.memory` en `pi-utils/docker-compose.yml`).
 - ⚠️ **`ENABLE_UNDETECTED_BROWSER=true` necesita el navegador de `patchright`,
   no el de `playwright`** — el Undetected Browser Adapter de Crawl4AI corre
   sobre `patchright` (fork de Playwright), que gestiona su propio build de

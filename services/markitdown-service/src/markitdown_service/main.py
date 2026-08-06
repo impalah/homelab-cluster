@@ -6,17 +6,14 @@ Endpoints:
   POST /convert   → convertir documento a Markdown (multipart/form-data, campo "file")
 """
 
-import sys
-
 from fastapi import FastAPI
-from loguru import logger
 
 from markitdown_service import __version__
 from markitdown_service.config import settings
 from markitdown_service.controllers import convert_controller, health_controller
+from markitdown_service.logging_setup import setup_logging
 
-logger.remove()
-logger.add(sys.stdout, level=settings.markitdown_log_level.upper(), enqueue=True)
+setup_logging(settings)
 
 app = FastAPI(
     title="markitdown-service",

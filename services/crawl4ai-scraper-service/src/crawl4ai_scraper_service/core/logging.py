@@ -101,6 +101,14 @@ def configure_logging(settings: Settings) -> None:
         std_logger.handlers = [InterceptHandler()]
         std_logger.propagate = False
 
+    # Los logs de acceso HTTP (una línea por petición, incluidos los
+    # healthchecks de Docker cada pocos segundos) solo aportan valor en modo
+    # depuración — a nivel normal, silenciar "uvicorn.access" evita inundar
+    # Loki de líneas "GET /health 200" sin información útil.
+    logging.getLogger("uvicorn.access").setLevel(
+        logging.DEBUG if settings.log_level.upper() == "DEBUG" else logging.WARNING
+    )
+
     logger.info(
         "Logging configurado (level={}, format={}, file={})",
         settings.log_level,

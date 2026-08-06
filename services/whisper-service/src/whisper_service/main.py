@@ -6,7 +6,6 @@ Endpoints:
   POST /transcribe  → transcribir audio (multipart/form-data, campo "file")
 """
 
-import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -17,9 +16,9 @@ from whisper_service import __version__
 from whisper_service.config import settings
 from whisper_service.controllers import health_controller, transcribe_controller
 from whisper_service.infrastructure.whisper_model import load_model, set_model
+from whisper_service.logging_setup import setup_logging
 
-logger.remove()
-logger.add(sys.stdout, level="INFO", enqueue=True)
+setup_logging(settings)
 
 
 @asynccontextmanager

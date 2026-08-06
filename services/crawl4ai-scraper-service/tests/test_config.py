@@ -15,6 +15,7 @@ def test_default_settings_values() -> None:
     assert settings.enable_magic_mode is False
     assert settings.enable_proxy is False
     assert settings.proxy_configured is False
+    assert settings.max_pages_before_recycle == 15
 
 
 def test_log_level_is_normalized_to_uppercase() -> None:

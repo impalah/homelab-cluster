@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -6,6 +8,10 @@ class Settings(BaseSettings):
 
     host: str = "0.0.0.0"
     port: int = 8090
+
+    # --- Logging (Loguru) ----------------------------------------------
+    log_level: str = "INFO"
+    log_format: Literal["text", "json"] = "text"
 
     # postgres-main en retaco, base de datos aislada creada con
     # shared/scripts/create-postgres-db.sh (ver docs/06-instalacion-pi1-dns.md)

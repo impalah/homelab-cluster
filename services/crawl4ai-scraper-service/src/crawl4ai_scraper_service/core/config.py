@@ -55,6 +55,24 @@ class Settings(BaseSettings):
     crawler_wait_until: Literal["domcontentloaded", "load", "networkidle"] = Field(
         default="domcontentloaded"
     )
+    # Nº de páginas servidas por el navegador compartido antes de reciclarlo
+    # (crear uno nuevo y drenar/cerrar el anterior). Sin esto, páginas que
+    # Crawl4AI no logra cerrar tras un timeout/crash (falla silenciosa en su
+    # propio cleanup interno) dejan procesos Chromium huérfanos que se van
+    # acumulando indefinidamente en el navegador compartido de larga
+    # duración — visto en producción: 39 procesos "--type=renderer" y 5GB de
+    # RAM en un contenedor sin scrapes en curso. 0 = deshabilitado (default
+    # de la librería, no usar).
+    #
+    # Bajado de 50 a 15 tras un segundo incidente en producción (2026-08-05):
+    # con 50 el navegador acumuló 452MB -> 5,7GB en ~1h bajo una tanda con
+    # muchos bloqueos anti-bot (cada reintento de MAX_RETRIES sobre una URL
+    # bloqueada abre más páginas de las que este contador parece compensar
+    # a tiempo) -- 50 páginas resultó ser un umbral demasiado alto para ese
+    # patrón de carga real. 15 es más conservador: recicla más a menudo, a
+    # cambio de una interrupción breve y barata en vez de agotar la RAM del
+    # host entero.
+    max_pages_before_recycle: int = Field(default=15, ge=0)
 
     # --- Anti-bot / anti-detección ---------------------------------------
     enable_stealth_mode: bool = Field(default=False)

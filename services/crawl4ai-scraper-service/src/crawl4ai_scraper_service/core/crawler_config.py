@@ -48,6 +48,7 @@ def build_browser_config(settings: Settings) -> BrowserConfig:
         "headless": settings.crawler_headless,
         "verbose": settings.crawler_verbose,
         "enable_stealth": settings.enable_stealth_mode,
+        "max_pages_before_recycle": settings.max_pages_before_recycle,
     }
 
     if settings.proxy_configured:

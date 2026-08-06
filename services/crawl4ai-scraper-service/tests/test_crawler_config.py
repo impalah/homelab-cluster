@@ -25,6 +25,7 @@ def test_build_browser_config_defaults() -> None:
     assert isinstance(browser_config, BrowserConfig)
     assert browser_config.headless is True
     assert browser_config.enable_stealth is False
+    assert browser_config.max_pages_before_recycle == settings.max_pages_before_recycle
 
 
 def test_build_browser_config_enables_stealth() -> None:

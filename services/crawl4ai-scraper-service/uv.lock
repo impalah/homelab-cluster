@@ -473,7 +473,7 @@ wheels = [
 
 [[package]]
 name = "crawl4ai-scraper-service"
-version = "0.1.1"
+version = "0.1.2"
 source = { editable = "." }
 dependencies = [
     { name = "crawl4ai" },

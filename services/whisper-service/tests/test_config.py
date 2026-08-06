@@ -8,6 +8,8 @@ def test_default_values():
     assert settings.whisper_language == "es"
     assert settings.host == "0.0.0.0"
     assert settings.port == 9800
+    assert settings.log_level == "INFO"
+    assert settings.log_format == "text"
 
 
 def test_env_vars_override_defaults(monkeypatch):
