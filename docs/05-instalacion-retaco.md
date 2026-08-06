@@ -169,6 +169,28 @@ bash /srv/homelab/shared/scripts/create-postgres-db.sh postgres-main dbadmin <nu
 
 Conectar desde otro nodo: `postgresql://<usuario>:<password>@192.168.1.174:5432/<db>` — la conexión entre nodos siempre se hace por IP, no por nombre de contenedor.
 
+#### Rol de monitorización para postgres-exporter
+
+`postgres-exporter` (en `pi-obs`) **no** debe usar las credenciales de ninguna aplicación (n8n, sonarqube...) — cada base está aislada del resto (`REVOKE ALL ... FROM PUBLIC` en `create-postgres-db.sh`), así que un usuario de aplicación no puede ver el tamaño de las demás bases ni las métricas de WAL (`pg_ls_waldir`, que requiere el rol `pg_monitor` o superusuario). El síntoma si se hace mal: el exporter arranca y da métricas, pero el log de `postgres-main` se llena de `permission denied for function pg_ls_waldir` / `permission denied for database <otra-app>` en cada ciclo de scrape.
+
+Crear un rol dedicado, de solo lectura, la primera vez que se despliega el stack:
+
+```bash
+docker exec -i postgres-main psql -v ON_ERROR_STOP=1 -U dbadmin -d postgres <<'EOSQL'
+CREATE ROLE postgres_exporter WITH LOGIN PASSWORD '<generar con: openssl rand -base64 24>' CONNECTION LIMIT 5;
+GRANT pg_monitor TO postgres_exporter;
+GRANT CONNECT ON DATABASE postgres TO postgres_exporter;
+GRANT CONNECT ON DATABASE n8n TO postgres_exporter;
+GRANT CONNECT ON DATABASE sonarqube TO postgres_exporter;
+GRANT CONNECT ON DATABASE apikeys TO postgres_exporter;
+GRANT CONNECT ON DATABASE content_pipeline TO postgres_exporter;
+EOSQL
+```
+
+`GRANT CONNECT` hay que repetirlo por cada base de datos de aplicación que exista en el servidor (nueva base con `create-postgres-db.sh` → añadir aquí también su `GRANT CONNECT`, si no, esa base concreta seguirá dando `permission denied` en las métricas de tamaño, aunque el resto funcione). `pg_monitor` da acceso de solo lectura a estadísticas y funciones de monitorización (WAL, `pg_stat_*`) — no a los datos de las tablas de ninguna aplicación.
+
+`pi-obs/.env` → `POSTGRES_EXPORTER_DSN=postgresql://postgres_exporter:<password>@192.168.1.174:5432/postgres?sslmode=disable`, después `docker compose up -d postgres-exporter` en `pi-obs`.
+
 ### 5.3 registry — registro Docker privado
 
 Almacena las imágenes construidas localmente del clúster (`apikey-service`, `markitdown-service`, `whisper-service`) para no tener que compilarlas en cada nodo — build en un sitio, `docker pull` en el resto. Imagen oficial `registry:2.8.3`, sin dependencias externas (no usa `postgres-main`, a propósito — mismo criterio de aislamiento que Vaultwarden).
