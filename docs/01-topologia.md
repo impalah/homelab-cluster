@@ -141,6 +141,36 @@ Hoy por hoy, `apikey-service` es el único servicio que envía trazas y registro
 - TLS: el certificado está firmado por una entidad certificadora interna propia (`docs/15-ca-interna.md`), no autofirmado, lo que evita el aviso de "certificado no confiable" una vez instalada esa entidad certificadora en cada dispositivo.
 - El acceso directo por IP y puerto (saltándose nginx y apikey-service) está disponible por diseño para casi todos los servicios HTTP, y se puede cerrar nodo a nodo con `shared/scripts/toggle-direct-access.sh` — consulta `docs/17-firewall-acceso-directo.md`.
 
+## Acceso SSH a los nodos
+
+Cada nodo (salvo `ryzen`) tiene su propio usuario de administración
+dedicado, distinto en cada uno — no hay un usuario compartido entre nodos.
+Acceso por clave SSH, sin contraseña. Esta tabla centraliza lo que hasta
+ahora estaba solo disperso en el documento de instalación de cada nodo
+(`docs/05` a `docs/10`) y en los scripts de `shared/scripts/` (p. ej. el
+mapa `NODE_SSH` de `toggle-direct-access.sh`).
+
+| Nodo | Usuario SSH | Comando | Grupos relevantes |
+|---|---|---|---|
+| `ryzen` (`mole`) | — (acceso local) | — | — |
+| `retaco` | `u-data` | `ssh u-data@192.168.1.174` | `sudo`, `docker` |
+| `pi-dns` | `u-dns` | `ssh u-dns@192.168.1.170` | `sudo`, `docker` |
+| `pi-obs` | `u-obs` | `ssh u-obs@192.168.1.171` | `sudo`, `docker` |
+| `pi-sonar` | `u-sonar` | `ssh u-sonar@192.168.1.172` | `sudo`, `docker` |
+| `pi-utils` | `u-utils` | `ssh u-utils@192.168.1.173` | `sudo`, `docker` |
+
+`ryzen` (alias `mole`) es también el puesto de trabajo físico del usuario
+— los comandos que en el resto de nodos requieren `ssh <usuario>@<ip>` se
+ejecutan ahí directamente en local, sin salto de red. Todos los usuarios
+de las Raspberry Pi/`retaco` están en el grupo `sudo` (tareas de sistema:
+`apt`, `systemctl`, edición de `/etc/fstab`...) y en el grupo `docker`
+(gestionar contenedores sin anteponer `sudo` a cada `docker compose`).
+
+Cada usuario tiene además acceso de escritura a su propio
+`/srv/homelab/<nodo>/` (sección siguiente) — no hace falta `sudo` para
+editar `docker-compose.yml`/`.env` ni para copiar ficheros de configuración,
+solo para operaciones a nivel de sistema operativo.
+
 ## Ruta base en todos los nodos
 
 ```
