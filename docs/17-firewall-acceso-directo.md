@@ -82,7 +82,7 @@ bash toggle-direct-access.sh all on        # reabre todo
 | Nodo | Puertos | Servicios |
 |---|---|---|
 | ryzen | 8080, 11434, 9800, 8010, 8188 | open-webui, ollama, whisper-service, vllm, comfyui |
-| retaco | 5678, 6333, 5000 | n8n-main, qdrant, registry |
+| retaco | 5678, 6333, 5000, 8003, 8004 | n8n-main, qdrant, registry, epub2pdf-service, pdf2chunks-service |
 | pi-obs | 3000, 9090 | grafana, prometheus |
 | pi-sonar | 9000 | sonarqube |
 | pi-utils | 1200, 8001, 5679, 9000, 8222 | rsshub, markitdown-service, n8n-aux, portainer, vaultwarden |

@@ -176,6 +176,23 @@ Persistente mediante `/etc/fstab` en el cliente:
 ketekasko.home.arpa:/volume1/nfs-data /mnt/nfs-data nfs vers=3,defaults,_netdev 0 0
 ```
 
+### Clientes montados hoy
+
+| Nodo | Punto de montaje | Uso |
+|---|---|---|
+| `retaco` | `/mnt/nfs-data` | `/data/input`/`/data/output` de `epub2pdf-service` y `pdf2chunks-service` (subcarpetas `epub2pdf/`, `pdf2chunks/`) — ver `docs/05-instalacion-retaco.md` sección 5.4 |
+
+⚠️ **`stat`/`ls` sobre el punto de montaje como usuario sin privilegios
+pueden devolver "Permiso denegado" o `mode 0000` de forma intermitente**,
+pese a que el export tiene permisos abiertos y root squash desactivado —
+observado en vivo montando desde `retaco`. El acceso como `root` (por
+`sudo`, o el propio proceso `root` dentro de un contenedor Docker) siempre
+funciona con normalidad, verificado con lectura y escritura reales — no
+bloquea el caso de uso real (contenedores que escriben como root, ver
+sección "Esquema de carpetas de este NAS" más arriba). No investigado a
+fondo el motivo exacto; probablemente una peculiaridad de cómo UGOS Pro
+calcula o cachea los atributos NFSv3, no un problema de permisos real.
+
 ## Esquema de carpetas de este NAS
 
 Volumen total 3.6 TB (RAID 1), repartido en dos carpetas compartidas:

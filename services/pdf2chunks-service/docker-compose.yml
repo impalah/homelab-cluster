@@ -1,0 +1,32 @@
+# docker-compose.yml de ejemplo para probar pdf2chunks-service de forma
+# aislada (modo API HTTP, el que arranca la imagen por defecto).
+#
+# Uso:
+#   1. cp .env.example .env
+#   2. docker compose up --build
+#   3. curl -sf http://localhost:8004/health
+#
+# Para el modo CLI (procesamiento por lote de un directorio, pensado para
+# invocarse como contenedor efímero desde n8n), ver el comentario al final
+# del Dockerfile y la sección correspondiente del README.
+
+services:
+  pdf2chunks-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: pdf2chunks-service:local
+    container_name: pdf2chunks-service
+    ports:
+      - "8004:8004"
+    environment:
+      PDF2CHUNKS_LOG_LEVEL: ${PDF2CHUNKS_LOG_LEVEL:-INFO}
+      PDF2CHUNKS_OCR_CHAR_THRESHOLD: ${PDF2CHUNKS_OCR_CHAR_THRESHOLD:-20}
+      PDF2CHUNKS_OCR_LANGUAGE: ${PDF2CHUNKS_OCR_LANGUAGE:-eng}
+      PDF2CHUNKS_CHUNK_SIZE_TOKENS: ${PDF2CHUNKS_CHUNK_SIZE_TOKENS:-400}
+      PDF2CHUNKS_CHUNK_OVERLAP_RATIO: ${PDF2CHUNKS_CHUNK_OVERLAP_RATIO:-0.15}
+      PDF2CHUNKS_CHUNKING_STRATEGY: ${PDF2CHUNKS_CHUNKING_STRATEGY:-fixed_size}
+      PDF2CHUNKS_OUTPUT_FORMAT: ${PDF2CHUNKS_OUTPUT_FORMAT:-json}
+    volumes:
+      - ./data/input:/data/input:ro
+      - ./data/output:/data/output

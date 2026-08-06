@@ -1,0 +1,42 @@
+# docker-compose.yml de ejemplo para probar epub2pdf-service de forma aislada
+# (modo API HTTP, el que arranca la imagen por defecto).
+#
+# Uso:
+#   1. cp .env.example .env
+#   2. docker compose up --build
+#   3. curl -sf http://localhost:8003/health
+#
+# Para el modo CLI (procesamiento por lote de un directorio, pensado para
+# invocarse como contenedor efímero desde n8n), ver el comentario al final
+# del Dockerfile y la sección correspondiente del README.
+
+services:
+  epub2pdf-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: epub2pdf-service:local
+    container_name: epub2pdf-service
+    ports:
+      - "8003:8003"
+    environment:
+      EPUB2PDF_LOG_LEVEL: ${EPUB2PDF_LOG_LEVEL:-INFO}
+      EPUB2PDF_CONVERSION_TIMEOUT_SECONDS: ${EPUB2PDF_CONVERSION_TIMEOUT_SECONDS:-300}
+      EPUB2PDF_OTEL_ENABLED: ${EPUB2PDF_OTEL_ENABLED:-true}
+      EPUB2PDF_OTEL_EXPORTER_OTLP_ENDPOINT: ${EPUB2PDF_OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      EPUB2PDF_OTEL_SERVICE_NAME: ${EPUB2PDF_OTEL_SERVICE_NAME:-epub2pdf-service}
+    volumes:
+      - ./data/input:/data/input:ro
+      - ./data/output:/data/output
+
+  # Servicio opcional: un colector OpenTelemetry local para recibir los
+  # spans exportados por epub2pdf-service durante pruebas de observabilidad.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: epub2pdf-service-otel-collector
+    profiles: ["observability"]
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4318:4318"

@@ -55,7 +55,7 @@ declare -A TARGETS=(
 # SonarQube) — ver docs/17-firewall-acceso-directo.md.
 declare -A NODE_PORTS=(
   [ryzen]="8080 11434 9800 8010 8188"      # open-webui ollama whisper vllm comfyui
-  [retaco]="5678 6333 5000"                 # n8n-main qdrant registry
+  [retaco]="5678 6333 5000 8003 8004"        # n8n-main qdrant registry epub2pdf-service pdf2chunks-service
   [pi-obs]="3000 9090"                      # grafana prometheus
   [pi-sonar]="9000"                         # sonarqube
   [pi-utils]="1200 8001 5679 9000 8222"     # rsshub markitdown n8n-aux portainer vaultwarden

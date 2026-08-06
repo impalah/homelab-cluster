@@ -52,7 +52,13 @@ services:
     networks:
       - retaco-net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_ADMIN_USER:-dbadmin}"]
+      # "-d postgres" a propósito: sin él, pg_isready por defecto usa como
+      # nombre de base el propio usuario (-U), y como no existe una base
+      # llamada "dbadmin" (solo la base "postgres", de la que es dueño),
+      # cada chequeo deja un "FATAL: database dbadmin does not exist" en
+      # el log — inofensivo (pg_isready igualmente reporta el servidor como
+      # sano), pero ruido constante cada 10s.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_ADMIN_USER:-dbadmin} -d postgres"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -84,10 +90,29 @@ services:
       N8N_HOST: ${N8N_HOST}
       N8N_PORT: ${N8N_PORT:-5678}
       N8N_PROTOCOL: ${N8N_PROTOCOL:-https}
-      WEBHOOK_URL: ${WEBHOOK_URL}
+      N8N_WEBHOOK_URL: ${WEBHOOK_URL}
       GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-Europe/Madrid}
       N8N_LOG_LEVEL: info
-      EXECUTIONS_PROCESS: main
+      # nginx (pi-dns) hace de proxy inverso delante de n8n — un único salto.
+      # Sin esto, Express rechaza la cabecera X-Forwarded-For que añade nginx
+      # ("ValidationError: ... trust proxy setting is false") y express-rate-limit
+      # no puede identificar bien a los clientes.
+      N8N_PROXY_HOPS: "1"
+      # No hay servicio propio de n8n corriendo detrás que necesite avisos de
+      # nuevas versiones ni analítica externa (PostHog) — desactivarlo evita
+      # además los "Host not found" en el log cuando esas peticiones salientes
+      # no resuelven (p. ej. por el bloqueo de dominios de tracking en Pi-hole).
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
+      # Deprecaciones de n8n 2.31 — fijadas explícitamente al valor por
+      # defecto ACTUAL de cada una, para que el comportamiento no cambie el
+      # día que n8n reduzca el default, y para silenciar los avisos de
+      # arranque. Ver "There are deprecations related to your n8n setup" en
+      # el log si una versión futura añade alguna más.
+      N8N_UNVERIFIED_PACKAGES_ENABLED: "true"
+      N8N_RUNNERS_TASK_TIMEOUT: "300"
+      N8N_COMPRESSION_NODE_MAX_DECOMPRESSED_SIZE_BYTES: "2147483648"
+      N8N_COMPRESSION_NODE_MAX_ZIP_ENTRIES: "5000"
       # n8n (Node.js/axios) no usa el almacén de certificados del sistema para
       # sus propias peticiones HTTP salientes (a markitdown.home.arpa, etc.) —
       # mismo problema que pysonar con REQUESTS_CA_BUNDLE (docs/09, sección 8.1).
@@ -183,6 +208,63 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # epub2pdf-service — Conversión de EPUB a PDF (Calibre). Imagen publicada en
+  # registry.home.arpa (código en services/epub2pdf-service/, raíz del repo —
+  # no se construye en este nodo, solo amd64, ver Makefile del servicio).
+  # Protegido con apikey-service (docs/06-instalacion-pi1-dns.md), expuesto
+  # como epub2pdf.home.arpa. /data/input y /data/output son subcarpetas del
+  # montaje NFS del NAS (ketekasko:/volume1/nfs-data), no disco local — ver
+  # docs/05-instalacion-retaco.md sección 5.4 y docs/21-configuracion-nas-ugreen.md.
+  # ---------------------------------------------------------------------------
+  epub2pdf-service:
+    image: registry.home.arpa/epub2pdf-service:latest
+    container_name: epub2pdf-service
+    restart: unless-stopped
+    environment:
+      EPUB2PDF_LOG_LEVEL: ${EPUB2PDF_LOG_LEVEL:-INFO}
+      EPUB2PDF_LOG_FORMAT: ${EPUB2PDF_LOG_FORMAT:-json}
+      EPUB2PDF_CONVERSION_TIMEOUT_SECONDS: ${EPUB2PDF_CONVERSION_TIMEOUT_SECONDS:-300}
+    volumes:
+      - /mnt/nfs-data/epub2pdf/input:/data/input:ro
+      - /mnt/nfs-data/epub2pdf/output:/data/output
+    ports:
+      # Publicado a la LAN: nginx (pi-dns) le hace proxy cross-host, igual
+      # que qdrant/n8n-main/registry. Gestionable con toggle-direct-access.sh (docs/17).
+      - "8003:8003"
+    networks:
+      - retaco-net
+
+  # ---------------------------------------------------------------------------
+  # pdf2chunks-service — Troceado (chunking) de PDF a fragmentos indexables
+  # para el pipeline RAG. Imagen publicada en registry.home.arpa (código en
+  # services/pdf2chunks-service/, raíz del repo — no se construye en este
+  # nodo, solo amd64, ver Makefile del servicio). Protegido con
+  # apikey-service, expuesto como pdf2chunks.home.arpa. Mismo montaje NFS que
+  # epub2pdf-service, subcarpeta propia — ver docs/05-instalacion-retaco.md
+  # sección 5.4 y docs/21-configuracion-nas-ugreen.md.
+  # ---------------------------------------------------------------------------
+  pdf2chunks-service:
+    image: registry.home.arpa/pdf2chunks-service:latest
+    container_name: pdf2chunks-service
+    restart: unless-stopped
+    environment:
+      PDF2CHUNKS_LOG_LEVEL: ${PDF2CHUNKS_LOG_LEVEL:-INFO}
+      PDF2CHUNKS_LOG_FORMAT: ${PDF2CHUNKS_LOG_FORMAT:-json}
+      PDF2CHUNKS_OCR_CHAR_THRESHOLD: ${PDF2CHUNKS_OCR_CHAR_THRESHOLD:-20}
+      PDF2CHUNKS_OCR_LANGUAGE: ${PDF2CHUNKS_OCR_LANGUAGE:-eng}
+      PDF2CHUNKS_CHUNK_SIZE_TOKENS: ${PDF2CHUNKS_CHUNK_SIZE_TOKENS:-400}
+      PDF2CHUNKS_CHUNK_OVERLAP_RATIO: ${PDF2CHUNKS_CHUNK_OVERLAP_RATIO:-0.15}
+      PDF2CHUNKS_CHUNKING_STRATEGY: ${PDF2CHUNKS_CHUNKING_STRATEGY:-fixed_size}
+      PDF2CHUNKS_OUTPUT_FORMAT: ${PDF2CHUNKS_OUTPUT_FORMAT:-json}
+    volumes:
+      - /mnt/nfs-data/pdf2chunks/input:/data/input:ro
+      - /mnt/nfs-data/pdf2chunks/output:/data/output
+    ports:
+      - "8004:8004"
+    networks:
+      - retaco-net
 
   # ---------------------------------------------------------------------------
   # node-exporter — Métricas del sistema host, scrapeadas por Prometheus en pi-obs
