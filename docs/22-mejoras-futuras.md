@@ -578,11 +578,19 @@ Bajo — reutiliza infraestructura ya montada (Prometheus, Grafana, patrón de `
 
 ---
 
-## 23. Mover `logs.db`/`config.db` de Bifrost a Postgres centralizado
+## 23. ~~Mover `logs.db`/`config.db` de Bifrost a Postgres centralizado~~ — hecho
 
-**Prioridad: media**
+**Prioridad: media** — **completado**
 
-### Qué hay hoy
+### Qué se implementó
+
+Base `bifrost` creada en `postgres-main` (retaco) con `create-postgres-db.sh`, `config_store` y `logs_store` de `pi-sonar/config/bifrost/config.json` cambiados de `sqlite` a `postgres` (misma base para ambos, credenciales vía `env.BIFROST_DB_PASSWORD`, host/usuario/db_name hardcodeados por no ser secretos). Empezado de cero, sin migrar el `config.db`/`logs.db` previos (presupuesto y logs sin valor real que preservar, mismo criterio que la migración de Open WebUI). Detalle completo: `docs/23-bifrost-gateway-llm.md`, sección "Postgres centralizado".
+
+Verificado end-to-end tras el redespliegue: 58 tablas creadas en la base `bifrost` por las migraciones propias de Bifrost, panel de gobernanza (`/api/governance/budgets`) sirviendo desde Postgres, una petición de inferencia real (Bedrock) quedó registrada en la tabla `logs`. `bifrost/data/config.db`/`logs.db` (SQLite) quedan en el disco de `pi-sonar` sin usarse, sin borrar — mismo criterio de dejar backups en vez de eliminar que el resto del repo.
+
+Con esto, `bifrost/data/` en Postgres queda cubierto automáticamente por `shared/scripts/backup-postgres.sh` (mejora 1) — cierra el punto pendiente en `docs/23` sección "Operación".
+
+### Qué hay hoy (histórico, previo a la implementación)
 
 Bifrost (`pi-sonar`) guarda su estado en dos SQLite locales dentro del volumen montado (`docs/23-bifrost-gateway-llm.md`, sección "Dónde se almacena todo lo que se ve en el panel"): `logs.db` (historial de peticiones — modelo, coste, latencia, resumen del contenido) y `config.db` (gobernanza — virtual keys, presupuestos y su gasto acumulado). Confirmado que Bifrost ya aplica retención automática (365 días, purga periódica en segundo plano), así que no es un crecimiento *sin ningún control* — pero sigue siendo SQLite local en una Raspberry Pi, sin el mismo tratamiento (backups, consulta con SQL normal, robustez ante escritura concurrente) que el resto de datos de aplicación del clúster, que ya viven en `postgres-main` (n8n, sonarqube, apikeys, openwebui).
 
@@ -625,6 +633,6 @@ Bajo — cambio de configuración, no de arquitectura; Bifrost ya sabe hablar co
 | 20 | LiteLLM — proxy unificado hacia AWS Bedrock, conectado a Open WebUI | Media | Medio | Cuenta/IAM de AWS; Open WebUI ya desplegado; alternativa a mejora 21 |
 | 21 | ~~Bifrost — gateway hacia AWS Bedrock, conectado a Open WebUI~~ | Media | — | **Completado** — `docs/23-bifrost-gateway-llm.md` |
 | 22 | Integrar las métricas de Bifrost (`/metrics`) en Grafana | Media | Bajo | Bifrost ya desplegado (`docs/23`); Prometheus/Grafana ya desplegados (`docs/08`) |
-| 23 | Mover `logs.db`/`config.db` de Bifrost a Postgres centralizado | Media | Bajo | Bifrost ya desplegado (`docs/23`); `postgres-main` ya desplegado (`docs/05`) |
+| 23 | ~~Mover `logs.db`/`config.db` de Bifrost a Postgres centralizado~~ | Media | — | **Completado** — `docs/23-bifrost-gateway-llm.md` |
 
 Ninguna de estas mejoras es urgente ni bloqueante — el clúster funciona correctamente sin ellas.

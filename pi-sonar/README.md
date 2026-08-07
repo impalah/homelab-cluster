@@ -11,7 +11,7 @@
 | bifrost | 8080 | https://bifrost.home.arpa |
 
 > La base de datos de SonarQube vive en `retaco` (`postgres-main`), no en este nodo — ver `docs/05-instalacion-retaco.md`.
-> Bifrost es un gateway LLM hacia AWS Bedrock (sin base de datos externa, solo su propio SQLite en `bifrost/data/`) — ver `docs/23-bifrost-gateway-llm.md` para la instalación completa, la política IAM y el manual de operación.
+> Bifrost es un gateway LLM hacia AWS Bedrock — `config_store`/`logs_store` también en `postgres-main` (base `bifrost`), mismo patrón que SonarQube (ver `docs/22-mejoras-futuras.md` punto 23) — ver `docs/23-bifrost-gateway-llm.md` para la instalación completa, la política IAM y el manual de operación.
 
 ## Prerrequisitos obligatorios del kernel
 
@@ -58,17 +58,21 @@ Se hace desde `retaco`, donde vive la base de datos (ver `docs/05-instalacion-re
 
 ```bash
 bash /srv/homelab/shared/scripts/backup-postgres.sh retaco postgres-main sonarqube
+bash /srv/homelab/shared/scripts/backup-postgres.sh retaco postgres-main bifrost
 ```
 
 ## bifrost — arranque rápido
 
-Detalle completo (política IAM, virtual keys, prueba manual, troubleshooting) en `docs/23-bifrost-gateway-llm.md`. Resumen:
+Detalle completo (política IAM, virtual keys, Postgres, prueba manual, troubleshooting) en `docs/23-bifrost-gateway-llm.md`. Resumen:
 
 ```bash
+# Base de datos (config_store + logs_store), desde retaco:
+bash /srv/homelab/shared/scripts/create-postgres-db.sh postgres-main dbadmin bifrost bifrost
+
 mkdir -p /srv/homelab/pi-sonar/bifrost/data
 sudo chown 1000:0 /srv/homelab/pi-sonar/bifrost/data && chmod 770 /srv/homelab/pi-sonar/bifrost/data
 cp config/bifrost/config.json /srv/homelab/pi-sonar/bifrost/data/config.json
-nano .env    # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (usuario base) / AWS_ROLE_ARN / AWS_REGION / BIFROST_VIRTUAL_KEY
+nano .env    # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (usuario base) / AWS_ROLE_ARN / AWS_REGION / BIFROST_VIRTUAL_KEY / BIFROST_DB_PASSWORD
 docker compose up -d bifrost
 docker compose logs -f bifrost
 ```

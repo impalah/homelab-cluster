@@ -368,17 +368,17 @@ No se alias `anthropic.claude-3-haiku-20240307-v1:0` (más antiguo) — falla po
 
 ## Dónde se almacena todo lo que se ve en el panel
 
-Tres cosas distintas, tres sitios distintos:
+Tres cosas distintas, tres sitios distintos. Desde la migración a Postgres (ver sección siguiente), las dos primeras filas ya no son SQLite — se dejan aquí en su forma histórica para quien llegue desde un enlace o un log antiguo, con la corrección al lado:
 
-| Qué | Dónde | ¿Persiste entre reinicios/recreaciones? |
-|---|---|---|
-| **Logs de peticiones** — modelo, proveedor, coste, latencia, timestamps, resumen truncado del contenido (`content_summary`) | SQLite `/app/data/logs.db` (host: `/srv/homelab/pi-sonar/bifrost/data/logs.db`) | Sí — dentro del volumen montado |
-| **Gobernanza** — virtual keys, presupuestos y su gasto acumulado (`current_usage`), config de autenticación del panel | SQLite `/app/data/config.db` (host: `/srv/homelab/pi-sonar/bifrost/data/config.db`) | Sí, **ahora** — ver el fallo real de abajo |
-| **Métricas `/metrics` (formato Prometheus)** — `bifrost_cost_total` y demás contadores | En memoria del proceso, recalculadas sobre la marcha | **No** — se resetean a cero en cada reinicio; solo quedarían con histórico real si algo externo las scrapea y las guarda (Prometheus, mejora 22 del backlog) |
+| Qué | Dónde (histórico, hasta agosto 2026) | Dónde (actual) | ¿Persiste entre reinicios/recreaciones? |
+|---|---|---|---|
+| **Logs de peticiones** — modelo, proveedor, coste, latencia, timestamps, resumen truncado del contenido (`content_summary`) | SQLite `/app/data/logs.db` | Postgres, tabla `logs` (base `bifrost`, `postgres-main` en retaco) | Sí |
+| **Gobernanza** — virtual keys, presupuestos y su gasto acumulado (`current_usage`), config de autenticación del panel | SQLite `/app/data/config.db` | Postgres, tablas `governance_*`/`config_*` (misma base `bifrost`) | Sí |
+| **Métricas `/metrics` (formato Prometheus)** — `bifrost_cost_total` y demás contadores | En memoria del proceso, recalculadas sobre la marcha | Sin cambios — sigue en memoria | **No** — se resetean a cero en cada reinicio; solo quedarían con histórico real si algo externo las scrapea y las guarda (Prometheus, mejora 22 del backlog) |
 
 **Los prompts y respuestas completos (el texto real) NO se guardan por defecto** — solo el `content_summary` truncado que se ve en el log. Guardar el cuerpo completo de cada petición/respuesta requeriría activar `client.disable_content_logging: false` (ya es el comportamiento por defecto, así que en realidad ya casi se guarda — la diferencia real es `send_back_raw_request`/`send_back_raw_response`/`store_raw_request_response` a nivel de proveedor, desactivados aquí) — no configurado en este despliegue.
 
-### Fallo real encontrado y corregido: `config.db` vivía fuera del volumen persistente
+### Fallo real encontrado y corregido (histórico, cuando `config_store` aún era SQLite): `config.db` vivía fuera del volumen persistente
 
 `config_store.config.path` en `config.json` estaba puesto como `"config.db"` — una ruta **relativa**. El directorio de trabajo real del proceso de Bifrost es `/app`, no `/app/data`, así que el fichero real se creaba en `/app/config.db`: dentro de la capa interna del contenedor, **fuera** del volumen `/app/data` que sí está montado al host. Confirmado en el despliegue real (`docker exec bifrost find / -iname 'config.db*'` lo mostraba en `/app`, no en `/app/data`).
 
@@ -398,14 +398,77 @@ Corregido cambiando la ruta a **absoluta, dentro del volumen ya montado**:
 
 Verificado tras el cambio: `config.db` aparece ahora en `/srv/homelab/pi-sonar/bifrost/data/` (visible desde el host), y el presupuesto se recreó correctamente a partir de `config.json` (gasto acumulado volvió a 0 — pérdida trivial, unos pocos céntimos, y es exactamente el momento más barato para haberlo corregido).
 
+## Postgres centralizado — `config_store`/`logs_store` (mejora 23 del backlog)
+
+Implementado agosto 2026 (`docs/22-mejoras-futuras.md` punto 23). Motivo: SQLite local en una Raspberry Pi no tiene el mismo tratamiento (backups, consulta con SQL normal, robustez ante escritura concurrente) que el resto de datos de aplicación del clúster, que ya viven en `postgres-main` (n8n, sonarqube, apikeys, openwebui) — ver el hallazgo de arriba (`config.db` fuera del volumen) como ejemplo de la clase de fragilidad que Postgres evita de raíz.
+
+Confirmado en el schema real de Bifrost (`https://www.getbifrost.ai/schema`): tanto `config_store` como `logs_store` soportan `type: "postgres"` de forma independiente, con la misma forma de conexión (`host`, `port`, `user`, `password`/`password_command`, `db_name`, `ssl_mode`, más ajustes opcionales de pool). Se usa **una única base** (`bifrost`) para ambos — más simple, y Bifrost las mantiene con sus propias migraciones internas (58 tablas creadas al primer arranque, prefijos `config_*`/`governance_*`/`logs`/etc.), igual que ya hacía con SQLite.
+
+### Base de datos
+
+Creada con el patrón ya establecido (`create-postgres-db.sh`, misma herramienta que `n8n`/`sonarqube`/`openwebui`), desde `retaco`:
+
+```bash
+ssh retaco
+bash /srv/homelab/shared/scripts/create-postgres-db.sh postgres-main dbadmin bifrost bifrost
+```
+
+### `config.json` — ambos stores a `postgres`
+
+```json
+"config_store": {
+  "enabled": true,
+  "type": "postgres",
+  "config": {
+    "host": "postgresql.home.arpa",
+    "port": 5432,
+    "user": "bifrost",
+    "password": "env.BIFROST_DB_PASSWORD",
+    "db_name": "bifrost",
+    "ssl_mode": "disable"
+  }
+},
+"logs_store": {
+  "enabled": true,
+  "type": "postgres",
+  "config": {
+    "host": "postgresql.home.arpa",
+    "port": 5432,
+    "user": "bifrost",
+    "password": "env.BIFROST_DB_PASSWORD",
+    "db_name": "bifrost",
+    "ssl_mode": "disable"
+  }
+}
+```
+
+`host`/`user`/`db_name` van hardcodeados en claro (no son secreto, mismo criterio que `SONAR_JDBC_URL` en `pi-sonar/docker-compose.yml`) — solo la contraseña pasa por `env.BIFROST_DB_PASSWORD` (`pi-sonar/.env`, fuera de git). `ssl_mode: "disable"` porque `postgres-main` no tiene TLS habilitado — mismo criterio que el resto de conexiones internas del clúster a esa base. `postgresql.home.arpa` (no `postgres-main`, el nombre del contenedor) porque `bifrost` vive en `pi-sonar`, cross-host respecto a `retaco` — mismo patrón que `SONAR_JDBC_URL`.
+
+### Sin migración de datos existentes
+
+Se empezó de cero, sin migrar `config.db`/`logs.db` previos — mismo criterio que la migración de Open WebUI a Postgres: con el presupuesto ya reiniciado una vez por el fallo de ruta corregido arriba, no había nada valioso que preservar. Los ficheros SQLite originales se dejan en `/srv/homelab/pi-sonar/bifrost/data/` (`config.db`, `logs.db`) sin borrar, como backup histórico — mismo criterio de "no eliminar, dejar constancia" que el resto del repo. Todo lo que sí importaba conservar de la configuración anterior (providers, aliases de modelos, virtual key, presupuesto) sigue viniendo de `config.json`, sin cambios — Bifrost lo vuelve a sembrar en la base nueva en el primer arranque, igual que hacía con SQLite vacío.
+
+### Verificado end-to-end tras el despliegue
+
+1. `docker compose logs bifrost` — migraciones de `logstore`/`configstore` corriendo contra Postgres al arrancar, sin errores; contenedor queda `healthy`.
+2. `psql -d bifrost -c '\dt'` (desde `postgres-main` en retaco) — 58 tablas creadas.
+3. `curl .../api/governance/budgets` con las credenciales de admin — devuelve el presupuesto `budget-test` (sembrado desde `config.json`, `current_usage: 0`, ciclo reiniciado).
+4. Una petición real de inferencia (`bedrock/eu.anthropic.claude-sonnet-4-6`, misma prueba manual de la sección de arriba) — `200`, respuesta real de Claude.
+5. `SELECT count(*) FROM logs` tras esa petición — `1`: el log de la petición quedó escrito en Postgres, no en SQLite.
+6. Ruta `ollama/qwen3.5:9b` (provider Ollama, sección más abajo) probada aparte tras el cambio — sigue funcionando sin diferencias, la migración de storage no afecta al routing de providers.
+
+### Vaultwarden
+
+`BIFROST_DB_PASSWORD` es una credencial más — misma limitación que `OPENWEBUI_DB_PASSWORD` (ver sección de Open WebUI más abajo): no automatizable sin la contraseña maestra de un usuario real de Vaultwarden. Añadir a mano una entrada `bifrost — postgres` (usuario `bifrost`, host `postgres-main:5432`/`postgresql.home.arpa:5432`, base `bifrost`).
+
 ## Operación
 
 - **Arranque/parada**: `cd /srv/homelab/pi-sonar && docker compose up -d bifrost` / `docker compose stop bifrost` — igual que cualquier otro servicio del clúster (`docs/11-operacion-diaria.md`).
-- **Logs**: `docker compose logs -f bifrost`, o desde Grafana/Loki (`promtail` en `pi-sonar` ya envía los logs de todos los contenedores del nodo) — esto son los logs del *proceso* (stdout), no los logs de peticiones del panel (esos están en `logs.db`, ver arriba).
+- **Logs**: `docker compose logs -f bifrost`, o desde Grafana/Loki (`promtail` en `pi-sonar` ya envía los logs de todos los contenedores del nodo) — esto son los logs del *proceso* (stdout), no los logs de peticiones del panel (esos están en la tabla `logs`, base `bifrost` en `postgres-main`, ver sección "Postgres centralizado" arriba).
 - **Actualizaciones**: **manuales, nunca automáticas** — `bifrost` no lleva la label de watchtower a propósito (mismo criterio que `sonarqube` en este nodo, ver `docs/16-mantenimiento-actualizaciones.md`). Subir de versión: cambiar el tag en `pi-sonar/docker-compose.yml`, `docker compose pull bifrost && docker compose up -d bifrost`, revisar el changelog de Bifrost antes (puede tocar el formato de `config.json` o el comportamiento de `enforce_auth_on_inference`).
 - **Coste**: Bedrock factura por token de AWS — a diferencia del resto del clúster (100 % local). Presupuesto de 5 USD/mes ya configurado (`governance.budgets`, ver sección "Seguimiento de coste y presupuesto con aviso" más arriba).
 - **Añadir más modelos/proveedores**: editar `providers` en `config.json` (nuevo proveedor) y `allowed_models` de la virtual key si se quiere restringir por modelo en vez de dejar `["*"]`.
-- **Backup**: `bifrost/data/` (`config.db` con el estado de gobernanza, `logs.db` con el historial de peticiones) no está cubierto todavía por ningún script de `shared/scripts/backup-*.sh` — con `config.db` ya persistiendo correctamente en el volumen (ver arriba), perder el directorio entero ante un fallo de disco sí sería una pérdida real ahora (presupuesto, gasto acumulado, historial de logs), no solo un inconveniente menor — candidato razonable para la mejora 1 del backlog (copias de seguridad automatizadas) el día que se aborde.
+- **Backup**: desde la migración a Postgres (sección "Postgres centralizado" arriba), el estado de gobernanza y el historial de logs quedan cubiertos automáticamente por `shared/scripts/backup-postgres.sh` (mejora 1 del backlog) sin necesidad de un script dedicado a Bifrost — cierra el punto que quedaba pendiente aquí. `bifrost/data/config.db`/`logs.db` (SQLite, previos a la migración) siguen en disco sin borrar, pero ya no se actualizan ni se usan.
 
 ## Troubleshooting
 
@@ -421,7 +484,8 @@ Verificado tras el cambio: `config.db` aparece ahora en `/srv/homelab/pi-sonar/b
 | `502` desde nginx en `bifrost.home.arpa` | Contenedor `bifrost` caído o arrancando — `docker compose ps` en `pi-sonar`, healthcheck tarda hasta `start_period: 15s` |
 | Contenedor marcado `unhealthy` en `docker compose ps` pese a responder bien a las peticiones reales | Visto en el despliegue real — la imagen de Bifrost **no trae `bash`** (`docker inspect bifrost --format '{{json .State.Health}}'` mostraba `"bash: not found"`), así que el truco `bash -c '</dev/tcp/...'` usado para `qdrant` en `retaco` no sirve aquí. Sí trae `wget` — healthcheck corregido a `wget -q -O /dev/null http://localhost:8080/health` |
 | Open WebUI sin ningún modelo en el selector, sin error visible en la UI | Visto en el despliegue real — cliente TLS estricto (Python/aiohttp) fallando en silencio contra `bifrost.home.arpa`: revisar logs (`docker compose logs open-webui \| grep -i ssl`). Dos causas posibles, en este orden: (1) el SAN del certificado de `pi-dns` no incluye ese hostname — `openssl s_client -connect <ip-pi-dns>:443 -servername bifrost.home.arpa \| openssl x509 -noout -text \| grep -A2 "Subject Alternative Name"`; (2) el proceso no confía en la CA interna — ver sección "No hay modelos disponibles" arriba para ambos fixes |
-| Timeout en respuestas largas | Igual que `ollama.home.arpa` (`docs/06`) — si se repite, subir `proxy_read_timeout`/`proxy_send_timeout` en el bloque `bifrost.home.arpa` de `nginx.conf`, no tocado por defecto porque Bedrock suele responder dentro del timeout estándar de nginx (60s) salvo generaciones muy largas |
+| Timeout en respuestas largas (histórico, corregido) | **Ocurrió en producción** (agosto 2026): una consulta a `ollama/qwen3.5:27b` desde Open WebUI se quedó colgada sin respuesta. Diagnóstico: Ollama/Bifrost sí completaron la petición (68.3s, confirmado `200` en los logs de ambos), pero nginx cortaba la conexión con el cliente a los 60s (timeout por defecto, sin override) — el `200` de Bifrost llegaba 8s después de que nginx ya hubiera respondido `504` al cliente. Corregido subiendo `proxy_read_timeout`/`proxy_send_timeout` a `300s` en el bloque `bifrost.home.arpa` de `nginx.conf` (comentario con el detalle completo en el propio fichero). Bedrock nunca lo había disparado por responder siempre dentro de los 60s; los modelos locales grandes (`qwen3.5:27b`, `qwen2.5:32b`) sí pueden superarlo, sobre todo si Ollama hace *offload* parcial a CPU (ver fila siguiente) |
+| `qwen3.5:27b` (o cualquier modelo local grande) responde correcto pero muy despacio (pocos tokens/s) | Visto en producción — `ollama ps` mostraba solo ~10 de los 17.4 GB del modelo en VRAM (`size_vram` en la respuesta), el resto en CPU. En `ryzen`/`mole`, la GPU 1 (RTX 3070, 8 GB) es también la del escritorio físico del usuario (Xorg/gnome-shell/apps abiertas ya reservan varios GB) — el hueco libre combinado con la GPU 0 (RTX 5070, 12 GB) queda muy justo para un modelo de 17-20 GB, y Ollama prefiere dejar capas en CPU antes que agotar el margen. No es un fallo de Bifrost/nginx — es el reparto de VRAM del host. Mitigación práctica: usar `qwen3.5:9b` (6.6 GB, cabe entero en la GPU 0 sin tocar la del escritorio) para uso normal, reservar los modelos de 27b/32b para cuando se sepa que va a tardar varios minutos. A propósito **no** se ha forzado a Ollama a fijar estos modelos a una GPU concreta — se deja que reparta carga libremente, decisión explícita del usuario |
 | `connection to private IP <IP> is not allowed` | Bifrost bloquea por defecto conexiones a IPs RFC 1918 (protección SSRF) — pasa con cualquier provider casero en la LAN, no solo Ollama. Añadir `"network_config": {"allow_private_network": true}` como hermano de `"keys"` dentro del bloque de ese provider en `config.json` (ver sección de Ollama más abajo) |
 | `Model '<nombre>' is not allowed for this virtual key`, con `routing_info` vacío | El *live model listing* del provider falló al arrancar (ver siguiente fila) y Bifrost cae a un catálogo estático que no conoce modelos locales/arbitrarios — no es un problema de la propia virtual key aunque el mensaje lo sugiera |
 | `failed to list models ...: failed to execute HTTP request to provider API: falling back onto the static datasheet` para un provider casero (Ollama, LM Studio, vLLM propio...) | Casi siempre el bloqueo de IP privada de la fila de arriba — confirmarlo probando `docker exec bifrost sh -c 'wget -qO- <url>'` (si eso responde bien pero Bifrost sigue fallando, es la protección SSRF, no un problema de red real) |

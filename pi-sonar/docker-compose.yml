@@ -64,11 +64,14 @@ services:
   # ---------------------------------------------------------------------------
   # bifrost — Gateway unificado de LLM (AWS Bedrock, ver docs/22-mejoras-futuras.md
   # punto 21 y docs/23-bifrost-gateway-llm.md para el detalle completo).
-  # Config declarativa en config/bifrost/config.json (montado en /app/data junto
-  # con el resto del estado de la app — Bifrost guarda ahí también config.db,
-  # su propio SQLite de gobernanza, y logs.db). El fichero de config solo
+  # Config declarativa en config/bifrost/config.json. El fichero de config solo
   # referencia variables de entorno (prefijo "env."), nunca credenciales en
   # claro — igual que el resto del repo.
+  #
+  # config_store/logs_store: postgres-main en retaco (base "bifrost", ver
+  # docs/22-mejoras-futuras.md punto 23), no SQLite local — mismo patrón que
+  # sonarqube/n8n/openwebui/apikeys. /srv/homelab/pi-sonar/bifrost/data ya
+  # solo aloja ficheros de trabajo internos de la imagen, no estado real.
   #
   # Credenciales AWS: el usuario IAM base ("bifrost-bedrock-base", en
   # AWS_ACCESS_KEY_ID/SECRET) NO tiene permiso de Bedrock por sí mismo, solo
@@ -112,6 +115,10 @@ services:
       # cubre esta parte, solo /v1/chat/completions.
       BIFROST_ADMIN_USERNAME: ${BIFROST_ADMIN_USERNAME}
       BIFROST_ADMIN_PASSWORD: ${BIFROST_ADMIN_PASSWORD}
+      # config_store/logs_store en Postgres (postgres-main, retaco) — ver
+      # docs/22-mejoras-futuras.md punto 23. Host/usuario/db van hardcodeados
+      # en config.json (no son secreto), solo la contraseña pasa por env.
+      BIFROST_DB_PASSWORD: ${BIFROST_DB_PASSWORD}
     volumes:
       - /srv/homelab/pi-sonar/bifrost/data:/app/data
     ports:

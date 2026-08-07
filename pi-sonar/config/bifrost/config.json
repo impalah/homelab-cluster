@@ -100,9 +100,27 @@
 
   "config_store": {
     "enabled": true,
-    "type": "sqlite",
+    "type": "postgres",
     "config": {
-      "path": "/app/data/config.db"
+      "host": "postgresql.home.arpa",
+      "port": 5432,
+      "user": "bifrost",
+      "password": "env.BIFROST_DB_PASSWORD",
+      "db_name": "bifrost",
+      "ssl_mode": "disable"
+    }
+  },
+
+  "logs_store": {
+    "enabled": true,
+    "type": "postgres",
+    "config": {
+      "host": "postgresql.home.arpa",
+      "port": 5432,
+      "user": "bifrost",
+      "password": "env.BIFROST_DB_PASSWORD",
+      "db_name": "bifrost",
+      "ssl_mode": "disable"
     }
   }
 }
