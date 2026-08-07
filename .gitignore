@@ -10,8 +10,15 @@ CLAUDE.md
 .github/copilot-instructions.md
 .copilot/
 
-# graphify — grafo de conocimiento generado localmente, no forma parte del proyecto
-graphify-out/
+# graphify — grafo de conocimiento generado localmente, no forma parte del proyecto.
+# Excepción: GRAPH_REPORT.md sí se versiona a propósito — es Markdown legible y
+# barato de diffear, y sirve de mapa curado del proyecto para quien (persona o
+# asistente de IA) abra el repo sin haber corrido graphify localmente. El resto
+# (graph.json, graph.html, cache/, manifest.json, cost.json, .graphify_python,
+# .graphify_root) se queda fuera: son artefactos binarios-de-facto sin diff útil,
+# o estado interno de la propia herramienta con rutas absolutas de esta máquina.
+graphify-out/*
+!graphify-out/GRAPH_REPORT.md
 
 # Variables de entorno reales — solo los .env.example se versionan
 .env
