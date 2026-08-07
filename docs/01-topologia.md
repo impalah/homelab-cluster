@@ -174,6 +174,67 @@ Cada usuario tiene además acceso de escritura a su propio
 editar `docker-compose.yml`/`.env` ni para copiar ficheros de configuración,
 solo para operaciones a nivel de sistema operativo.
 
+### `ryzen` es distinto: es esta misma máquina
+
+`ryzen` (`mole`) no se administra por SSH desde el resto de nodos porque
+**es el propio puesto de trabajo** — si estás trabajando desde `mole`, ya
+estás "dentro" de `ryzen`: `docker`/`docker compose` se ejecutan
+directamente, sin `ssh` de por medio, y `/srv/homelab/ryzen/` es una ruta
+local, no remota. Es también el único nodo que se apaga cuando no se usa
+(`docs/19-wake-on-lan.md`) — si no responde, probablemente esté dormido,
+no averiado; despertarlo desde otro nodo con
+`shared/scripts/wake-mole.sh`.
+
+### Desplegar un fichero cambiado a un nodo
+
+Patrón estándar, válido para cualquier nodo, que evita sorpresas de
+permisos:
+
+```bash
+rsync -av <fichero-local> u-<x>@192.168.1.17x:/tmp/<nombre>
+ssh u-<x>@192.168.1.17x "sudo cp /tmp/<nombre> <ruta-real-destino> && rm /tmp/<nombre>"
+```
+
+Aterrizar primero en `/tmp` y hacer `sudo cp` a la ruta final, en vez de
+`rsync`/`scp` directo contra el destino — evita además el problema ya
+conocido de los *bind mounts* de un solo fichero (`docs/13-troubleshooting.md`):
+`rsync`/`scp` sustituyen el fichero renombrando-y-reemplazando por
+debajo, lo que cambia el inodo y deja al contenedor en marcha mirando al
+fichero viejo; `cp` sobre un fichero ya existente reescribe el mismo
+inodo, así que el contenedor lo ve al momento. Para rutas que ya son
+propiedad del usuario SSH (la mayoría de `/srv/homelab/<nodo>/`), un
+`rsync -av <fichero-local> u-<x>@192.168.1.17x:/srv/homelab/<nodo>/<ruta>`
+directo vale igual y ahorra un paso — usar la versión con `/tmp` +
+`sudo cp` en cuanto el destino pueda ser de `root` o de un UID de
+contenedor concreto, o ante cualquier duda.
+
+⚠️ **En `pi-dns`, la ruta real donde vive la configuración de nginx en el
+disco NO coincide con la estructura de este repo.** El repo versiona esa
+configuración en `pi-dns/config/nginx/`, pero los *bind mounts* reales de
+`pi-dns/docker-compose.yml` en el host apuntan a
+`/srv/homelab/pi-dns/nginx/conf/` (los ficheros de configuración:
+`nginx.conf`, `proxy-common.conf`, `apikey-auth.conf`) y a
+`/srv/homelab/pi-dns/nginx/html/` (la página estática de
+`index.home.arpa` y sus iconos) — **no** a
+`/srv/homelab/pi-dns/config/nginx/...`. Desplegar a la ruta con forma de
+repo no da ningún error — simplemente no hace nada: nginx sigue sirviendo
+el fichero antiguo, y `nginx -s reload` "funciona" sin quejarse porque no
+había nada que recargar. Ya ha causado 404 reales más de una vez.
+Antes de desplegar cualquier configuración a cualquier nodo, confirma la
+ruta real del *bind mount* en el `docker-compose.yml` de ese nodo
+(`grep -A3 '<servicio>:' <nodo>/docker-compose.yml`, bloque `volumes:`)
+en vez de asumir que coincide con el nombre de carpeta del repo —
+`pi-dns` es el caso confirmado, pero es motivo para comprobarlo siempre,
+no una garantía de que el resto de nodos sí coincidan con su propio
+repo.
+
+Tras desplegar configuración de nginx en concreto, validar antes de
+recargar:
+
+```bash
+ssh u-dns@192.168.1.170 "cd /srv/homelab/pi-dns && docker compose exec nginx nginx -t && docker compose exec nginx nginx -s reload"
+```
+
 ## Ruta base en todos los nodos
 
 ```
