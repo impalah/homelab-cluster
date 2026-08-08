@@ -625,6 +625,34 @@ Bajo — cambio de configuración, no de arquitectura; Bifrost ya sabe hablar co
 
 ---
 
+## 24. Servidor Redis/Valkey securizado (key-value + pub/sub)
+
+**Prioridad: media**
+
+### Qué hay hoy
+
+No existe ningún almacén key-value ni sistema de pub/sub de propósito general en el clúster. El estado de aplicación vive en `postgres-main` (n8n, SonarQube, apikeys, Open WebUI, y Bifrost tras la mejora 23), y no hay ningún mecanismo de caché o mensajería ligera compartido. La propia mejora 16 (Infisical) ya identificó que necesitaría Redis como dependencia si se despliega en solitario — sería el primer consumidor natural de este servicio en vez de duplicar la pieza.
+
+### Redis o Valkey — no son dos servicios complementarios, es la misma elección
+
+Aclaración antes de diseñar nada: Valkey es un *fork* de Redis (mismo protocolo RESP, mismos comandos, mismas librerías cliente), nacido cuando Redis Inc. cambió la licencia de las versiones ≥ 7.4 a SSPLv1/RSALv2 — licencias no reconocidas por la OSI que restringen ofrecer Redis como servicio a terceros. No tiene sentido operar los dos productos a la vez para la misma carga: un cliente no puede distinguir uno de otro por el protocolo. La recomendación es desplegar **Valkey** como única implementación — licencia BSD-3 real, mantenido por la Linux Foundation con AWS/Google/Oracle detrás, 100 % compatible con cualquier librería cliente de Redis ya existente — mismo criterio de "FOSS de verdad, no source-available" ya aplicado en este documento a otras decisiones (Infisical sobre HashiCorp Vault por motivos distintos, Forgejo autoalojado con GitHub como espejo).
+
+### Qué haría falta
+
+1. **Nodo**: `retaco` — nodo de datos, siempre encendido, ya aloja `postgres-main`, Qdrant y el registry.
+2. **Seguridad**:
+   - ACL de Valkey (no solo `requirepass`) — un usuario por servicio consumidor, con permisos restringidos por comando y por prefijo de key/canal, mismo principio que las Machine Identities de Infisical o un usuario de Postgres por servicio.
+   - TLS con el CA interno del clúster (`docs/15-ca-interna.md`) para conexiones cross-host (p. ej. desde `pi-sonar` si Bifrost llegara a usarlo); en localhost/misma red de `docker-compose`, TLS es opcional.
+   - No se publica vía `nginx` (no es HTTP) — acceso limitado a la red interna de cada `docker-compose` y, si hace falta cross-host, restringido por IP a nivel de firewall, mismo patrón que `docs/17-firewall-acceso-directo.md`. El puerto no se expone a `0.0.0.0`, solo a la interfaz privada del clúster.
+3. **Persistencia**: activar AOF (o RDB + AOF) solo si se le da uso real de almacén key-value y no de caché efímera — la necesidad de persistencia depende de cada consumidor, ya que pub/sub en sí no la necesita.
+4. **Primer consumidor real**: la mejora 16 (Infisical) reutilizaría esta instancia en vez de desplegar su propio Redis dedicado — evita tener el mismo tipo de servicio duplicado en el clúster. Candidatos futuros: colas/rate-limiting en microservicios propios, sesiones o pub/sub de servicios que lo necesiten.
+5. **Backup**: si se activa persistencia AOF/RDB, incorporarlo a `shared/scripts/backup-postgres.sh` o un script hermano — mismo criterio que el resto de datos con estado del clúster (mejora 1).
+
+### Esfuerzo estimado
+Bajo-medio — desplegar el contenedor y fijar ACL/TLS es sencillo; el trabajo real es decidir qué consumidores lo usan primero y si necesitan persistencia real o solo caché.
+
+---
+
 ## Resumen
 
 | # | Mejora | Prioridad | Esfuerzo | Depende de |
@@ -652,5 +680,6 @@ Bajo — cambio de configuración, no de arquitectura; Bifrost ya sabe hablar co
 | 21 | ~~Bifrost — gateway hacia AWS Bedrock, conectado a Open WebUI~~ | Media | — | **Completado** — `docs/23-bifrost-gateway-llm.md` |
 | 22 | Integrar las métricas de Bifrost (`/metrics`) en Grafana | Media | Bajo | Bifrost ya desplegado (`docs/23`); Prometheus/Grafana ya desplegados (`docs/08`) |
 | 23 | ~~Mover `logs.db`/`config.db` de Bifrost a Postgres centralizado~~ | Media | — | **Completado** — `docs/23-bifrost-gateway-llm.md` |
+| 24 | Servidor Valkey (compatible Redis) securizado — key-value + pub/sub | Media | Bajo-medio | `retaco` ya desplegado; primer consumidor natural: mejora 16 |
 
 Ninguna de estas mejoras es urgente ni bloqueante — el clúster funciona correctamente sin ellas.
