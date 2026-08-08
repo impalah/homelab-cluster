@@ -2,7 +2,7 @@ name: homelab-retaco
 
 # =============================================================================
 # Stack del nodo Retaco (192.168.1.174)
-# Servicios: postgres-main, qdrant, n8n-main, registry, open-webui
+# Servicios: postgres-main, qdrant, n8n-main, registry, open-webui, open-terminal-mcp
 #
 # postgres-main y qdrant migrados desde ryzen (192.168.1.150) para liberar al
 # Ryzen 9 de servicios de datos. n8n-main migrado después, para que las
@@ -15,6 +15,13 @@ name: homelab-retaco
 # open-webui migrado después (docs/23-bifrost-gateway-llm.md), mismo motivo:
 # sigue accesible con ryzen apagado. Habla solo con Bifrost (pi-sonar), no
 # con Ollama directo — ver el comentario junto al propio servicio más abajo.
+#
+# open-terminal-mcp (mejora 17, docs/22-mejoras-futuras.md) en este mismo
+# nodo por localidad: es quien consume el servidor MCP (Open WebUI y n8n-main
+# ya viven aquí) y retaco tiene margen de sobra (~10 GiB libres de 13 GiB
+# medidos en vivo antes de desplegarlo). Descartado ryzen/mole a petición
+# expresa — no siempre está encendido. Detalle completo, incluida la razón
+# de por qué va detrás de apikey-service, en docs/24-open-terminal-mcp.md.
 # =============================================================================
 
 services:
@@ -356,6 +363,59 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # open-terminal-mcp — Terminal/shell y sistema de ficheros de Open Terminal
+  # (https://github.com/open-webui/open-terminal) expuestos como servidor MCP
+  # (transporte streamable-http) para que Open WebUI y n8n-main den a un LLM
+  # acceso a ejecutar comandos. Mejora 17 (docs/22-mejoras-futuras.md), detalle
+  # completo en docs/24-open-terminal-mcp.md.
+  #
+  # Imagen propia (services/open-terminal-mcp/), NO la oficial directamente:
+  # ninguna variante publicada de ghcr.io/open-webui/open-terminal trae el
+  # extra opcional [mcp] (fastmcp) instalado — se añade encima del tag "slim".
+  #
+  # OPEN_TERMINAL_API_KEY protege SOLO la API REST propia (open-terminal run,
+  # que aquí ni se usa) — confirmado leyendo open_terminal/mcp_server.py que
+  # el subcomando "mcp" arranca el FastMCP SIN ningún proveedor de auth, así
+  # que el propio transporte MCP (streamable-http) no exige ninguna credencial
+  # a quien se conecte. Probado en vivo: initialize sin cabecera alguna → 200.
+  # Por eso va SIEMPRE detrás de apikey-service en nginx (pi-dns), nunca con
+  # el puerto expuesto a la LAN sin esa capa delante — OPEN_TERMINAL_API_KEY
+  # sigue haciendo falta igualmente (lo usa el propio proceso MCP internamente
+  # para llamar a su FastAPI interna), pero ningún cliente externo lo conoce
+  # ni lo necesita.
+  #
+  # Sin montajes del host ni acceso a docker.sock a propósito — mismo criterio
+  # de superficie de riesgo que Floci (mejora 14): el LLM solo ve el volumen
+  # propio de este contenedor, nada más del clúster.
+  # ---------------------------------------------------------------------------
+  open-terminal-mcp:
+    image: registry.home.arpa/open-terminal-mcp:latest
+    container_name: open-terminal-mcp
+    restart: unless-stopped
+    command: ["mcp", "--transport", "streamable-http", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      OPEN_TERMINAL_API_KEY: ${OPEN_TERMINAL_API_KEY}
+    volumes:
+      - /srv/homelab/retaco/open-terminal-mcp/home:/home/user
+    ports:
+      # Publicado a la LAN: nginx (pi-dns) le hace proxy cross-host, igual que
+      # qdrant/n8n-main/registry — PERO sin auth_request delante (ver arriba)
+      # esto sería shell sin credencial para cualquiera en la LAN. No tocar
+      # sin la capa de apikey-service ya configurada en pi-dns.
+      - "8005:8000"
+    networks:
+      - retaco-net
+    healthcheck:
+      # Sin bash "</dev/tcp/...": la imagen slim de open-terminal sí trae
+      # bash (Debian), pero un POST JSON-RPC real es más fiel que un TCP
+      # connect — probado en local, "initialize" responde 200 sin autenticar.
+      test: ["CMD-SHELL", "curl -sf -o /dev/null -X POST http://localhost:8000/mcp -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2026-06-18\",\"capabilities\":{},\"clientInfo\":{\"name\":\"healthcheck\",\"version\":\"0\"}}}' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
 
   # ---------------------------------------------------------------------------
   # node-exporter — Métricas del sistema host, scrapeadas por Prometheus en pi-obs

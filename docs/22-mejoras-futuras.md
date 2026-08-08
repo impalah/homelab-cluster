@@ -206,10 +206,7 @@ Bajo — es principalmente cron + decidir la política de retención, no hay pie
 
 ### Qué hay hoy
 
-Acceso remoto mediante Tailscale ya desplegado (`docs/18-tailscale.md`, subnet
-router en `pi-dns`) — sin ACL personalizada, comportamiento por defecto:
-cualquier dispositivo autenticado en el tailnet llega a todo el clúster.
-Suficiente mientras el tailnet tenga un único usuario/cuenta.
+Acceso remoto mediante Tailscale ya desplegado (`docs/18-tailscale.md`, subnet router en `pi-dns`) — sin ACL personalizada, comportamiento por defecto: cualquier dispositivo autenticado en el tailnet llega a todo el clúster. Suficiente mientras el tailnet tenga un único usuario/cuenta.
 
 ### Qué haría falta
 
@@ -235,13 +232,7 @@ política, no aplicarla.
 
 ### Qué hay hoy
 
-NFSv3 funciona perfectamente para `nfs-data` (root sin squash, confirmado
-en uso real con bind mounts de Docker) — ver
-`docs/21-configuracion-nas-ugreen.md`. NFSv4 se negocia a nivel de kernel
-(`/proc/fs/nfsd/versions` muestra `+4`), pero los montajes v4 fallan con
-`No such file or directory` porque UGOS Pro no expone un pseudo-root de
-NFSv4 (`fsid=0`) en el `/etc/exports` que genera desde la GUI. Sin
-urgencia — v3 cubre el uso actual sin problema, se retoma cuando apetezca.
+NFSv3 funciona perfectamente para `nfs-data` (root sin squash, confirmado en uso real con bind mounts de Docker) — ver `docs/21-configuracion-nas-ugreen.md`. NFSv4 se negocia a nivel de kernel (`/proc/fs/nfsd/versions` muestra `+4`), pero los montajes v4 fallan con `No such file or directory` porque UGOS Pro no expone un pseudo-root de NFSv4 (`fsid=0`) en el `/etc/exports` que genera desde la GUI. Sin urgencia — v3 cubre el uso actual sin problema, se retoma cuando apetezca.
 
 ### Qué haría falta
 
@@ -412,11 +403,22 @@ Medio — desplegar Infisical + Redis es sencillo y la CLI simplifica la integra
 
 ---
 
-## 17. Open Terminal en modo MCP, conectado desde Open WebUI y n8n
+## 17. ~~Open Terminal en modo MCP, conectado desde Open WebUI y n8n~~ — hecho
 
-**Prioridad: media**
+**Prioridad: media** — **completado**
 
-### Qué hay hoy
+### Qué se implementó
+
+Desplegado en `retaco` (no `ryzen`/`mole`, descartado a petición expresa por no estar siempre encendido) — carga verificada en vivo antes de desplegar (~10 GiB libres de 13 GiB). Detalle completo: `docs/24-open-terminal-mcp.md`.
+
+Resumen de lo implementado:
+- Imagen propia `registry.home.arpa/open-terminal-mcp` (`services/open-terminal-mcp/`) — ninguna variante oficial de `ghcr.io/open-webui/open-terminal` trae el extra `[mcp]` (`fastmcp`) instalado; se añade encima del tag `slim`.
+- **Hallazgo de seguridad real, encontrado antes de exponer nada a la red**: `OPEN_TERMINAL_API_KEY` protege solo la API REST propia — el transporte MCP (`streamable-http`) se instancia sin ningún proveedor de autenticación (confirmado leyendo `open_terminal/mcp_server.py`), así que cualquiera que alcance el puerto tendría shell y ficheros completos sin credencial. Confirmado en vivo: `initialize` sin ninguna cabecera → HTTP 200. Por eso va detrás de `apikey-service` en nginx (`pi-dns`) — no como capa opcional, sino como el único mecanismo de auth real de cara al exterior. `open-terminal.home.arpa` desplegado con `proxy_buffering off` y timeouts largos (streaming SSE + conexiones potencialmente ociosas), y añadido al SAN del certificado interno.
+- Sin montajes del host ni acceso a `docker.sock` — mismo criterio de superficie de riesgo que Floci (mejora 14): el LLM solo ve el volumen propio del contenedor.
+- Probado de extremo a extremo (`curl` con y sin `X-Api-Key`, 401/200) desde `ryzen`/`mole`.
+- Documentado cómo conectarlo desde Open WebUI (`Admin Settings → External Tools`, MCP nativo desde 0.6.31, confirmado 0.11.0 en `retaco`) y desde n8n (nodo `MCP Client Tool`, nativo desde n8n 2.31.6, sin instalar nada aparte).
+
+### Qué hay hoy (histórico, previo a la implementación)
 
 Open WebUI y n8n solo razonan sobre texto — ningún agente de IA del clúster puede ejecutar comandos, tocar archivos o correr código por sí mismo. No existe ningún entorno de ejecución expuesto a los LLM.
 
@@ -653,6 +655,56 @@ Bajo-medio — desplegar el contenedor y fijar ACL/TLS es sencillo; el trabajo r
 
 ---
 
+## 25. Authentik — autenticación y autorización centralizada (authn/authz) para todo el clúster
+
+**Prioridad: media**
+
+### Qué hay hoy
+
+`apikey-service` resuelve la autenticación **máquina a máquina** (n8n, Open WebUI, curl) contra servicios sin auth propia, vía `X-Api-Key` — ver `docs/06-instalacion-pi1-dns.md`. Pero no existe nada equivalente para **personas**: cada panel de administración del clúster tiene su propia cuenta, separada e independiente — Grafana, Portainer, SonarQube, Pi-hole, Vaultwarden, Open WebUI, n8n, cada uno con su propio usuario/contraseña, sin ningún inicio de sesión único entre ellos.
+
+Peor todavía: **`prometheus.home.arpa` no tiene ninguna autenticación, ni propia ni de `apikey-service`** — cualquiera en la LAN puede consultar todas las métricas del clúster sin credencial alguna. No es una elección deliberada documentada en ningún sitio, es simplemente un hueco — Prometheus no trae login propio y nunca se le puso `apikey-service` delante, a diferencia de `ollama.home.arpa`/`epub2pdf.home.arpa`/etc.
+
+### Qué haría falta
+
+1. **Qué es y qué resuelve**: [Authentik](https://goauthentik.io/) (self-hosted, MIT) es un proveedor de identidad — SSO real vía OIDC/SAML para las apps que lo soportan nativamente, más un modo *forward-auth* (proxy provider + `outpost`) para las que no, con el mismo mecanismo de fondo que ya usa `apikey-service` (`auth_request` de nginx), pero para personas con sesión de navegador en vez de una cabecera `X-Api-Key` estática.
+2. **Nodo y dependencias**: `retaco` — Authentik necesita Postgres (reutilizar `postgres-main`, `create-postgres-db.sh`, mismo patrón que Infisical/mejora 16) y Redis (reutilizar el Valkey de la mejora 24 en vez de desplegar un tercer almacén clave-valor en el clúster — un consumidor más para justificar esa pieza).
+3. **Dos mecanismos de integración, elegir por servicio, no uno solo para todos**:
+   - **OIDC nativo**, cuando la app lo soporta — Grafana y Portainer lo traen de serie (Community Edition incluida); da identidad real dentro de la propia app (usuario, grupos, roles), no solo un "sí/no" en la puerta. Preferible siempre que exista.
+   - **Forward-auth vía nginx** (`outpost.goauthentik.io/auth/nginx` + `auth_request`), para lo que no tiene SSO propio — el caso claro es **Prometheus**, que además de no tener OIDC no tiene ningún login que proteger ni desactivar. Mismo mecanismo de nginx que `apikey-auth.conf`, pero redirigiendo a la pantalla de login de Authentik en vez de devolver un 401 seco.
+4. **Qué queda fuera a propósito**: `apikey-service` no desaparece — sigue siendo el mecanismo correcto para consumidores máquina (n8n, curl, `open-terminal-mcp`), Authentik resuelve un problema distinto (personas con navegador). Vaultwarden tampoco se pone detrás de Authentik — es un gestor de contraseñas con su propio modelo E2E, añadir una capa de SSO delante cambiaría ese modelo de seguridad sin necesidad real. n8n Community Edition no trae SSO propio (solo en Enterprise) — candidato a forward-auth si se hace, pero de menor prioridad que Prometheus.
+5. **Migración incremental, empezando por el hueco real**: primero `prometheus.home.arpa` (hoy sin ninguna protección — es la ganancia de seguridad concreta, no solo comodidad), después Grafana/Portainer vía OIDC nativo, evaluando SonarQube y Pi-hole (login propio ya débil/único) más adelante.
+6. **Publicación**: `authentik.home.arpa` en nginx (`pi-dns`), mismo patrón de siempre — añadir al SAN de `generate-cert.sh`, a `shared/dns/dns-records.md` y a `shared/scripts/load-dns-records.sh` (los tres, no solo uno — gotcha ya documentado en `CLAUDE.md`/`docs/01-topologia.md`).
+
+### Esfuerzo estimado
+Alto — no por el despliegue del contenedor en sí, sino por la superficie: son varias integraciones distintas (OIDC nativo por app, forward-auth para el resto), decidir grupos/políticas de autorización, y migrar cada servicio uno a uno sin cortar el acceso propio mientras se prueba. El caso de Prometheus (sin ninguna auth hoy) es la parte que sí merece hacerse pronto independientemente del resto.
+
+---
+
+## 26. Investigar tool-calling fiable: modelos locales de Ollama y modelos Bedrock/Claude vía Bifrost
+
+**Prioridad: media**
+
+### Qué hay hoy
+
+Al probar la mejora 17 (Open Terminal en modo MCP, `docs/24-open-terminal-mcp.md`) con distintos modelos desde Open WebUI, ninguno completó una llamada de herramienta de extremo a extremo:
+
+- **Modelos locales de Ollama** (`qwen2.5:14b`, `qwen2.5:32b`, `qwen3.5:9b`, `qwen3.5:27b`, todos probados) — ninguno hace tool-calling real: en vez de invocar la herramienta, el modelo escribe texto que imita la sintaxis de una llamada de función (`</function_calls>`, `<parameter=...>`) y se inventa una salida falsa. Sorprendente porque los benchmarks públicos de 2026 dan a la familia Qwen como de las más fiables en tool-calling — apunta a un problema de plantilla de chat en Ollama para estas etiquetas concretas, no del modelo en sí, pero no se ha confirmado.
+- **Claude Sonnet 4.6 vía Bifrost (Bedrock)** — sí genera la llamada de función correctamente, pero el turno siguiente (con el resultado de la herramienta) falla con `messages.N.content.0.thinking.signature: Field required`. Bug conocido en pasarelas que traducen entre el formato OpenAI-compatible (el que habla Open WebUI) y la Converse API de Bedrock: el bloque `thinking` de *extended thinking* pierde su firma criptográfica al reconstruirse para el turno siguiente. Mismo patrón reportado en otras pasarelas ([spring-ai#6413](https://github.com/spring-projects/spring-ai/issues/6413), [opencode#6176](https://github.com/anomalyco/opencode/issues/6176)) — no es un fallo exclusivo de este clúster, pero tampoco hay confirmación de que Bifrost lo tenga resuelto en la versión desplegada (`v1.6.8`).
+
+Con esto, la mejora 17 queda con el camino de red/autenticación verificado de extremo a extremo (MCP↔nginx↔apikey-service, `curl` con y sin `X-Api-Key`), pero sin ningún modelo confirmado usando la herramienta de verdad desde un chat real todavía.
+
+### Qué haría falta
+
+1. **Modelos locales**: inspeccionar la plantilla de chat real que usa Ollama para cada etiqueta (`ollama show <modelo> --template`) y confirmar si referencia `.Tools`/`.ToolCalls` correctamente — comparar entre `qwen2.5`/`qwen3.5` y un modelo con soporte de tool-calling históricamente muy probado en Ollama (p. ej. Llama 3.1/3.3, o una variante explícitamente etiquetada para herramientas) para aislar si el problema es de plantilla/etiqueta concreta o algo más general en cómo Open WebUI habla con Ollama.
+2. **Bedrock/Claude**: comprobar si Open WebUI expone algún control de *reasoning effort*/*extended thinking* por modelo y si desactivarlo evita el error (dado que la firma solo hace falta cuando se usa thinking). Revisar el changelog/issues de Bifrost (`v1.6.8` en `pi-sonar`) por si ya hay una corrección conocida antes de investigar más a fondo. Si hace falta profundizar, aislar con una petición `curl` directa contra Bifrost reproduciendo un turno de tool-use con thinking, para saber si el fallo está en la traducción de Bifrost o en cómo Open WebUI reconstruye el historial.
+3. **Documentar el resultado** en `docs/24-open-terminal-mcp.md` (tabla de troubleshooting, ya con ambos síntomas apuntados como pendientes) en cuanto haya un modelo confirmado funcionando de extremo a extremo con Open Terminal.
+
+### Esfuerzo estimado
+Medio — no es un despliegue nuevo, es investigación dirigida sobre dos sistemas ya desplegados (Ollama, Bifrost); el tiempo real depende de si el fallo de Ollama resulta ser una plantilla mal etiquetada (rápido de confirmar) o algo más profundo, y de si Bifrost ya trae corregido el problema de la firma de `thinking` en alguna versión posterior a la desplegada.
+
+---
+
 ## Resumen
 
 | # | Mejora | Prioridad | Esfuerzo | Depende de |
@@ -673,7 +725,7 @@ Bajo-medio — desplegar el contenedor y fijar ACL/TLS es sencillo; el trabajo r
 | 14 | Evaluar Floci como emulador local de AWS | Media | Bajo | — |
 | 15 | Panel de control de servicios + estado en `index.home.arpa` | Media | Medio | Portainer ya desplegado (`docs/10`) |
 | 16 | Sistema de secretos programático (Infisical) | Media | Medio | `postgres-main` ya desplegado (`docs/05`); complementa a Vaultwarden (`docs/10`) |
-| 17 | Open Terminal en modo MCP (Open WebUI + n8n) | Media | Bajo-medio | Open WebUI y n8n ya desplegados |
+| 17 | ~~Open Terminal en modo MCP (Open WebUI + n8n)~~ | Media | — | **Completado** — `docs/24-open-terminal-mcp.md` |
 | 18 | OpenClaw — asistente personal de IA autoalojado | Media | Medio | Ollama ya desplegado si se apunta a modelos locales |
 | 19 | Opencode — agente de código open source para terminal | Media | Bajo | Ollama ya desplegado si se apunta a modelos locales |
 | 20 | LiteLLM — proxy unificado hacia AWS Bedrock, conectado a Open WebUI | Media | Medio | Cuenta/IAM de AWS; Open WebUI ya desplegado; alternativa a mejora 21 |
@@ -681,5 +733,7 @@ Bajo-medio — desplegar el contenedor y fijar ACL/TLS es sencillo; el trabajo r
 | 22 | Integrar las métricas de Bifrost (`/metrics`) en Grafana | Media | Bajo | Bifrost ya desplegado (`docs/23`); Prometheus/Grafana ya desplegados (`docs/08`) |
 | 23 | ~~Mover `logs.db`/`config.db` de Bifrost a Postgres centralizado~~ | Media | — | **Completado** — `docs/23-bifrost-gateway-llm.md` |
 | 24 | Servidor Valkey (compatible Redis) securizado — key-value + pub/sub | Media | Bajo-medio | `retaco` ya desplegado; primer consumidor natural: mejora 16 |
+| 25 | Authentik — authn/authz centralizado (SSO + forward-auth) | Media | Alto | `postgres-main` ya desplegado; reutiliza el Valkey de la mejora 24; `prometheus.home.arpa` hoy sin ninguna autenticación |
+| 26 | Investigar tool-calling fiable — modelos locales (Ollama) y Bedrock/Claude (Bifrost) | Media | Medio | Open Terminal MCP ya desplegado (mejora 17, `docs/24`); ningún modelo probado completa una llamada de herramienta hoy |
 
 Ninguna de estas mejoras es urgente ni bloqueante — el clúster funciona correctamente sin ellas.

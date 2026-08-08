@@ -429,6 +429,7 @@ CMD ["python3", "-m", "uvicorn", "<paquete>.main:app", "--host", "0.0.0.0", "--p
 | 9800 | whisper-service | ryzen |
 | 8003 | epub2pdf-service | retaco |
 | 8004 | pdf2chunks-service | retaco |
+| 8005→8000 | open-terminal-mcp | retaco |
 
 **Nunca uses el `8000`** como puerto final de un servicio nuevo — es el puerto por defecto de un número enorme de herramientas FastAPI/dev, y colisiona con facilidad en local. Antes de fijar un puerto para un servicio nuevo, revisa esta tabla y `docs/17-firewall-acceso-directo.md` (que documenta qué puertos están además gestionados por el cortafuegos), y añade la fila correspondiente aquí.
 

@@ -60,6 +60,7 @@ DOMAINS=(
   epub2pdf.home.arpa
   pdf2chunks.home.arpa
   bifrost.home.arpa
+  open-terminal.home.arpa
 )
 
 mkdir -p "${CERT_DIR}"
