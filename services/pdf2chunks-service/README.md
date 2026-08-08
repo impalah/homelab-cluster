@@ -1,17 +1,12 @@
 # pdf2chunks-service
 
-Microservicio FastAPI que extrae el texto de ficheros **PDF** — nativo, con
-fallback a **OCR** (Tesseract, vía [PyMuPDF](https://pymupdf.readthedocs.io/))
-en páginas sin texto suficiente — y lo trocea en fragmentos (`chunks`) listos
-para indexar en un pipeline RAG.
+Microservicio FastAPI que extrae el texto de ficheros **PDF** — nativo, con fallback a **OCR** (Tesseract, vía [PyMuPDF](https://pymupdf.readthedocs.io/)) en páginas sin texto suficiente — y lo trocea en fragmentos (`chunks`) listos para indexar en un pipeline RAG.
 
 ```
 PDF (carpeta entrada) --> pdf2chunks-service --> chunks .json/.jsonl (carpeta salida)
 ```
 
-Cada chunk incluye `document_id` (hash SHA-256 del PDF), `page`, `chapter`
-(resuelto contra la tabla de contenidos del PDF si existe), `title`/`author`
-(metadatos del documento), `chunk_index`, `char_count` y `ocr_applied`.
+Cada chunk incluye `document_id` (hash SHA-256 del PDF), `page`, `chapter` (resuelto contra la tabla de contenidos del PDF si existe), `title`/`author` (metadatos del documento), `chunk_index`, `char_count` y `ocr_applied`.
 
 ## Endpoints
 
@@ -25,12 +20,7 @@ Cada chunk incluye `document_id` (hash SHA-256 del PDF), `page`, `chapter`
 
 ### `POST /process`
 
-Procesa por lote todos los `.pdf` de `input_path` (fichero individual o
-carpeta) y escribe los chunks de cada PDF procesado con éxito en
-`output_path` (un fichero `.json`/`.jsonl` por PDF, según
-`PDF2CHUNKS_OUTPUT_FORMAT`). Nunca lanza excepciones al llamador: cualquier
-fallo de un fichero individual se refleja en `results`, permitiendo que n8n
-(u otro orquestador) itere y siga con el resto.
+Procesa por lote todos los `.pdf` de `input_path` (fichero individual o carpeta) y escribe los chunks de cada PDF procesado con éxito en `output_path` (un fichero `.json`/`.jsonl` por PDF, según `PDF2CHUNKS_OUTPUT_FORMAT`). Nunca lanza excepciones al llamador: cualquier fallo de un fichero individual se refleja en `results`, permitiendo que n8n (u otro orquestador) itere y siga con el resto.
 
 ```json
 {"input_path": "/data/input", "output_path": "/data/output"}
@@ -57,10 +47,7 @@ Respuesta:
 }
 ```
 
-`status` general es `success` (todo bien), `partial_failure` (alguno falló)
-o `failure` (todo falló, `input_path` no existe, o no se encontró ningún PDF).
-La API usa siempre la configuración del servicio (`PDF2CHUNKS_*`); para
-sobrescribir OCR/chunking por invocación, usa el modo CLI.
+`status` general es `success` (todo bien), `partial_failure` (alguno falló) o `failure` (todo falló, `input_path` no existe, o no se encontró ningún PDF). La API usa siempre la configuración del servicio (`PDF2CHUNKS_*`); para sobrescribir OCR/chunking por invocación, usa el modo CLI.
 
 ## Uso rápido
 
@@ -74,11 +61,7 @@ curl -X POST http://localhost:8004/process \
 
 ## Modo CLI (alternativo a la API)
 
-Pensado para invocarse desde n8n (nodo Execute Command/SSH) como contenedor
-efímero por lote de ficheros, sin mantener el servicio siempre arriba. Usa el
-mismo `PdfProcessingService` que la API, así que el comportamiento
-(extracción, OCR, chunking) es idéntico; a diferencia de la API, el CLI
-permite sobrescribir la configuración de troceado por invocación.
+Pensado para invocarse desde n8n (nodo Execute Command/SSH) como contenedor efímero por lote de ficheros, sin mantener el servicio siempre arriba. Usa el mismo `PdfProcessingService` que la API, así que el comportamiento (extracción, OCR, chunking) es idéntico; a diferencia de la API, el CLI permite sobrescribir la configuración de troceado por invocación.
 
 ```bash
 docker run --rm --entrypoint python3 \
@@ -88,12 +71,9 @@ docker run --rm --entrypoint python3 \
   -m pdf2chunks_service.cli /data/input /data/output
 ```
 
-Flags opcionales de sobrescritura: `--ocr-char-threshold`, `--ocr-language`,
-`--chunk-size-tokens`, `--chunk-overlap-ratio`, `--chunking-strategy`,
-`--output-format`.
+Flags opcionales de sobrescritura: `--ocr-char-threshold`, `--ocr-language`, `--chunk-size-tokens`, `--chunk-overlap-ratio`, `--chunking-strategy`, `--output-format`.
 
-**Códigos de salida** (convención propia de este servicio, distinta de la de
-`epub2pdf-service` — ver `cli.py` para el porqué):
+**Códigos de salida** (convención propia de este servicio, distinta de la de `epub2pdf-service` — ver `cli.py` para el porqué):
 
 | Código | Significado |
 |---|---|
@@ -117,9 +97,7 @@ make test-process FILE=/ruta/al/documento.pdf
 
 ## Estructura del proyecto
 
-Arquitectura por capas (igual que `apikey-service`/`markitdown-service`/
-`epub2pdf-service` — ver `docs/desarrollo-microservicios-python.md`), sin
-capa de persistencia porque este servicio no tiene estado:
+Arquitectura por capas (igual que `apikey-service`/`markitdown-service`/ `epub2pdf-service` — ver `docs/desarrollo-microservicios-python.md`), sin capa de persistencia porque este servicio no tiene estado:
 
 ```
 src/pdf2chunks_service/
@@ -143,12 +121,7 @@ src/pdf2chunks_service/
     └── models.py                          ← modelos puros: TocEntry, DocumentMetadata, PageContent, Chunk, ProcessingResult, excepciones
 ```
 
-`PdfProcessingService` no conoce FastAPI ni argparse (expone resultados como
-`ProcessingResult`, que el controller o el CLI traducen a su formato de
-salida correspondiente), ni conoce PyMuPDF/Tesseract directamente (habla con
-`infrastructure.pdf_document`/`infrastructure.ocr_engine`). Mismo criterio de
-aislamiento por capas que `apikey_service.services.apikey_service` y
-`epub2pdf_service.services.conversion_service`.
+`PdfProcessingService` no conoce FastAPI ni argparse (expone resultados como `ProcessingResult`, que el controller o el CLI traducen a su formato de salida correspondiente), ni conoce PyMuPDF/Tesseract directamente (habla con `infrastructure.pdf_document`/`infrastructure.ocr_engine`). Mismo criterio de aislamiento por capas que `apikey_service.services.apikey_service` y `epub2pdf_service.services.conversion_service`.
 
 ## Tests, cobertura, lint y análisis estático
 
@@ -164,11 +137,7 @@ make format       # ruff format .
 make typecheck    # mypy src/
 ```
 
-Los tests generan PDFs reales en memoria con PyMuPDF (`tests/conftest.py`,
-incluyendo casos con TOC, sin texto nativo, encriptados y corruptos) — no
-hace falta ningún PDF externo para correr la batería completa. El OCR real
-se mockea a nivel de `infrastructure.ocr_engine.ocr_page` en los tests que no
-necesitan verificar Tesseract en sí.
+Los tests generan PDFs reales en memoria con PyMuPDF (`tests/conftest.py`, incluyendo casos con TOC, sin texto nativo, encriptados y corruptos) — no hace falta ningún PDF externo para correr la batería completa. El OCR real se mockea a nivel de `infrastructure.ocr_engine.ocr_page` en los tests que no necesitan verificar Tesseract en sí.
 
 ### Análisis SonarQube
 
@@ -176,6 +145,4 @@ necesitan verificar Tesseract en sí.
 make sonar-check   # test-cov + análisis pysonar contra la instancia del clúster
 ```
 
-Requiere `SONAR_HOST_URL`, `SONAR_TOKEN` y `REQUESTS_CA_BUNDLE` en `.env`
-(ver `.env.example` y `docs/09-instalacion-pi3-sonarqube.md`, sección 8.1,
-para el porqué de `REQUESTS_CA_BUNDLE`).
+Requiere `SONAR_HOST_URL`, `SONAR_TOKEN` y `REQUESTS_CA_BUNDLE` en `.env` (ver `.env.example` y `docs/09-instalacion-pi3-sonarqube.md`, sección 8.1, para el porqué de `REQUESTS_CA_BUNDLE`).

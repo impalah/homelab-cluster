@@ -1,8 +1,6 @@
 # homelab-cluster
 
-Infraestructura doméstica distribuida en 6 nodos: dos PCs (Ryzen 9 y MiniPC Ryzen 5) y 4 Raspberry Pi 5.
-Orquestación con Docker Engine + Docker Compose v2. Sin Kubernetes. Sin Docker Swarm.
-Además del clúster, la misma LAN aloja un NAS UGREEN (`ketekasko`) que no está gestionado por Docker — ver la sección "NAS UGREEN" más abajo.
+Infraestructura doméstica distribuida en 6 nodos: dos PCs (Ryzen 9 y MiniPC Ryzen 5) y 4 Raspberry Pi 5. Orquestación con Docker Engine + Docker Compose v2. Sin Kubernetes. Sin Docker Swarm. Además del clúster, la misma LAN aloja un NAS UGREEN (`ketekasko`) que no está gestionado por Docker — ver la sección "NAS UGREEN" más abajo.
 
 ---
 

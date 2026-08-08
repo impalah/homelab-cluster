@@ -2,41 +2,19 @@
 
 ## El problema que resuelve
 
-Todos los servicios HTTP expuestos mediante `*.home.arpa` (nginx en `pi-dns`)
-también son alcanzables **directamente por IP y puerto** en su nodo real —
-`https://ollama.home.arpa` y `http://192.168.1.150:11434` llegan al mismo
-sitio. Esto es necesario para que nginx, que se ejecuta en *otro* nodo, pueda
-alcanzarlos — pero significa que cualquiera en la LAN puede saltarse
-`apikey-service` (`docs/06-instalacion-pi1-dns.md`) usando la IP directa en vez del nombre de host.
+Todos los servicios HTTP expuestos mediante `*.home.arpa` (nginx en `pi-dns`) también son alcanzables **directamente por IP y puerto** en su nodo real — `https://ollama.home.arpa` y `http://192.168.1.150:11434` llegan al mismo sitio. Esto es necesario para que nginx, que se ejecuta en *otro* nodo, pueda alcanzarlos — pero significa que cualquiera en la LAN puede saltarse `apikey-service` (`docs/06-instalacion-pi1-dns.md`) usando la IP directa en vez del nombre de host.
 
-Este documento cubre cómo cerrar ese acceso directo cuando se quiera, sin
-tocar nginx ni los servicios en sí: **solo pi-dns puede alcanzar esos
-puertos**, todo el resto del tráfico tiene que pasar por
-`https://*.home.arpa` como está pensado.
+Este documento cubre cómo cerrar ese acceso directo cuando se quiera, sin tocar nginx ni los servicios en sí: **solo pi-dns puede alcanzar esos puertos**, todo el resto del tráfico tiene que pasar por `https://*.home.arpa` como está pensado.
 
 ## ⚠️ Por qué "ufw deny `<puerto>`" NO funciona con Docker
 
 Este es el motivo por el que este documento no es solo "instala ufw y ya":
 
-Docker inserta sus propias reglas `DNAT` directamente en las cadenas
-`FORWARD`/`PREROUTING` de `iptables` para enrutar el tráfico de un puerto
-publicado (`ports: "11434:11434"`) hacia el contenedor. Ese tráfico
-**nunca atraviesa la cadena `INPUT`**, que es donde vive `ufw`. Resultado:
-`sudo ufw deny 11434` no tiene ningún efecto sobre un puerto publicado por
-Docker — sigue abierto a toda la LAN exactamente igual, aunque `ufw`
-diga "denied".
+Docker inserta sus propias reglas `DNAT` directamente en las cadenas `FORWARD`/`PREROUTING` de `iptables` para enrutar el tráfico de un puerto publicado (`ports: "11434:11434"`) hacia el contenedor. Ese tráfico **nunca atraviesa la cadena `INPUT`**, que es donde vive `ufw`. Resultado: `sudo ufw deny 11434` no tiene ningún efecto sobre un puerto publicado por Docker — sigue abierto a toda la LAN exactamente igual, aunque `ufw` diga "denied".
 
-La solución oficial de Docker (documentada por el propio proyecto) es usar
-la cadena **`DOCKER-USER`**: un punto de enganche que Docker crea
-automáticamente y que garantiza no tocar nunca — cualquier regla que se
-añada ahí se evalúa *antes* que las reglas `DNAT`/`ACCEPT` que Docker
-gestiona, y sobrevive a reinicios del propio Docker (no a un reinicio del
-host, para eso hace falta `iptables-persistent`, ver más abajo).
+La solución oficial de Docker (documentada por el propio proyecto) es usar la cadena **`DOCKER-USER`**: un punto de enganche que Docker crea automáticamente y que garantiza no tocar nunca — cualquier regla que se añada ahí se evalúa *antes* que las reglas `DNAT`/`ACCEPT` que Docker gestiona, y sobrevive a reinicios del propio Docker (no a un reinicio del host, para eso hace falta `iptables-persistent`, ver más abajo).
 
-Por eso `toggle-direct-access.sh` gestiona `DOCKER-USER` directamente con
-`iptables`, no con comandos `ufw`. **`ufw` no se instala en este clúster
-para esto** — ver el aviso en la siguiente sección, es un conflicto de
-paquetes real, no una elección de diseño.
+Por eso `toggle-direct-access.sh` gestiona `DOCKER-USER` directamente con `iptables`, no con comandos `ufw`. **`ufw` no se instala en este clúster para esto** — ver el aviso en la siguiente sección, es un conflicto de paquetes real, no una elección de diseño.
 
 ## Instalación — `setup-firewall.sh`
 
@@ -54,8 +32,7 @@ Qué hace en cada nodo:
 2. Instala `iptables-persistent` (paquete estándar Debian/Ubuntu, mismo comando en Raspberry Pi OS y Ubuntu Server).
 3. Comprueba que la cadena `DOCKER-USER` existe (la crea Docker al arrancar el daemon).
 
-`pi-dns` no necesita este script — no tiene ningún puerto gestionado por
-`toggle-direct-access.sh` (es el origen permitido, no un destino a proteger).
+`pi-dns` no necesita este script — no tiene ningún puerto gestionado por `toggle-direct-access.sh` (es el origen permitido, no un destino a proteger).
 
 ## El script de alternancia — `toggle-direct-access.sh`
 
@@ -89,27 +66,11 @@ bash toggle-direct-access.sh all on        # reabre todo
 
 ### Qué queda deliberadamente FUERA
 
-`node-exporter` (9100), `cadvisor` (8081), `portainer-agent` (9001) y
-`postgres-main` (5432, en retaco) **no** se gestionan aquí — ninguno pasa
-por nginx, así que "solo pi-dns" los dejaría inalcanzables para quien de
-verdad los necesita entre nodos (Prometheus, en pi-obs, recopilando las
-métricas de node-exporter/cadvisor de todos los nodos; Portainer, en
-pi-utils, hablando con cada portainer-agent; postgres-exporter y
-SonarQube conectando a `postgres-main`). Esas integraciones ya funcionaban
-por IP directa antes de este documento y siguen sin verse afectadas — es
-tráfico legítimo entre nodos, y no supone saltarse nginx.
+`node-exporter` (9100), `cadvisor` (8081), `portainer-agent` (9001) y `postgres-main` (5432, en retaco) **no** se gestionan aquí — ninguno pasa por nginx, así que "solo pi-dns" los dejaría inalcanzables para quien de verdad los necesita entre nodos (Prometheus, en pi-obs, recopilando las métricas de node-exporter/cadvisor de todos los nodos; Portainer, en pi-utils, hablando con cada portainer-agent; postgres-exporter y SonarQube conectando a `postgres-main`). Esas integraciones ya funcionaban por IP directa antes de este documento y siguen sin verse afectadas — es tráfico legítimo entre nodos, y no supone saltarse nginx.
 
 ## Verificar que funciona
 
-⚠️ **Probar desde OTRO nodo, no desde el mismo que acabas de cerrar.**
-Tráfico "de una máquina a su propia IP de LAN" puede tomar un atajo de
-enrutado local que no atraviesa la cadena `FORWARD`/`DOCKER-USER` — probado
-en vivo: `curl` desde `ryzen` hacia `192.168.1.150:11434` seguía
-respondiendo tras `off` (0 paquetes en las reglas, ni ACCEPT ni DROP se
-llegaron a evaluar), mientras que el mismo `curl` lanzado desde `retaco`
-sí se bloqueó correctamente (3 paquetes contados en la regla DROP). El
-bloqueo es real para tráfico genuino entre nodos, que es el caso que
-importa — solo el auto-test "a sí mismo" da un falso negativo.
+⚠️ **Probar desde OTRO nodo, no desde el mismo que acabas de cerrar.** Tráfico "de una máquina a su propia IP de LAN" puede tomar un atajo de enrutado local que no atraviesa la cadena `FORWARD`/`DOCKER-USER` — probado en vivo: `curl` desde `ryzen` hacia `192.168.1.150:11434` seguía respondiendo tras `off` (0 paquetes en las reglas, ni ACCEPT ni DROP se llegaron a evaluar), mientras que el mismo `curl` lanzado desde `retaco` sí se bloqueó correctamente (3 paquetes contados en la regla DROP). El bloqueo es real para tráfico genuino entre nodos, que es el caso que importa — solo el auto-test "a sí mismo" da un falso negativo.
 
 ```bash
 # Desde OTRO nodo de la LAN (no el que vas a cerrar):

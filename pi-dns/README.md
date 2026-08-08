@@ -47,8 +47,7 @@ docker compose ps
 
 ## Post-arranque
 
-Añadir los registros DNS en Pi-hole (primer acceso vía túnel SSH, ver `docs/06-instalacion-pi1-dns.md` sección 7.1):
-→ `http://localhost:8053/admin` (con `ssh -L 8053:127.0.0.1:8053 u-dns@192.168.1.170`) → **Settings → DNS Records** (Pi-hole v6)
+Añadir los registros DNS en Pi-hole (primer acceso vía túnel SSH, ver `docs/06-instalacion-pi1-dns.md` sección 7.1): → `http://localhost:8053/admin` (con `ssh -L 8053:127.0.0.1:8053 u-dns@192.168.1.170`) → **Settings → DNS Records** (Pi-hole v6)
 
 Más rápido que añadirlos uno a uno: cargar la tabla completa por API con `shared/scripts/load-dns-records.sh` (detalle en `docs/06-instalacion-pi1-dns.md` sección 7.1).
 

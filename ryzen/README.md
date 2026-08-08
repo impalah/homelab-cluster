@@ -83,10 +83,7 @@ docker compose -f docker-compose.observability.yml down  # para observabilidad, 
 
 ## Encendido remoto (Wake-on-LAN)
 
-Este nodo puede apagarse por completo cuando no se usa y encenderse desde
-otro nodo del clúster con `shared/scripts/wake-mole.sh` — detalle completo
-(requisitos, por qué apagado completo y no hibernar/suspender, ajuste de
-BIOS pendiente de confirmar) en `docs/19-wake-on-lan.md`.
+Este nodo puede apagarse por completo cuando no se usa y encenderse desde otro nodo del clúster con `shared/scripts/wake-mole.sh` — detalle completo (requisitos, por qué apagado completo y no hibernar/suspender, ajuste de BIOS pendiente de confirmar) en `docs/19-wake-on-lan.md`.
 
 ## Prerrequisitos
 

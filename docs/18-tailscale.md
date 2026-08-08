@@ -2,11 +2,7 @@
 
 ## Qué resuelve
 
-Acceso a todo el clúster desde fuera de la LAN, autenticado (solo dispositivos
-que hayan iniciado sesión en el tailnet con la cuenta autorizada), sin abrir
-ningún puerto en el router de casa. Un dispositivo remoto conectado a
-Tailscale llega a cualquier IP de `192.168.1.0/24` y resuelve `*.home.arpa`
-exactamente igual que si estuviera en la LAN.
+Acceso a todo el clúster desde fuera de la LAN, autenticado (solo dispositivos que hayan iniciado sesión en el tailnet con la cuenta autorizada), sin abrir ningún puerto en el router de casa. Un dispositivo remoto conectado a Tailscale llega a cualquier IP de `192.168.1.0/24` y resuelve `*.home.arpa` exactamente igual que si estuviera en la LAN.
 
 ## Arquitectura
 
@@ -19,31 +15,17 @@ pi-dns (192.168.1.170) — subnet router
   └─ Pi-hole + Unbound (ya existían) — resuelven *.home.arpa
 ```
 
-`pi-dns` hace de único punto de entrada remoto porque ya es el nodo DNS/proxy
-del clúster (`docs/06-instalacion-pi1-dns.md`) — coherente con "resolver
-`*.home.arpa`": las consultas DNS del tailnet llegan al mismo nodo que ya las
-resuelve, sin saltos extra. Nada se instala en el resto de nodos — llegan a
-través de la ruta anunciada, igual que cualquier otro tráfico de la LAN.
+`pi-dns` hace de único punto de entrada remoto porque ya es el nodo DNS/proxy del clúster (`docs/06-instalacion-pi1-dns.md`) — coherente con "resolver `*.home.arpa`": las consultas DNS del tailnet llegan al mismo nodo que ya las resuelve, sin saltos extra. Nada se instala en el resto de nodos — llegan a través de la ruta anunciada, igual que cualquier otro tráfico de la LAN.
 
-**Split DNS** (configurado en el panel de Tailscale, no en este repo): un
-nameserver personalizado, restringido al dominio `home.arpa`, apuntando a
-`192.168.1.170`. Solo las consultas de `*.home.arpa` se enrutan por el
-tailnet — el resto del tráfico DNS del dispositivo remoto sigue su camino
-normal (no es "forzar todo el DNS", es "split").
+**Split DNS** (configurado en el panel de Tailscale, no en este repo): un nameserver personalizado, restringido al dominio `home.arpa`, apuntando a `192.168.1.170`. Solo las consultas de `*.home.arpa` se enrutan por el tailnet — el resto del tráfico DNS del dispositivo remoto sigue su camino normal (no es "forzar todo el DNS", es "split").
 
-⚠️ Un dispositivo remoto necesita también confiar en la CA interna del
-clúster para que las conexiones HTTPS a `*.home.arpa` no den aviso de
-certificado — exactamente el mismo procedimiento que en cualquier equipo de
-la LAN, ver `docs/15-ca-interna.md`. Tailscale resuelve el *acceso*, no el
-*certificado*.
+⚠️ Un dispositivo remoto necesita también confiar en la CA interna del clúster para que las conexiones HTTPS a `*.home.arpa` no den aviso de certificado — exactamente el mismo procedimiento que en cualquier equipo de la LAN, ver `docs/15-ca-interna.md`. Tailscale resuelve el *acceso*, no el *certificado*.
 
 ## Instalación
 
 ### 1. Contenedor en pi-dns
 
-Servicio `tailscale` en `pi-dns/docker-compose.yml`, imagen oficial
-`tailscale/tailscale`, `network_mode: host` (un subnet router necesita la
-interfaz de red real del host, no la red bridge de Docker).
+Servicio `tailscale` en `pi-dns/docker-compose.yml`, imagen oficial `tailscale/tailscale`, `network_mode: host` (un subnet router necesita la interfaz de red real del host, no la red bridge de Docker).
 
 ```bash
 cd /srv/homelab/pi-dns
@@ -59,10 +41,7 @@ Variables relevantes (ver comentarios en el propio `docker-compose.yml`):
 | `TS_EXTRA_ARGS` | `--advertise-routes=192.168.1.0/24 --accept-dns=false` | Anuncia la LAN; `--accept-dns=false` porque este nodo YA es el servidor DNS del clúster — dejar que Tailscale reescriba su propio `resolv.conf` rompería Pi-hole/Unbound. |
 | `TS_STATE_DIR` | `/var/lib/tailscale` (con volumen persistente) | Sin esto, cada reinicio del contenedor genera una identidad de nodo nueva y hay que volver a autenticar. |
 
-⚠️ **`/dev/net/tun` va en `devices:`, no en `volumes:`** — con `volumes:` el
-contenedor no ve un nodo TUN real y tailscaled cae solo a
-`--tun=userspace-networking` (mismo problema que el punto anterior). Pasó de
-verdad en el primer despliegue.
+⚠️ **`/dev/net/tun` va en `devices:`, no en `volumes:`** — con `volumes:` el contenedor no ve un nodo TUN real y tailscaled cae solo a `--tun=userspace-networking` (mismo problema que el punto anterior). Pasó de verdad en el primer despliegue.
 
 ### 2. IP forwarding y módulos de kernel (una vez, en el host)
 
@@ -87,24 +66,9 @@ ip6table_nat
 EOF
 ```
 
-⚠️ **Por qué hace falta esto último**: el `iptables` (legacy) dentro del
-contenedor no puede hacer `modprobe` él solo — sin `/lib/modules` montado
-(`volumes: - /lib/modules:/lib/modules:ro` en el compose) falla con
-`modprobe: can't change directory to '/lib/modules'`; con el volumen montado
-pero sin los módulos ya cargados en el host, falla con
-`modprobe: can't load module ip_tables ...: Operation not permitted` (cargar
-módulos requiere `CAP_SYS_MODULE`, que deliberadamente **no** se le da al
-contenedor — demasiado privilegio). La solución limpia es cargar los módulos
-una vez en el host (visibles para el contenedor por compartir kernel, sin
-necesidad de que el contenedor tenga permiso para cargarlos él mismo).
-Sin este paso, `tailscale status` muestra un "Health check" avisando de que
-la tabla `filter` no existe, y las reglas NAT/forwarding del subnet router no
-funcionan aunque el nodo aparezca "online".
+⚠️ **Por qué hace falta esto último**: el `iptables` (legacy) dentro del contenedor no puede hacer `modprobe` él solo — sin `/lib/modules` montado (`volumes: - /lib/modules:/lib/modules:ro` en el compose) falla con `modprobe: can't change directory to '/lib/modules'`; con el volumen montado pero sin los módulos ya cargados en el host, falla con `modprobe: can't load module ip_tables ...: Operation not permitted` (cargar módulos requiere `CAP_SYS_MODULE`, que deliberadamente **no** se le da al contenedor — demasiado privilegio). La solución limpia es cargar los módulos una vez en el host (visibles para el contenedor por compartir kernel, sin necesidad de que el contenedor tenga permiso para cargarlos él mismo). Sin este paso, `tailscale status` muestra un "Health check" avisando de que la tabla `filter` no existe, y las reglas NAT/forwarding del subnet router no funcionan aunque el nodo aparezca "online".
 
-También se vio (y se corrigió) un aviso de
-`failed to enable src_valid_mark: ... read-only file system` — mismo motivo
-(el contenedor no puede tocar ese sysctl aunque comparta namespace de red con
-el host por `network_mode: host`) — se fija desde fuera, en el host.
+También se vio (y se corrigió) un aviso de `failed to enable src_valid_mark: ... read-only file system` — mismo motivo (el contenedor no puede tocar ese sysctl aunque comparta namespace de red con el host por `network_mode: host`) — se fija desde fuera, en el host.
 
 ### 3. Autenticación
 
@@ -118,30 +82,15 @@ el host por `network_mode: host`) — se fija desde fuera, en el host.
 - Caduca a los 90 días por defecto — pasada esa fecha, si hace falta
   re-autenticar, generar una key nueva y actualizar `TS_AUTHKEY` en `.env`.
 
-Copiar la key generada (`tskey-auth-...`) a `TS_AUTHKEY` en
-`/srv/homelab/pi-dns/.env` (nunca en `.env.example`, nunca en el repo).
+Copiar la key generada (`tskey-auth-...`) a `TS_AUTHKEY` en `/srv/homelab/pi-dns/.env` (nunca en `.env.example`, nunca en el repo).
 
-⚠️ **El inicio de sesión interactivo por URL (sin auth key) no funciona con
-este contenedor** — se probó primero y falló: el script de arranque
-(`containerboot`) mata el proceso de inicio de sesión a los ~60 segundos
-(`tailscale up failed: signal: killed`) si no se ha completado, y Docker
-reinicia el contenedor con una identidad de nodo nueva (nueva URL de inicio
-de sesión) cada vez — un inicio de sesión por navegador nunca llega a
-tiempo. La auth key evita esto por completo (inicio de sesión no
-interactivo, casi instantáneo).
+⚠️ **El inicio de sesión interactivo por URL (sin auth key) no funciona con este contenedor** — se probó primero y falló: el script de arranque (`containerboot`) mata el proceso de inicio de sesión a los ~60 segundos (`tailscale up failed: signal: killed`) si no se ha completado, y Docker reinicia el contenedor con una identidad de nodo nueva (nueva URL de inicio de sesión) cada vez — un inicio de sesión por navegador nunca llega a tiempo. La auth key evita esto por completo (inicio de sesión no interactivo, casi instantáneo).
 
-⚠️ Si el panel redirige siempre a la pantalla de "añade tu primer
-dispositivo" (`/admin/welcome`) en vez de dejar llegar a *Settings → Keys*,
-entrar directo a la URL de Keys de arriba suele saltarse esa redirección.
+⚠️ Si el panel redirige siempre a la pantalla de "añade tu primer dispositivo" (`/admin/welcome`) en vez de dejar llegar a *Settings → Keys*, entrar directo a la URL de Keys de arriba suele saltarse esa redirección.
 
 ### 4. Aprobar la subnet route (manual, panel)
 
-`https://login.tailscale.com/admin/machines` → nodo `pi-dns` → `···` →
-*Edit route settings* → activar `192.168.1.0/24`. Tailscale exige un click
-humano para aprobar rutas nuevas — no se puede hacer por API/CLI sin un
-token de administración aparte, es intencional (una ruta aprobada
-automáticamente sería una forma fácil de que un nodo comprometido se
-anunciara como gateway de una red que no le corresponde).
+`https://login.tailscale.com/admin/machines` → nodo `pi-dns` → `···` → *Edit route settings* → activar `192.168.1.0/24`. Tailscale exige un click humano para aprobar rutas nuevas — no se puede hacer por API/CLI sin un token de administración aparte, es intencional (una ruta aprobada automáticamente sería una forma fácil de que un nodo comprometido se anunciara como gateway de una red que no le corresponde).
 
 Verificación desde el propio nodo:
 
@@ -155,21 +104,11 @@ print('AllowedIPs:', d['AllowedIPs'])   # debe incluir 192.168.1.0/24
 
 ### 5. Split DNS (manual, panel)
 
-`https://login.tailscale.com/admin/dns` → *Nameservers* → *Add nameserver* →
-*Custom* → `192.168.1.170` → activar **Restrict to domain** → `home.arpa` →
-guardar. **No** activar "Override local DNS" — el objetivo es que solo
-`*.home.arpa` vaya por este nameserver, el resto del tráfico DNS del
-dispositivo remoto sigue su camino normal.
+`https://login.tailscale.com/admin/dns` → *Nameservers* → *Add nameserver* → *Custom* → `192.168.1.170` → activar **Restrict to domain** → `home.arpa` → guardar. **No** activar "Override local DNS" — el objetivo es que solo `*.home.arpa` vaya por este nameserver, el resto del tráfico DNS del dispositivo remoto sigue su camino normal.
 
 ### 6. (Recomendado) Desactivar caducidad de clave del nodo
 
-`https://login.tailscale.com/admin/machines` → clic en el **nombre** del
-nodo (`pi-dns-1`), no en el menú `···` de la fila (ahí no aparece la opción)
-→ en la ficha de detalle del dispositivo, junto a "Key expiry" → *Disable*.
-Por defecto las claves de nodo caducan a los ~180 días — para un subnet
-router permanente (no un dispositivo personal), conviene desactivarlo; si
-no, en 6 meses se desconecta solo del tailnet sin aviso previo, cortando el
-acceso remoto hasta re-autenticar a mano.
+`https://login.tailscale.com/admin/machines` → clic en el **nombre** del nodo (`pi-dns-1`), no en el menú `···` de la fila (ahí no aparece la opción) → en la ficha de detalle del dispositivo, junto a "Key expiry" → *Disable*. Por defecto las claves de nodo caducan a los ~180 días — para un subnet router permanente (no un dispositivo personal), conviene desactivarlo; si no, en 6 meses se desconecta solo del tailnet sin aviso previo, cortando el acceso remoto hasta re-autenticar a mano.
 
 ## Uso desde un dispositivo cliente
 

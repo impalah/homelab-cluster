@@ -171,10 +171,7 @@ ssh pi-sonar "docker logs sonarqube --tail=50 2>&1 | grep -i jdbc"
 
 ### DNS caído en varios nodos a la vez — `shared/scripts/fix-dns-resolver.sh`
 
-Mismo síntoma que el de arriba (`systemd-resolved` cayendo al DNS
-secundario del netplan, `1.1.1.1`, en vez de `pi-dns`), pero comprobado y
-corregido en `pi-dns`, `pi-obs`, `pi-sonar`, `pi-utils` y `retaco` de una
-vez, por SSH desde `mole`:
+Mismo síntoma que el de arriba (`systemd-resolved` cayendo al DNS secundario del netplan, `1.1.1.1`, en vez de `pi-dns`), pero comprobado y corregido en `pi-dns`, `pi-obs`, `pi-sonar`, `pi-utils` y `retaco` de una vez, por SSH desde `mole`:
 
 ```bash
 bash shared/scripts/fix-dns-resolver.sh all       # todos
@@ -183,10 +180,7 @@ bash shared/scripts/fix-dns-resolver.sh pi-sonar  # uno solo
 
 ### Causa raíz real, identificada en vivo: ráfaga de DNS de un workflow de n8n satura Unbound
 
-**Síntoma**: justo después de ejecutar el workflow **"RSS Fetch & Store"**
-en `n8n-main` (retaco), `retaco` deja de resolver `postgresql.home.arpa` —
-`resolvectl status` muestra `Current DNS Server: 1.1.1.1` en vez de
-`192.168.1.170`, aunque ambos siguen en la lista de `DNS Servers`.
+**Síntoma**: justo después de ejecutar el workflow **"RSS Fetch & Store"** en `n8n-main` (retaco), `retaco` deja de resolver `postgresql.home.arpa` — `resolvectl status` muestra `Current DNS Server: 1.1.1.1` en vez de `192.168.1.170`, aunque ambos siguen en la lista de `DNS Servers`.
 
 **Diagnóstico confirmado** (no es network flakiness aleatoria):
 
@@ -200,36 +194,13 @@ docker logs n8n-main --since 60m 2>&1 | grep -i "host not found\|GetAddrInfoReqW
 docker exec pihole grep 'Aug  1 14:30:58' /var/log/pihole/pihole.log | grep -c '192.168.1.174'
 ```
 
-En el incidente real que motivó esto: **353 consultas DNS desde `retaco`
-en un único segundo** — el workflow resuelve decenas de dominios de feeds
-RSS (`raw.githubusercontent.com`, `huggingface.co`, `openai.com`,
-`hackernoon.com`, etc.) prácticamente a la vez. Unbound (`pi-dns`, una
-Raspberry Pi) tiene que hacer resolución recursiva completa para la
-mayoría — muchos sin caché la primera vez — y bajo ese pico alguna
-consulta se retrasa lo suficiente como para que `systemd-resolved` en
-`retaco` la dé por fallida y pase a `1.1.1.1`, quedándose ahí "pegado"
-(comportamiento conocido de `systemd-resolved`: no reintenta el servidor
-preferido solo tras un fallo, hay que forzarlo — de ahí `fix-dns-resolver.sh`).
+En el incidente real que motivó esto: **353 consultas DNS desde `retaco` en un único segundo** — el workflow resuelve decenas de dominios de feeds RSS (`raw.githubusercontent.com`, `huggingface.co`, `openai.com`, `hackernoon.com`, etc.) prácticamente a la vez. Unbound (`pi-dns`, una Raspberry Pi) tiene que hacer resolución recursiva completa para la mayoría — muchos sin caché la primera vez — y bajo ese pico alguna consulta se retrasa lo suficiente como para que `systemd-resolved` en `retaco` la dé por fallida y pase a `1.1.1.1`, quedándose ahí "pegado" (comportamiento conocido de `systemd-resolved`: no reintenta el servidor preferido solo tras un fallo, hay que forzarlo — de ahí `fix-dns-resolver.sh`).
 
-**Mitigado (aplicado)**: `num-threads` de Unbound subido de 4 a 8 (con los
-`*-cache-slabs` a juego) — más margen para absorber picos de consultas
-simultáneas sin encolarse. Ver el comentario en
-`pi-dns/config/unbound/unbound.conf`. Esto reduce la probabilidad del
-fallo, pero **no ataca la causa real**.
+**Mitigado (aplicado)**: `num-threads` de Unbound subido de 4 a 8 (con los `*-cache-slabs` a juego) — más margen para absorber picos de consultas simultáneas sin encolarse. Ver el comentario en `pi-dns/config/unbound/unbound.conf`. Esto reduce la probabilidad del fallo, pero **no ataca la causa real**.
 
-**Arreglo real pendiente (fuera de este repo)**: limitar la concurrencia
-del propio workflow "RSS Fetch & Store" en n8n (batching/throttling del
-nodo que dispara las peticiones a cada feed), para que no genere cientos
-de resoluciones DNS en el mismo instante. Es un cambio en la definición
-del workflow, no en la infraestructura — se gestiona desde la propia interfaz o API
-de n8n, no desde este repo.
+**Arreglo real pendiente (fuera de este repo)**: limitar la concurrencia del propio workflow "RSS Fetch & Store" en n8n (batching/throttling del nodo que dispara las peticiones a cada feed), para que no genere cientos de resoluciones DNS en el mismo instante. Es un cambio en la definición del workflow, no en la infraestructura — se gestiona desde la propia interfaz o API de n8n, no desde este repo.
 
-Hace una prueba **funcional** (resuelve un hostname `*.home.arpa` real y
-compara la IP con la esperada — no lee el campo "Current DNS Server" de
-`resolvectl status`, que ni siquiera aparece cuando `resolv.conf mode` es
-`stub`, el habitual en estos nodos, y da falsos positivos de fallo). Si no
-resuelve correctamente, reinicia `systemd-resolved` en ese nodo y
-reintenta.
+Hace una prueba **funcional** (resuelve un hostname `*.home.arpa` real y compara la IP con la esperada — no lee el campo "Current DNS Server" de `resolvectl status`, que ni siquiera aparece cuando `resolv.conf mode` es `stub`, el habitual en estos nodos, y da falsos positivos de fallo). Si no resuelve correctamente, reinicia `systemd-resolved` en ese nodo y reintenta.
 
 ### Síntoma: `postgres-main` "healthy" pero consultas fallan con `Permission denied`
 

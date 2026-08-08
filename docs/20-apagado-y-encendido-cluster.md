@@ -2,20 +2,9 @@
 
 ## Qué resuelve
 
-Procedimiento para apagar de forma segura la mayor parte del clúster (por
-ejemplo, para una intervención física: mover hardware, limpiar, cambiar
-cableado) y volver a encenderlo sin corromper datos ni dejar servicios en
-un estado a medias. Cubre `pi-dns`, `pi-obs`, `pi-sonar`, `pi-utils` y
-`retaco` — los cinco nodos que se pueden apagar físicamente sin más
-consecuencia que "no están disponibles mientras dure la intervención".
+Procedimiento para apagar de forma segura la mayor parte del clúster (por ejemplo, para una intervención física: mover hardware, limpiar, cambiar cableado) y volver a encenderlo sin corromper datos ni dejar servicios en un estado a medias. Cubre `pi-dns`, `pi-obs`, `pi-sonar`, `pi-utils` y `retaco` — los cinco nodos que se pueden apagar físicamente sin más consecuencia que "no están disponibles mientras dure la intervención".
 
-`ryzen` (`mole`) se trata aparte: normalmente se queda **encendido** (es un
-PC de sobremesa, no una Raspberry Pi con tarjeta SD delicada) con su propio
-Docker parado, para poder usarlo como punto de control por SSH durante la
-intervención. Si alguna vez hay que apagarlo también físicamente, sigue el
-mismo patrón que los demás (parar Docker, `sudo poweroff`, esperar a que
-dejen de responder los pings) — para volver a encenderlo hace falta acceso
-físico o Wake-on-LAN desde otro nodo, ver `docs/19-wake-on-lan.md`.
+`ryzen` (`mole`) se trata aparte: normalmente se queda **encendido** (es un PC de sobremesa, no una Raspberry Pi con tarjeta SD delicada) con su propio Docker parado, para poder usarlo como punto de control por SSH durante la intervención. Si alguna vez hay que apagarlo también físicamente, sigue el mismo patrón que los demás (parar Docker, `sudo poweroff`, esperar a que dejen de responder los pings) — para volver a encenderlo hace falta acceso físico o Wake-on-LAN desde otro nodo, ver `docs/19-wake-on-lan.md`.
 
 ## Por qué importa el orden
 
@@ -40,9 +29,7 @@ físico o Wake-on-LAN desde otro nodo, ver `docs/19-wake-on-lan.md`.
 
 ## Apagado
 
-Todo lo siguiente se ejecuta desde `mole` (`ryzen`), que se queda
-encendida — usa los mismos usuarios SSH por IP de `shared/scripts/`
-(`u-data`, `u-dns`, `u-obs`, `u-sonar`, `u-utils`).
+Todo lo siguiente se ejecuta desde `mole` (`ryzen`), que se queda encendida — usa los mismos usuarios SSH por IP de `shared/scripts/` (`u-data`, `u-dns`, `u-obs`, `u-sonar`, `u-utils`).
 
 ### 1. Parar el Docker de `mole` (opcional, según lo que vayas a hacer)
 
@@ -54,9 +41,7 @@ docker compose -f docker-compose.observability.yml down
 
 ### 2. Parar Docker y apagar el sistema operativo de cada nodo
 
-Orden sugerido — el inverso al de instalación, por costumbre y simetría
-con `docs/01-topologia.md`, aunque para el apagado en sí no es obligatorio
-(sí lo es no saltarse el `sudo poweroff` limpio en cada uno):
+Orden sugerido — el inverso al de instalación, por costumbre y simetría con `docs/01-topologia.md`, aunque para el apagado en sí no es obligatorio (sí lo es no saltarse el `sudo poweroff` limpio en cada uno):
 
 ```bash
 for target in \
@@ -83,25 +68,15 @@ for ip in 192.168.1.170 192.168.1.171 192.168.1.172 192.168.1.173 192.168.1.174;
 done
 ```
 
-⚠️ No desconectes la alimentación de un nodo mientras siga respondiendo a
-`ping` — significa que el sistema operativo aún no ha terminado de
-apagarse (SonarQube en `pi-sonar` en particular puede tardar unos segundos
-más que el resto en pararse limpio, motor Java/Elasticsearch de por
-medio).
+⚠️ No desconectes la alimentación de un nodo mientras siga respondiendo a `ping` — significa que el sistema operativo aún no ha terminado de apagarse (SonarQube en `pi-sonar` en particular puede tardar unos segundos más que el resto en pararse limpio, motor Java/Elasticsearch de por medio).
 
-Con los cinco nodos sin respuesta, ya es seguro hacer la intervención
-física.
+Con los cinco nodos sin respuesta, ya es seguro hacer la intervención física.
 
 ## Encendido
 
 ### 1. Alimentación física
 
-Reconecta la alimentación de los cinco nodos. Las Raspberry Pi 5
-(`pi-dns`, `pi-obs`, `pi-sonar`, `pi-utils`) arrancan solas en cuanto
-reciben alimentación por USB-C, sin necesidad de pulsar nada. `retaco` (PC
-mini) puede o no arrancar solo según su propio ajuste de BIOS "Restore AC
-Power Loss"/similar — si no arranca sola a los 30-60 segundos de
-reconectar la alimentación, pulsa su botón de encendido físico.
+Reconecta la alimentación de los cinco nodos. Las Raspberry Pi 5 (`pi-dns`, `pi-obs`, `pi-sonar`, `pi-utils`) arrancan solas en cuanto reciben alimentación por USB-C, sin necesidad de pulsar nada. `retaco` (PC mini) puede o no arrancar solo según su propio ajuste de BIOS "Restore AC Power Loss"/similar — si no arranca sola a los 30-60 segundos de reconectar la alimentación, pulsa su botón de encendido físico.
 
 ### 2. `retaco` primero — obligatorio
 
@@ -113,8 +88,7 @@ ssh u-data@192.168.1.174 "cd /srv/homelab/retaco && docker compose up -d"
 ssh u-data@192.168.1.174 "cd /srv/homelab/retaco && docker compose ps"
 ```
 
-No sigas al siguiente paso hasta ver `postgres-main` como `healthy` en esa
-salida.
+No sigas al siguiente paso hasta ver `postgres-main` como `healthy` en esa salida.
 
 ### 3. `pi-dns` segundo — obligatorio
 
@@ -123,15 +97,9 @@ ssh u-dns@192.168.1.170 "cd /srv/homelab/pi-dns && docker compose up -d"
 ssh u-dns@192.168.1.170 "cd /srv/homelab/pi-dns && docker compose ps"
 ```
 
-`nginx` espera solo internamente a `pihole` y `apikey-service` (ambos
-`depends_on: condition: service_healthy` dentro del propio
-`docker-compose.yml` de `pi-dns`) — Compose gestiona ese orden interno
-solo. Lo único que tenías que garantizar tú era que `retaco` ya estuviera
-arriba (paso 2), porque `apikey-service` necesita alcanzar su base de
-datos ahí para pasar su propio healthcheck.
+`nginx` espera solo internamente a `pihole` y `apikey-service` (ambos `depends_on: condition: service_healthy` dentro del propio `docker-compose.yml` de `pi-dns`) — Compose gestiona ese orden interno solo. Lo único que tenías que garantizar tú era que `retaco` ya estuviera arriba (paso 2), porque `apikey-service` necesita alcanzar su base de datos ahí para pasar su propio healthcheck.
 
-Comprueba también que el subnet router de Tailscale se ha reconectado solo
-(usa el estado persistido, no hace falta volver a autenticar):
+Comprueba también que el subnet router de Tailscale se ha reconectado solo (usa el estado persistido, no hace falta volver a autenticar):
 
 ```bash
 ssh u-dns@192.168.1.170 "docker exec tailscale tailscale status"
@@ -145,18 +113,9 @@ ssh u-sonar@192.168.1.172 "cd /srv/homelab/pi-sonar  && docker compose up -d"
 ssh u-utils@192.168.1.173 "cd /srv/homelab/pi-utils  && docker compose up -d"
 ```
 
-⚠️ `pi-sonar`/SonarQube tarda ~120 segundos en arrancar (calentamiento de la JVM)
-— no te alarmes si `docker compose ps` lo muestra `starting` un rato.
+⚠️ `pi-sonar`/SonarQube tarda ~120 segundos en arrancar (calentamiento de la JVM) — no te alarmes si `docker compose ps` lo muestra `starting` un rato.
 
-⚠️ **Visto en vivo tras un apagado/encendido físico completo**: SonarQube
-puede quedarse en `starting` indefinidamente (no solo los ~120s normales)
-si `systemd-resolved` en `pi-sonar` arranca atascado en un DNS secundario
-y no resuelve `postgresql.home.arpa` (alias del `postgres-main` en
-`retaco`) — síntoma en `docker logs sonarqube`:
-`java.net.UnknownHostException: postgresql.home.arpa`, con SonarQube
-reiniciando su proceso interno en bucle. La conexión TCP directa a
-`192.168.1.174:5432` funciona bien — es puramente un problema de DNS en
-`pi-sonar`, ya documentado en `docs/13-troubleshooting.md`. Solución:
+⚠️ **Visto en vivo tras un apagado/encendido físico completo**: SonarQube puede quedarse en `starting` indefinidamente (no solo los ~120s normales) si `systemd-resolved` en `pi-sonar` arranca atascado en un DNS secundario y no resuelve `postgresql.home.arpa` (alias del `postgres-main` en `retaco`) — síntoma en `docker logs sonarqube`: `java.net.UnknownHostException: postgresql.home.arpa`, con SonarQube reiniciando su proceso interno en bucle. La conexión TCP directa a `192.168.1.174:5432` funciona bien — es puramente un problema de DNS en `pi-sonar`, ya documentado en `docs/13-troubleshooting.md`. Solución:
 
 ```bash
 ssh u-sonar@192.168.1.172 "resolvectl query postgresql.home.arpa"   # confirma el síntoma
@@ -177,15 +136,7 @@ docker compose up -d
 
 ## Verificación final
 
-⚠️ **`check-health.sh` inspecciona contenedores Docker y endpoints en
-`127.0.0.1` — solo tiene sentido ejecutado *localmente en cada nodo*, no
-desde `mole` apuntando a otro nodo por nombre.** Ejecutado así, `docker
-inspect` mira el Docker de `mole` (donde esos contenedores no existen →
-falsos `[FAIL]`) y `127.0.0.1` es el propio `mole`, no el nodo real —
-visto en vivo: un `for node in ...; do bash check-health.sh "${node}";
-done` lanzado desde `mole` da negativos falsos en todos los nodos remotos
-(Pi-hole, Loki, Tempo, y todo `docker inspect`), aunque el clúster esté
-perfectamente sano. La forma correcta es por SSH:
+⚠️ **`check-health.sh` inspecciona contenedores Docker y endpoints en `127.0.0.1` — solo tiene sentido ejecutado *localmente en cada nodo*, no desde `mole` apuntando a otro nodo por nombre.** Ejecutado así, `docker inspect` mira el Docker de `mole` (donde esos contenedores no existen → falsos `[FAIL]`) y `127.0.0.1` es el propio `mole`, no el nodo real — visto en vivo: un `for node in ...; do bash check-health.sh "${node}"; done` lanzado desde `mole` da negativos falsos en todos los nodos remotos (Pi-hole, Loki, Tempo, y todo `docker inspect`), aunque el clúster esté perfectamente sano. La forma correcta es por SSH:
 
 ```bash
 bash /srv/homelab/shared/scripts/check-health.sh ryzen   # local, sin ssh
@@ -211,7 +162,4 @@ dig +short grafana.home.arpa @192.168.1.170     # DNS resuelve
 curl -sk https://index.home.arpa -o /dev/null -w "HTTP %{http_code}\n"   # puerta de entrada HTTPS
 ```
 
-Si algo no sale `healthy`/`200` a la primera, revisa el orden — el fallo
-más común es `apikey-service` en `pi-dns` reintentando conexión porque
-`retaco` no terminó de arrancar antes (se autocorrige solo en segundos,
-ver `docs/13-troubleshooting.md` si persiste).
+Si algo no sale `healthy`/`200` a la primera, revisa el orden — el fallo más común es `apikey-service` en `pi-dns` reintentando conexión porque `retaco` no terminó de arrancar antes (se autocorrige solo en segundos, ver `docs/13-troubleshooting.md` si persiste).

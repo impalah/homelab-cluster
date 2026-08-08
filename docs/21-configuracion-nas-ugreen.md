@@ -2,10 +2,7 @@
 
 ## Qué es
 
-Dispositivo adicional en la LAN, **no forma parte del clúster Docker** —
-no tiene `docker-compose.yml` ni directorio de nodo en este repo, es un
-NAS con su propio sistema operativo (**UGOS Pro**, el OS propio de UGREEN
-para su gama NASync).
+Dispositivo adicional en la LAN, **no forma parte del clúster Docker** — no tiene `docker-compose.yml` ni directorio de nodo en este repo, es un NAS con su propio sistema operativo (**UGOS Pro**, el OS propio de UGREEN para su gama NASync).
 
 | | |
 |---|---|
@@ -18,12 +15,7 @@ para su gama NASync).
 
 ## Alta en la red del clúster
 
-`ketekasko.home.arpa` se añadió como **alias DNS directo** (mismo patrón
-que `postgresql.home.arpa`, ver `shared/dns/dns-records.md`) — no pasa por
-`nginx`/`pi-dns`, porque UGOS Pro sirve su propia interfaz con su propio
-certificado TLS en el puerto `9443` (no el 443 que usa `nginx`), así que
-un alias directo a la IP es más simple que meterlo detrás del proxy
-inverso.
+`ketekasko.home.arpa` se añadió como **alias DNS directo** (mismo patrón que `postgresql.home.arpa`, ver `shared/dns/dns-records.md`) — no pasa por `nginx`/`pi-dns`, porque UGOS Pro sirve su propia interfaz con su propio certificado TLS en el puerto `9443` (no el 443 que usa `nginx`), así que un alias directo a la IP es más simple que meterlo detrás del proxy inverso.
 
 ```bash
 # Registro añadido a shared/dns/dns-records.md y shared/scripts/load-dns-records.sh
@@ -31,35 +23,25 @@ inverso.
 ssh u-dns@192.168.1.170 'cd /srv/homelab/shared/scripts && set -a; source /srv/homelab/pi-dns/.env; set +a; PIHOLE_URL=https://pihole.home.arpa PIHOLE_PASSWORD="$PIHOLE_PASSWORD" bash load-dns-records.sh'
 ```
 
-También se añadió una tarjeta en el panel `index.home.arpa`
-(`pi-dns/config/nginx/html/index.html`), con icono descargado localmente
-desde [dashboardicons.com](https://dashboardicons.com/icons/ugreen-nas)
-(proyecto `homarr-labs/dashboard-icons`) — enlaza directamente a
-`https://ketekasko.home.arpa:9443`.
+También se añadió una tarjeta en el panel `index.home.arpa` (`pi-dns/config/nginx/html/index.html`), con icono descargado localmente desde [dashboardicons.com](https://dashboardicons.com/icons/ugreen-nas) (proyecto `homarr-labs/dashboard-icons`) — enlaza directamente a `https://ketekasko.home.arpa:9443`.
 
 ## Activar SMB (Mac/Windows)
 
-`Panel de control → Servicios de archivos → SMB` → activar el servicio →
-Aplicar. Estándar, sin particularidades.
+`Panel de control → Servicios de archivos → SMB` → activar el servicio → Aplicar. Estándar, sin particularidades.
 
 ## Activar NFS y forzar NFSv4
 
-La GUI de UGOS Pro **limita el protocolo máximo a NFSv3** — no hay
-selector de v4 en la interfaz. Para NFSv4 hace falta editar la
-configuración por SSH.
+La GUI de UGOS Pro **limita el protocolo máximo a NFSv3** — no hay selector de v4 en la interfaz. Para NFSv4 hace falta editar la configuración por SSH.
 
 ### 1. Activar el servicio NFS en la GUI
 
-`Panel de control → Servicios de archivos → NFS` → activar el checkbox →
-Aplicar.
+`Panel de control → Servicios de archivos → NFS` → activar el checkbox → Aplicar.
 
 ### 2. Forzar NFSv4 mediante SSH
 
 Dos ficheros a editar, en el propio NAS por SSH:
 
-**`/etc/nfs.conf`** — fichero estándar de `nfs-utils` (Linux por debajo de
-UGOS Pro), sección `[nfsd]`. Por defecto trae `vers4`/`vers4.0`/`vers4.1`/`vers4.2`
-todos en `n`:
+**`/etc/nfs.conf`** — fichero estándar de `nfs-utils` (Linux por debajo de UGOS Pro), sección `[nfsd]`. Por defecto trae `vers4`/`vers4.0`/`vers4.1`/`vers4.2` todos en `n`:
 
 ```bash
 sudo sed -i -E \
@@ -72,12 +54,7 @@ sudo sed -i -E \
 grep '^vers' /etc/nfs.conf   # verificar: vers2/3/4/4.0/4.1/4.2 deben quedar en "= y"
 ```
 
-**`/etc/nfs.json`** — fichero propio de UGOS Pro que la GUI usa para
-**regenerar** `nfs.conf` al pulsar "Aplicar" en la pantalla de NFS del
-Panel de control. Si no se edita también este fichero, la próxima vez que
-se toque esa pantalla puede sobrescribir `nfs.conf` de vuelta a NFSv3. Su
-esquema no está documentado públicamente — el campo relevante encontrado
-en este NAS:
+**`/etc/nfs.json`** — fichero propio de UGOS Pro que la GUI usa para **regenerar** `nfs.conf` al pulsar "Aplicar" en la pantalla de NFS del Panel de control. Si no se edita también este fichero, la próxima vez que se toque esa pantalla puede sobrescribir `nfs.conf` de vuelta a NFSv3. Su esquema no está documentado públicamente — el campo relevante encontrado en este NAS:
 
 ```bash
 sudo cat /etc/nfs.json
@@ -91,12 +68,7 @@ sudo sed -i 's/"maximumNFSProtocol": "NFSv3"/"maximumNFSProtocol": "NFSv4"/' /et
 sudo cat /etc/nfs.json   # confirmar "maximumNFSProtocol": "NFSv4"
 ```
 
-⚠️ Tras editar ambos ficheros, **evitar volver a tocar la pantalla de NFS
-del Panel de control** salvo que se compruebe después (mediante
-`/proc/fs/nfsd/versions`, ver abajo) que sigue en v4 — no está confirmado
-al 100% que `maximumNFSProtocol` sea el único campo que gobierna la
-regeneración, solo que es el más plausible por nombre y por ser el que
-cambia de `NFSv3` a lo que sea que se seleccione en la GUI.
+⚠️ Tras editar ambos ficheros, **evitar volver a tocar la pantalla de NFS del Panel de control** salvo que se compruebe después (mediante `/proc/fs/nfsd/versions`, ver abajo) que sigue en v4 — no está confirmado al 100% que `maximumNFSProtocol` sea el único campo que gobierna la regeneración, solo que es el más plausible por nombre y por ser el que cambia de `NFSv3` a lo que sea que se seleccione en la GUI.
 
 ### 3. Reiniciar el servicio
 
@@ -116,11 +88,7 @@ Salida real obtenida en `ketekasko`:
 +3 +4 +4.1 +4.2
 ```
 
-Lectura: `+3` (NFSv3 sigue activo, compatibilidad), `+4` (NFSv4 activo —
-esto ya cubre la versión base 4.0, el kernel no siempre lista `4.0` como
-entrada aparte), `+4.1`/`+4.2` (subversiones activas). No aparece `2`
-porque este build de `nfsd` no trae compilado NFSv2, sin relación con lo
-configurado aquí. Sin ningún `-` (deshabilitado) en la lista → correcto.
+Lectura: `+3` (NFSv3 sigue activo, compatibilidad), `+4` (NFSv4 activo — esto ya cubre la versión base 4.0, el kernel no siempre lista `4.0` como entrada aparte), `+4.1`/`+4.2` (subversiones activas). No aparece `2` porque este build de `nfsd` no trae compilado NFSv2, sin relación con lo configurado aquí. Sin ningún `-` (deshabilitado) en la lista → correcto.
 
 ### ⚠️ NFSv4 se negocia pero el montaje falla — pseudo-root no expuesto
 
@@ -131,39 +99,19 @@ mount.nfs4: mounting ketekasko.home.arpa:/nfs-data failed, reason given by serve
 mount.nfs4: mounting ketekasko.home.arpa:/volume1/nfs-data failed, reason given by server: No such file or directory
 ```
 
-Probado tanto con la ruta "bonita" (`/nfs-data`) como con la ruta real del
-export (`/volume1/nfs-data`, confirmada con `showmount -e
-ketekasko.home.arpa`) — ambas fallan igual. **Causa**: NFSv4 usa un
-"pseudo-filesystem root" (normalmente un export especial con `fsid=0`) al
-que los clientes montan de forma relativa; sin ese export raíz configurado
-en el servidor, cualquier ruta v4 da `No such file or directory` aunque el
-export exista y esté bien permisado — confirmado montando la misma ruta
-con NFSv3 (que no usa pseudo-root, monta rutas reales directamente): monta
-sin problema y la escritura como `root` funciona (sin squash, tal como se
-configuró). Es decir, el export en sí está bien — es un hueco específico
-de v4 en cómo UGOS Pro genera `/etc/exports` desde la GUI (pensado para
-v3), no algo que dependa de `nfs.conf`/`nfs.json`.
+Probado tanto con la ruta "bonita" (`/nfs-data`) como con la ruta real del export (`/volume1/nfs-data`, confirmada con `showmount -e ketekasko.home.arpa`) — ambas fallan igual. **Causa**: NFSv4 usa un "pseudo-filesystem root" (normalmente un export especial con `fsid=0`) al que los clientes montan de forma relativa; sin ese export raíz configurado en el servidor, cualquier ruta v4 da `No such file or directory` aunque el export exista y esté bien permisado — confirmado montando la misma ruta con NFSv3 (que no usa pseudo-root, monta rutas reales directamente): monta sin problema y la escritura como `root` funciona (sin squash, tal como se configuró). Es decir, el export en sí está bien — es un hueco específico de v4 en cómo UGOS Pro genera `/etc/exports` desde la GUI (pensado para v3), no algo que dependa de `nfs.conf`/`nfs.json`.
 
-**Decisión tomada**: usar NFSv3 para el uso real (funciona perfectamente
-para bind mounts de Docker/Forgejo en esta LAN de confianza) y dejar
-NFSv4 como pendiente — arreglarlo del todo requeriría añadir a mano un
-export `fsid=0` en `/etc/exports` del NAS por SSH, sin garantía de que
-UGOS Pro no lo sobrescriba igual que hace con `nfs.conf`/`nfs.json`. Ver
-`docs/22-mejoras-futuras.md` si se retoma más adelante.
+**Decisión tomada**: usar NFSv3 para el uso real (funciona perfectamente para bind mounts de Docker/Forgejo en esta LAN de confianza) y dejar NFSv4 como pendiente — arreglarlo del todo requeriría añadir a mano un export `fsid=0` en `/etc/exports` del NAS por SSH, sin garantía de que UGOS Pro no lo sobrescriba igual que hace con `nfs.conf`/`nfs.json`. Ver `docs/22-mejoras-futuras.md` si se retoma más adelante.
 
 ## Montar desde un cliente Linux
 
-Requiere el paquete `nfs-common` (trae el programa auxiliar
-`mount.nfs`/`mount.nfs4` — sin él, `mount -t nfs`/`nfs4` falla con
-"opción incorrecta"):
+Requiere el paquete `nfs-common` (trae el programa auxiliar `mount.nfs`/`mount.nfs4` — sin él, `mount -t nfs`/`nfs4` falla con "opción incorrecta"):
 
 ```bash
 sudo apt-get install -y nfs-common
 ```
 
-⚠️ Usar la **ruta real del export**, no el nombre de la carpeta a secas —
-confírmala con `showmount -e ketekasko.home.arpa` (en este caso,
-`/volume1/nfs-data`, no `/nfs-data`).
+⚠️ Usar la **ruta real del export**, no el nombre de la carpeta a secas — confírmala con `showmount -e ketekasko.home.arpa` (en este caso, `/volume1/nfs-data`, no `/nfs-data`).
 
 ```bash
 sudo mkdir -p /mnt/nfs-data
@@ -182,16 +130,7 @@ ketekasko.home.arpa:/volume1/nfs-data /mnt/nfs-data nfs vers=3,defaults,_netdev 
 |---|---|---|
 | `retaco` | `/mnt/nfs-data` | `/data/input`/`/data/output` de `epub2pdf-service` y `pdf2chunks-service` (subcarpetas `epub2pdf/`, `pdf2chunks/`) — ver `docs/05-instalacion-retaco.md` sección 5.4 |
 
-⚠️ **`stat`/`ls` sobre el punto de montaje como usuario sin privilegios
-pueden devolver "Permiso denegado" o `mode 0000` de forma intermitente**,
-pese a que el export tiene permisos abiertos y root squash desactivado —
-observado en vivo montando desde `retaco`. El acceso como `root` (por
-`sudo`, o el propio proceso `root` dentro de un contenedor Docker) siempre
-funciona con normalidad, verificado con lectura y escritura reales — no
-bloquea el caso de uso real (contenedores que escriben como root, ver
-sección "Esquema de carpetas de este NAS" más arriba). No investigado a
-fondo el motivo exacto; probablemente una peculiaridad de cómo UGOS Pro
-calcula o cachea los atributos NFSv3, no un problema de permisos real.
+⚠️ **`stat`/`ls` sobre el punto de montaje como usuario sin privilegios pueden devolver "Permiso denegado" o `mode 0000` de forma intermitente**, pese a que el export tiene permisos abiertos y root squash desactivado — observado en vivo montando desde `retaco`. El acceso como `root` (por `sudo`, o el propio proceso `root` dentro de un contenedor Docker) siempre funciona con normalidad, verificado con lectura y escritura reales — no bloquea el caso de uso real (contenedores que escriben como root, ver sección "Esquema de carpetas de este NAS" más arriba). No investigado a fondo el motivo exacto; probablemente una peculiaridad de cómo UGOS Pro calcula o cachea los atributos NFSv3, no un problema de permisos real.
 
 ## Esquema de carpetas de este NAS
 
@@ -215,18 +154,11 @@ Volumen total 3.6 TB (RAID 1), repartido en dos carpetas compartidas:
 - No requiere usuario del NAS — NFS con `AUTH_SYS` controla acceso por
   IP/red, no por cuenta.
 
-**`media`** — SMB sí requiere una cuenta de usuario del NAS
-(`Panel de control → Usuario → Crear`) con permiso de Lectura/Escritura
-asignado en `Propiedades → pestaña "Permiso"` de la carpeta — sin acceso
-anónimo/invitado, coherente con el resto del clúster (todo autenticado).
+**`media`** — SMB sí requiere una cuenta de usuario del NAS (`Panel de control → Usuario → Crear`) con permiso de Lectura/Escritura asignado en `Propiedades → pestaña "Permiso"` de la carpeta — sin acceso anónimo/invitado, coherente con el resto del clúster (todo autenticado).
 
 ### Esquema de usuarios (confirmado en uso)
 
-`linus` era originalmente la cuenta de administración del NAS (la del
-primer acceso, en la configuración inicial) — reutilizarla también para montar `media` por
-SMB habría expuesto credenciales de administrador completo en cualquier
-dispositivo/app que las guardara, solo para acceder a una carpeta de
-medios. Esquema aplicado en su lugar:
+`linus` era originalmente la cuenta de administración del NAS (la del primer acceso, en la configuración inicial) — reutilizarla también para montar `media` por SMB habría expuesto credenciales de administrador completo en cualquier dispositivo/app que las guardara, solo para acceder a una carpeta de medios. Esquema aplicado en su lugar:
 
 1. Cuenta de administración **nueva y separada**, creada y verificada
    (inicio de sesión + acceso al Panel de control completo) antes de tocar nada más.
@@ -236,10 +168,7 @@ medios. Esquema aplicado en su lugar:
 3. `linus` con Lectura/Escritura explícita sobre `media`
    (`Propiedades de "media" → pestaña "Permiso"`).
 
-Así, la cuenta que queda guardada en portátiles/apps para el día a día
-(`linus`) no tiene ningún privilegio de administración del NAS, aunque se
-filtre su contraseña — la cuenta de administración solo se usa
-puntualmente, de forma manual.
+Así, la cuenta que queda guardada en portátiles/apps para el día a día (`linus`) no tiene ningún privilegio de administración del NAS, aunque se filtre su contraseña — la cuenta de administración solo se usa puntualmente, de forma manual.
 
 ## Conectar a `media` (SMB) desde cada sistema
 
@@ -257,15 +186,9 @@ Probado y funcionando en macOS y Windows.
 
 ## Carpetas compartidas — ¿una para SMB y otra para NFS, o la misma?
 
-En UGOS Pro, una misma carpeta compartida tiene **pestañas de permisos
-independientes por protocolo** en sus propiedades (`Archivos → carpeta →
-Propiedades → pestaña "Permiso NFS"`, y otra para SMB) — se puede
-compartir **una única carpeta con ambos protocolos a la vez**, no hace
-falta duplicarla.
+En UGOS Pro, una misma carpeta compartida tiene **pestañas de permisos independientes por protocolo** en sus propiedades (`Archivos → carpeta → Propiedades → pestaña "Permiso NFS"`, y otra para SMB) — se puede compartir **una única carpeta con ambos protocolos a la vez**, no hace falta duplicarla.
 
-**Recomendación**: para uso doméstico normal (documentos, backups,
-medios), una sola carpeta con ambos protocolos activados es lo habitual y
-más simple. Dos puntos a vigilar si se comparte así:
+**Recomendación**: para uso doméstico normal (documentos, backups, medios), una sola carpeta con ambos protocolos activados es lo habitual y más simple. Dos puntos a vigilar si se comparte así:
 
 - **UID/GID consistentes** — SMB usa su propio modelo de usuarios; NFS
   (sobre todo v3) se basa en UID/GID Unix. Si un fichero se crea desde SMB

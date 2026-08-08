@@ -278,25 +278,11 @@ Multi-arch de fábrica en el lado del registry — `registry:2` almacena manifie
 
 ### 5.4 epub2pdf-service y pdf2chunks-service
 
-Dos microservicios `uv` autocontenidos (`services/epub2pdf-service/`,
-`services/pdf2chunks-service/`, raíz del repo — misma estructura en capas
-que `apikey-service`/`markitdown-service`/`whisper-service`, ver
-`docs/desarrollo-microservicios-python.md`), parte del pipeline de RAG para
-libros en PDF (`docs/22-mejoras-futuras.md` ítem 12): `epub2pdf-service`
-convierte EPUB a PDF con Calibre, `pdf2chunks-service` trocea el PDF
-resultante (texto nativo + OCR de respaldo con Tesseract) en fragmentos
-indexables.
+Dos microservicios `uv` autocontenidos (`services/epub2pdf-service/`, `services/pdf2chunks-service/`, raíz del repo — misma estructura en capas que `apikey-service`/`markitdown-service`/`whisper-service`, ver `docs/desarrollo-microservicios-python.md`), parte del pipeline de RAG para libros en PDF (`docs/22-mejoras-futuras.md` ítem 12): `epub2pdf-service` convierte EPUB a PDF con Calibre, `pdf2chunks-service` trocea el PDF resultante (texto nativo + OCR de respaldo con Tesseract) en fragmentos indexables.
 
-**Nodo**: `retaco`, no una Raspberry Pi ni `ryzen` — ninguno de los dos
-necesita GPU, y `retaco` tiene bastante más CPU/RAM de margen que una Pi
-(`pi-utils`, el nodo "de conversión de documentos" por rol, ya tiene que
-limitar la concurrencia de `crawl4ai-scraper-service` para no agotar su
-RAM) y está siempre encendido, a diferencia de `ryzen` — importa porque
-`n8n-main`, que orquestará la ingesta, vive aquí mismo.
+**Nodo**: `retaco`, no una Raspberry Pi ni `ryzen` — ninguno de los dos necesita GPU, y `retaco` tiene bastante más CPU/RAM de margen que una Pi (`pi-utils`, el nodo "de conversión de documentos" por rol, ya tiene que limitar la concurrencia de `crawl4ai-scraper-service` para no agotar su RAM) y está siempre encendido, a diferencia de `ryzen` — importa porque `n8n-main`, que orquestará la ingesta, vive aquí mismo.
 
-**Build**: solo amd64, `docker build` normal (no `buildx` multi-plataforma)
-— mismo criterio que `whisper-service` (sección 5.3): ambos corren
-exclusivamente en `retaco` (x86), generar arm64 no tendría ningún consumidor.
+**Build**: solo amd64, `docker build` normal (no `buildx` multi-plataforma) — mismo criterio que `whisper-service` (sección 5.3): ambos corren exclusivamente en `retaco` (x86), generar arm64 no tendría ningún consumidor.
 
 ```bash
 cd services/epub2pdf-service      # o services/pdf2chunks-service
@@ -306,11 +292,7 @@ make build
 
 #### Montaje NFS del NAS (`/data/input`/`/data/output`)
 
-Ambos servicios necesitan una carpeta de entrada y otra de salida —
-montadas desde el NAS UGREEN (`ketekasko`, `docs/21-configuracion-nas-ugreen.md`)
-vía NFSv3, no en disco local: los PDF/EPUB de origen pesan bastante más que
-el resto de datos de este nodo, y así quedan accesibles también desde
-cualquier otro sitio de la LAN con acceso al NAS.
+Ambos servicios necesitan una carpeta de entrada y otra de salida — montadas desde el NAS UGREEN (`ketekasko`, `docs/21-configuracion-nas-ugreen.md`) vía NFSv3, no en disco local: los PDF/EPUB de origen pesan bastante más que el resto de datos de este nodo, y así quedan accesibles también desde cualquier otro sitio de la LAN con acceso al NAS.
 
 ```bash
 sudo apt-get install -y nfs-common
@@ -322,26 +304,14 @@ sudo mkdir -p /mnt/nfs-data/epub2pdf/input /mnt/nfs-data/epub2pdf/output \
               /mnt/nfs-data/pdf2chunks/input /mnt/nfs-data/pdf2chunks/output
 ```
 
-Root squash está desactivado en el export `nfs-data` del NAS a propósito
-(`docs/21-configuracion-nas-ugreen.md`) para que ambos contenedores, que
-corren como `root` (ninguno de los dos define un usuario propio en su
-`Dockerfile`), puedan escribir sin fricción de permisos. Verificado en vivo
-con un contenedor suelto antes de desplegar el stack completo:
+Root squash está desactivado en el export `nfs-data` del NAS a propósito (`docs/21-configuracion-nas-ugreen.md`) para que ambos contenedores, que corren como `root` (ninguno de los dos define un usuario propio en su `Dockerfile`), puedan escribir sin fricción de permisos. Verificado en vivo con un contenedor suelto antes de desplegar el stack completo:
 
 ```bash
 docker run --rm -v /mnt/nfs-data/epub2pdf/input:/data alpine \
   sh -c "touch /data/test && ls -la /data && rm /data/test"
 ```
 
-⚠️ **`stat`/`ls` sobre `/mnt/nfs-data` como usuario sin privilegios
-(`u-data`) pueden devolver "Permiso denegado" o `mode 0000` de forma
-intermitente** — comportamiento observado en vivo en este NAS, no un
-bloqueo real: como `root` (con `sudo`, o el propio proceso `root` dentro
-de un contenedor) el acceso siempre funciona, que es lo único que importa
-aquí (root squash desactivado). No se ha investigado más a fondo el motivo
-exacto (probablemente una peculiaridad de cómo UGOS Pro calcula/cachea los
-atributos NFSv3) — si algún día hace falta que un usuario sin privilegios
-lea directamente el montaje desde `retaco`, revisar esto primero.
+⚠️ **`stat`/`ls` sobre `/mnt/nfs-data` como usuario sin privilegios (`u-data`) pueden devolver "Permiso denegado" o `mode 0000` de forma intermitente** — comportamiento observado en vivo en este NAS, no un bloqueo real: como `root` (con `sudo`, o el propio proceso `root` dentro de un contenedor) el acceso siempre funciona, que es lo único que importa aquí (root squash desactivado). No se ha investigado más a fondo el motivo exacto (probablemente una peculiaridad de cómo UGOS Pro calcula/cachea los atributos NFSv3) — si algún día hace falta que un usuario sin privilegios lea directamente el montaje desde `retaco`, revisar esto primero.
 
 #### `docker-compose.yml`
 
@@ -369,10 +339,7 @@ pdf2chunks-service:
     - "8004:8004"
 ```
 
-`/data/input` montado `:ro` — ambos servicios solo leen de ahí, nunca
-escriben. Puertos publicados a la LAN por el mismo motivo que
-qdrant/n8n-main/registry: nginx (`pi-dns`) les hace proxy cross-host.
-Gestionable con `toggle-direct-access.sh` (`docs/17-firewall-acceso-directo.md`).
+`/data/input` montado `:ro` — ambos servicios solo leen de ahí, nunca escriben. Puertos publicados a la LAN por el mismo motivo que qdrant/n8n-main/registry: nginx (`pi-dns`) les hace proxy cross-host. Gestionable con `toggle-direct-access.sh` (`docs/17-firewall-acceso-directo.md`).
 
 ```bash
 docker login registry.home.arpa   # una sola vez, ver requisitos en 5.3
@@ -382,9 +349,7 @@ docker compose up -d epub2pdf-service pdf2chunks-service
 
 #### DNS y proxy — `epub2pdf.home.arpa` / `pdf2chunks.home.arpa`
 
-Ambos protegidos con `apikey-service`, mismo criterio que
-`markitdown.home.arpa` (`docs/06-instalacion-pi1-dns.md`) — sin API key
-válida, nginx devuelve 401 antes de llegar al backend real.
+Ambos protegidos con `apikey-service`, mismo criterio que `markitdown.home.arpa` (`docs/06-instalacion-pi1-dns.md`) — sin API key válida, nginx devuelve 401 antes de llegar al backend real.
 
 ```bash
 curl -sk https://epub2pdf.home.arpa/health -H "X-Api-Key: <tu-key>"

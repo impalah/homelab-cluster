@@ -91,13 +91,7 @@ docker compose logs -f n8n-aux
 
 > Todos los nodos exponen métricas de sistema (`node-exporter`) y de contenedores (`cadvisor`), recopiladas por Prometheus en pi-obs y visibles en Grafana — ver `docs/14-monitorizacion-completa-cluster.md`.
 
-⚠️ **`check-health.sh` hace `docker inspect` y comprueba algún endpoint en
-`127.0.0.1` — solo da resultados correctos ejecutado *localmente en el
-propio nodo*, por SSH.** Lanzarlo desde otra máquina apuntando a un nodo
-remoto por nombre da `[FAIL]` falsos en todos los checks de Docker (mira
-el Docker del host donde se ejecuta el script, no el del nodo) y en los
-endpoints `127.0.0.1` (Pi-hole en pi-dns, Loki/Tempo en pi-obs) — visto en
-vivo, no es hipotético.
+⚠️ **`check-health.sh` hace `docker inspect` y comprueba algún endpoint en `127.0.0.1` — solo da resultados correctos ejecutado *localmente en el propio nodo*, por SSH.** Lanzarlo desde otra máquina apuntando a un nodo remoto por nombre da `[FAIL]` falsos en todos los checks de Docker (mira el Docker del host donde se ejecuta el script, no el del nodo) y en los endpoints `127.0.0.1` (Pi-hole en pi-dns, Loki/Tempo en pi-obs) — visto en vivo, no es hipotético.
 
 ```bash
 bash /srv/homelab/shared/scripts/check-health.sh ryzen   # local, sin ssh

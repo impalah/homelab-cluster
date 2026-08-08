@@ -1,7 +1,6 @@
 # retaco — Nodo de datos y automatización (PostgreSQL + Qdrant + n8n-main + registry + conversión de documentos + Open WebUI)
 
-**IP:** `192.168.1.174`
-**Hardware:** MiniPC Ryzen 5, 16 GB RAM, 512 GB disco
+**IP:** `192.168.1.174` **Hardware:** MiniPC Ryzen 5, 16 GB RAM, 512 GB disco
 
 ## Rol del nodo
 

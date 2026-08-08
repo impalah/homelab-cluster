@@ -1,10 +1,6 @@
 # epub2pdf-service
 
-Microservicio FastAPI que convierte ficheros **EPUB** a **PDF** usando el motor
-de conversión de [Calibre](https://calibre-ebook.com/) (`ebook-convert`), y
-extrae los metadatos del EPUB (título, autor, fecha, idioma, editorial) con
-[`ebooklib`](https://github.com/aerkalov/ebooklib) en un fichero `.meta.json`
-junto al PDF generado.
+Microservicio FastAPI que convierte ficheros **EPUB** a **PDF** usando el motor de conversión de [Calibre](https://calibre-ebook.com/) (`ebook-convert`), y extrae los metadatos del EPUB (título, autor, fecha, idioma, editorial) con [`ebooklib`](https://github.com/aerkalov/ebooklib) en un fichero `.meta.json` junto al PDF generado.
 
 ```
 EPUB (carpeta entrada) --> epub2pdf-service --> PDF + .meta.json (carpeta salida)
@@ -22,11 +18,7 @@ EPUB (carpeta entrada) --> epub2pdf-service --> PDF + .meta.json (carpeta salida
 
 ### `POST /convert`
 
-Convierte por lote todos los `.epub` de `input_path` (fichero individual o
-carpeta) y deja los PDF junto con sus sidecars `.meta.json` en `output_path`.
-Nunca lanza excepciones al llamador: cualquier fallo de un fichero individual
-se refleja en `results`, permitiendo que n8n (u otro orquestador) itere y
-siga con el resto.
+Convierte por lote todos los `.epub` de `input_path` (fichero individual o carpeta) y deja los PDF junto con sus sidecars `.meta.json` en `output_path`. Nunca lanza excepciones al llamador: cualquier fallo de un fichero individual se refleja en `results`, permitiendo que n8n (u otro orquestador) itere y siga con el resto.
 
 ```json
 {"input_path": "/data/input", "output_path": "/data/output"}
@@ -53,10 +45,7 @@ Respuesta:
 }
 ```
 
-`status` general es `success` (todo bien), `partial_failure` (alguno falló)
-o `failure` (todo falló, o `input_path` no existe). Motivos de fallo
-posibles en `reason`: `corrupt_epub`, `timeout`, `drm_protected`,
-`calibre_failure`, `unknown`.
+`status` general es `success` (todo bien), `partial_failure` (alguno falló) o `failure` (todo falló, o `input_path` no existe). Motivos de fallo posibles en `reason`: `corrupt_epub`, `timeout`, `drm_protected`, `calibre_failure`, `unknown`.
 
 ## Uso rápido
 
@@ -70,10 +59,7 @@ curl -X POST http://localhost:8003/convert \
 
 ## Modo CLI (alternativo a la API)
 
-Pensado para invocarse desde n8n (nodo Execute Command/SSH) como contenedor
-efímero por lote de ficheros, sin mantener el servicio siempre arriba. Usa el
-mismo `ConversionService` que la API, así que el comportamiento (metadatos,
-colisiones de nombre, manejo de errores) es idéntico.
+Pensado para invocarse desde n8n (nodo Execute Command/SSH) como contenedor efímero por lote de ficheros, sin mantener el servicio siempre arriba. Usa el mismo `ConversionService` que la API, así que el comportamiento (metadatos, colisiones de nombre, manejo de errores) es idéntico.
 
 ```bash
 docker run --rm --entrypoint python3 \
@@ -83,9 +69,7 @@ docker run --rm --entrypoint python3 \
   -m epub2pdf_service.cli --input /data/input --output /data/output
 ```
 
-Sin `--input`/`--output`, el CLI usa `EPUB2PDF_INPUT_PATH`/`EPUB2PDF_OUTPUT_PATH`.
-Códigos de salida: `0` éxito total, `1` fallo parcial, `2` fallo total
-(ruta de entrada inexistente, carpeta vacía, o todos los ficheros fallaron).
+Sin `--input`/`--output`, el CLI usa `EPUB2PDF_INPUT_PATH`/`EPUB2PDF_OUTPUT_PATH`. Códigos de salida: `0` éxito total, `1` fallo parcial, `2` fallo total (ruta de entrada inexistente, carpeta vacía, o todos los ficheros fallaron).
 
 ## Desarrollo local
 
@@ -103,9 +87,7 @@ make test-convert FILE=/ruta/al/libro.epub
 
 ## Estructura del proyecto
 
-Arquitectura por capas (igual que `apikey-service`/`markitdown-service` — ver
-`docs/06-instalacion-pi1-dns.md`), sin capa de persistencia porque este
-servicio no tiene estado:
+Arquitectura por capas (igual que `apikey-service`/`markitdown-service` — ver `docs/06-instalacion-pi1-dns.md`), sin capa de persistencia porque este servicio no tiene estado:
 
 ```
 src/epub2pdf_service/
@@ -128,12 +110,7 @@ src/epub2pdf_service/
     └── models.py                        ← modelos puros: ConversionResult, EpubMetadata, enums de estado/motivo
 ```
 
-`ConversionService` no conoce FastAPI ni argparse (expone resultados como
-`ConversionResult`, que el controller o el CLI traducen a su formato de
-salida correspondiente), ni conoce `ebooklib`/`subprocess` directamente
-(habla con `infrastructure.calibre_converter`/`infrastructure.metadata_extractor`).
-Mismo criterio de aislamiento por capas que `apikey_service.services.apikey_service`
-y `markitdown_service.services.conversion_service`.
+`ConversionService` no conoce FastAPI ni argparse (expone resultados como `ConversionResult`, que el controller o el CLI traducen a su formato de salida correspondiente), ni conoce `ebooklib`/`subprocess` directamente (habla con `infrastructure.calibre_converter`/`infrastructure.metadata_extractor`). Mismo criterio de aislamiento por capas que `apikey_service.services.apikey_service` y `markitdown_service.services.conversion_service`.
 
 ## Tests, cobertura, lint y análisis estático
 
@@ -149,9 +126,7 @@ make format       # ruff format .
 make typecheck    # mypy src/
 ```
 
-Todas las invocaciones a Calibre se mockean en los tests vía `subprocess.run`
-(dentro de `infrastructure/calibre_converter.py`) — no hace falta tener
-`ebook-convert` instalado en el entorno de desarrollo para correr los tests.
+Todas las invocaciones a Calibre se mockean en los tests vía `subprocess.run` (dentro de `infrastructure/calibre_converter.py`) — no hace falta tener `ebook-convert` instalado en el entorno de desarrollo para correr los tests.
 
 ### Análisis SonarQube
 
@@ -159,33 +134,19 @@ Todas las invocaciones a Calibre se mockean en los tests vía `subprocess.run`
 make sonar-check   # test-cov + análisis pysonar contra la instancia del clúster
 ```
 
-Requiere `SONAR_HOST_URL`, `SONAR_TOKEN` y `REQUESTS_CA_BUNDLE` en `.env`
-(ver `.env.example` y `docs/09-instalacion-pi3-sonarqube.md`, sección 8.1,
-para el porqué de `REQUESTS_CA_BUNDLE`).
+Requiere `SONAR_HOST_URL`, `SONAR_TOKEN` y `REQUESTS_CA_BUNDLE` en `.env` (ver `.env.example` y `docs/09-instalacion-pi3-sonarqube.md`, sección 8.1, para el porqué de `REQUESTS_CA_BUNDLE`).
 
 ## Instrumentación OpenTelemetry
 
-Cada conversión individual crea un span `epub_to_pdf.convert` con los
-atributos `epub2pdf.filename`, `epub2pdf.file_size_bytes`,
-`epub2pdf.duration_seconds` y `epub2pdf.result` (`success`|`failure`). Si
-`EPUB2PDF_OTEL_EXPORTER_OTLP_ENDPOINT` no está configurado (o
-`EPUB2PDF_OTEL_ENABLED=false`), el servicio sigue funcionando con
-normalidad: los spans se generan pero no se exportan a ningún backend
-(modo no-op), sin producir errores.
+Cada conversión individual crea un span `epub_to_pdf.convert` con los atributos `epub2pdf.filename`, `epub2pdf.file_size_bytes`, `epub2pdf.duration_seconds` y `epub2pdf.result` (`success`|`failure`). Si `EPUB2PDF_OTEL_EXPORTER_OTLP_ENDPOINT` no está configurado (o `EPUB2PDF_OTEL_ENABLED=false`), el servicio sigue funcionando con normalidad: los spans se generan pero no se exportan a ningún backend (modo no-op), sin producir errores.
 
 ## Notas sobre Calibre y DRM
 
-Calibre **no puede** convertir EPUB protegidos con DRM sin complementos
-adicionales (fuera del alcance de este servicio). Estos casos se detectan a
-partir de la salida de error de `ebook-convert` y se registran con
-`reason: "drm_protected"`, permitiendo que el resto del lote continúe
-procesándose con normalidad.
+Calibre **no puede** convertir EPUB protegidos con DRM sin complementos adicionales (fuera del alcance de este servicio). Estos casos se detectan a partir de la salida de error de `ebook-convert` y se registran con `reason: "drm_protected"`, permitiendo que el resto del lote continúe procesándose con normalidad.
 
 ## Notas sobre el `Dockerfile` — tres fallos reales al construir la imagen
 
-El primer `make build` real falló tres veces seguidas, cada vez un poco más
-adentro. Documentado aquí para no volver a perder el tiempo si algún día hay
-que tocar la instalación de Calibre:
+El primer `make build` real falló tres veces seguidas, cada vez un poco más adentro. Documentado aquí para no volver a perder el tiempo si algún día hay que tocar la instalación de Calibre:
 
 1. **Faltaban varias librerías del sistema.** El instalador de Calibre hace
    su propia comprobación de dependencias antes de instalar nada — en la
@@ -207,14 +168,6 @@ que tocar la instalación de Calibre:
    --no-sandbox is not supported`, después de haber cargado bien tanto
    Calibre como los metadatos del EPUB.
 
-Verificado de extremo a extremo tras corregir los tres: `docker build` limpio,
-conversión real de un EPUB de prueba a PDF (modo CLI y modo API), con
-metadatos correctos en el `.meta.json`.
+Verificado de extremo a extremo tras corregir los tres: `docker build` limpio, conversión real de un EPUB de prueba a PDF (modo CLI y modo API), con metadatos correctos en el `.meta.json`.
 
-**Pendiente, no bloqueante:** el contenedor sigue corriendo como root. El
-`--no-sandbox` de Chromium es la solución estándar para este caso (el
-aislamiento real ya lo da el propio contenedor, no el sandbox interno de
-Chromium), pero migrar a un usuario sin privilegios seguiría siendo una
-mejora de seguridad en profundidad razonable — no se ha hecho todavía porque
-implica revisar permisos de `/data/input`/`/data/output` cuando se montan
-volúmenes del host, y no era el objetivo de este arreglo puntual.
+**Pendiente, no bloqueante:** el contenedor sigue corriendo como root. El `--no-sandbox` de Chromium es la solución estándar para este caso (el aislamiento real ya lo da el propio contenedor, no el sandbox interno de Chromium), pero migrar a un usuario sin privilegios seguiría siendo una mejora de seguridad en profundidad razonable — no se ha hecho todavía porque implica revisar permisos de `/data/input`/`/data/output` cuando se montan volúmenes del host, y no era el objetivo de este arreglo puntual.

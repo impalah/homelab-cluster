@@ -1,16 +1,10 @@
 # Crawl4AI Scraper Service
 
-Microservicio en Python que expone la funcionalidad de scraping y limpieza de
-contenido web de [Crawl4AI](https://github.com/unclecode/crawl4ai) a través de
-una API HTTP construida con FastAPI. Renderiza páginas con Playwright, limpia
-el boilerplate y genera markdown listo para consumir (por ejemplo, para
-pipelines de RAG/LLM).
+Microservicio en Python que expone la funcionalidad de scraping y limpieza de contenido web de [Crawl4AI](https://github.com/unclecode/crawl4ai) a través de una API HTTP construida con FastAPI. Renderiza páginas con Playwright, limpia el boilerplate y genera markdown listo para consumir (por ejemplo, para pipelines de RAG/LLM).
 
 ## Arquitectura
 
-El proyecto sigue la misma Clean Architecture por capas que el resto de
-servicios de este repo (`apikey-service`, `markitdown-service`,
-`whisper-service`) — código bajo `src/crawl4ai_scraper_service/`:
+El proyecto sigue la misma Clean Architecture por capas que el resto de servicios de este repo (`apikey-service`, `markitdown-service`, `whisper-service`) — código bajo `src/crawl4ai_scraper_service/`:
 
 ```
 src/crawl4ai_scraper_service/
@@ -60,8 +54,7 @@ uv run uvicorn crawl4ai_scraper_service.main:app --host 0.0.0.0 --port 8000 --re
 uv run python -m crawl4ai_scraper_service.main
 ```
 
-La documentación interactiva (Swagger UI) queda disponible en
-`http://localhost:8000/docs`.
+La documentación interactiva (Swagger UI) queda disponible en `http://localhost:8000/docs`.
 
 ### Ejecutar los tests
 
@@ -74,10 +67,7 @@ make typecheck          # mypy --strict-ish sobre src/
 make sonar-check         # test-cov + análisis SonarQube (requiere SONAR_TOKEN en .env)
 ```
 
-La configuración de `pytest-cov` en `pyproject.toml` exige una cobertura
-mínima del 80% (`--cov-fail-under=80`); `make test`/`pytest` falla si no se
-alcanza. Los tests mockean por completo la capa de infraestructura de
-Crawl4AI, por lo que no requieren navegador ni red real.
+La configuración de `pytest-cov` en `pyproject.toml` exige una cobertura mínima del 80% (`--cov-fail-under=80`); `make test`/`pytest` falla si no se alcanza. Los tests mockean por completo la capa de infraestructura de Crawl4AI, por lo que no requieren navegador ni red real.
 
 ## Puesta en marcha con Docker / Makefile
 
@@ -99,9 +89,7 @@ docker run --rm -p 8000:8000 --env-file .env crawl4ai-scraper-service
 
 ### `POST /scrape`
 
-Recibe una URL, ejecuta el pipeline de Crawl4AI (render con Playwright +
-limpieza de boilerplate + generación de markdown) y devuelve el markdown
-resultante junto con metadatos.
+Recibe una URL, ejecuta el pipeline de Crawl4AI (render con Playwright + limpieza de boilerplate + generación de markdown) y devuelve el markdown resultante junto con metadatos.
 
 ```bash
 curl -X POST http://localhost:8000/scrape \
@@ -128,9 +116,7 @@ Respuesta:
 
 #### `params` — overrides opcionales por petición
 
-Cualquier campo omitido (o `null`) usa el valor por defecto del `.env` del
-despliegue. No hace falta enviar `params` en absoluto si no se necesita
-cambiar nada.
+Cualquier campo omitido (o `null`) usa el valor por defecto del `.env` del despliegue. No hace falta enviar `params` en absoluto si no se necesita cambiar nada.
 
 ```bash
 curl -X POST http://localhost:8000/scrape \
@@ -155,18 +141,9 @@ curl -X POST http://localhost:8000/scrape \
 | `word_count_threshold` | `int` | Ejecución | Sin coste extra |
 | `max_retries` | `int` | Ejecución | Sin coste extra |
 
-`stealth_mode`/`undetected_browser` se fijan al lanzar Chromium, no se
-pueden cambiar en el navegador ya arrancado — por eso, cuando su valor
-efectivo difiere del `.env` del despliegue, esta petición lanza un
-Chromium **dedicado** solo para ella (unos segundos más de latencia),
-limitado por `MAX_CONCURRENT_DEDICATED_BROWSERS` (2 por defecto) para no
-agotar la RAM en nodos pequeños. El resto de campos (`CrawlerRunConfig` de
-Crawl4AI) se pueden variar libremente en cada petición sin ningún coste,
-reutilizando siempre el navegador compartido. `metadata.dedicated_browser`
-en la respuesta indica cuál de los dos caminos se usó.
+`stealth_mode`/`undetected_browser` se fijan al lanzar Chromium, no se pueden cambiar en el navegador ya arrancado — por eso, cuando su valor efectivo difiere del `.env` del despliegue, esta petición lanza un Chromium **dedicado** solo para ella (unos segundos más de latencia), limitado por `MAX_CONCURRENT_DEDICATED_BROWSERS` (2 por defecto) para no agotar la RAM en nodos pequeños. El resto de campos (`CrawlerRunConfig` de Crawl4AI) se pueden variar libremente en cada petición sin ningún coste, reutilizando siempre el navegador compartido. `metadata.dedicated_browser` en la respuesta indica cuál de los dos caminos se usó.
 
-Un nombre de campo no reconocido en `params` da `422` (validación
-estricta, `extra="forbid"`) en vez de ignorarse en silencio.
+Un nombre de campo no reconocido en `params` da `422` (validación estricta, `extra="forbid"`) en vez de ignorarse en silencio.
 
 Códigos de error:
 
@@ -179,8 +156,7 @@ Códigos de error:
 
 ### `GET /health`
 
-Healthcheck del servicio. Devuelve el estado general, si el navegador
-headless está inicializado y el uso actual del semáforo de concurrencia.
+Healthcheck del servicio. Devuelve el estado general, si el navegador headless está inicializado y el uso actual del semáforo de concurrencia.
 
 ```bash
 curl http://localhost:8000/health
@@ -197,8 +173,7 @@ curl http://localhost:8000/health
 
 ## Configuración (variables de entorno)
 
-Todas las variables se definen en `src/crawl4ai_scraper_service/core/config.py` (pydantic-settings) y
-se documentan con valores de ejemplo en [`.env.example`](.env.example).
+Todas las variables se definen en `src/crawl4ai_scraper_service/core/config.py` (pydantic-settings) y se documentan con valores de ejemplo en [`.env.example`](.env.example).
 
 ### Aplicación
 
@@ -220,9 +195,7 @@ se documentan con valores de ejemplo en [`.env.example`](.env.example).
 | `LOG_ROTATION` | Política de rotación del fichero de log | `10 MB` |
 | `LOG_RETENTION` | Retención de logs rotados | `7 days` |
 
-Todo el logging de la aplicación (incluyendo Uvicorn, FastAPI, Playwright y
-Crawl4AI) se redirige a Loguru mediante un `InterceptHandler` instalado en
-`src/crawl4ai_scraper_service/core/logging.py`, de forma que exista un único formato y destino de logs.
+Todo el logging de la aplicación (incluyendo Uvicorn, FastAPI, Playwright y Crawl4AI) se redirige a Loguru mediante un `InterceptHandler` instalado en `src/crawl4ai_scraper_service/core/logging.py`, de forma que exista un único formato y destino de logs.
 
 ### Concurrencia y timeouts
 
@@ -232,9 +205,7 @@ Crawl4AI) se redirige a Loguru mediante un `InterceptHandler` instalado en
 | `SCRAPE_TIMEOUT_SECONDS` | Timeout de un scrape individual | `60` |
 | `SEMAPHORE_ACQUIRE_TIMEOUT_SECONDS` | Timeout esperando un slot libre del semáforo (`0` = esperar indefinidamente) | `90` |
 
-Las peticiones que exceden `MAX_CONCURRENT_SCRAPES` no se rechazan de
-inmediato: quedan en espera (backpressure) hasta que se libera un slot o se
-agota `SEMAPHORE_ACQUIRE_TIMEOUT_SECONDS`.
+Las peticiones que exceden `MAX_CONCURRENT_SCRAPES` no se rechazan de inmediato: quedan en espera (backpressure) hasta que se libera un slot o se agota `SEMAPHORE_ACQUIRE_TIMEOUT_SECONDS`.
 
 ### Navegador de Crawl4AI
 
@@ -248,9 +219,7 @@ agota `SEMAPHORE_ACQUIRE_TIMEOUT_SECONDS`.
 
 ### Anti-bot / anti-detección
 
-Cada mecanismo es independiente y se activa/desactiva por variable de
-entorno; toda la configuración se resuelve dinámicamente en
-`src/crawl4ai_scraper_service/core/crawler_config.py` a partir de estos settings (nada escrito directamente en el código).
+Cada mecanismo es independiente y se activa/desactiva por variable de entorno; toda la configuración se resuelve dinámicamente en `src/crawl4ai_scraper_service/core/crawler_config.py` a partir de estos settings (nada escrito directamente en el código).
 
 | Variable | Descripción | Por defecto |
 |---|---|---|

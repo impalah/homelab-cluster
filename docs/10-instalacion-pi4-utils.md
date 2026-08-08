@@ -197,10 +197,7 @@ Body: {"url": "https://..."}
 
 ### Overrides opcionales por petición (`params`)
 
-Desde la versión `0.1.2`, `/scrape` acepta un campo opcional `params` para
-sobreescribir la configuración del `.env` **solo para esa petición**
-(`stealth_mode`, `undetected_browser`, `magic_mode`, `wait_until`,
-`page_timeout_ms`, `word_count_threshold`, `max_retries`):
+Desde la versión `0.1.2`, `/scrape` acepta un campo opcional `params` para sobreescribir la configuración del `.env` **solo para esa petición** (`stealth_mode`, `undetected_browser`, `magic_mode`, `wait_until`, `page_timeout_ms`, `word_count_threshold`, `max_retries`):
 
 ```bash
 curl -sk -X POST https://crawl4ai.scraper.home.arpa/scrape -H "X-Api-Key: <tu-key>" \
@@ -208,13 +205,7 @@ curl -sk -X POST https://crawl4ai.scraper.home.arpa/scrape -H "X-Api-Key: <tu-ke
   -d '{"url": "https://example.com", "params": {"stealth_mode": true, "wait_until": "networkidle"}}'
 ```
 
-`stealth_mode`/`undetected_browser` lanzan un navegador Chromium dedicado
-solo para esa petición si su valor difiere del `.env` (más lento, limitado
-por `CRAWL4AI_MAX_CONCURRENT_DEDICATED_BROWSERS`, 2 por defecto en este
-nodo — cada uno es un proceso Chromium completo, hay que limitar cuántos
-se lanzan a la vez para no agotar la RAM de la Pi). El resto de campos no
-tienen coste extra, siempre reutilizan el navegador compartido. Detalle
-completo: `services/crawl4ai-scraper-service/README.md`.
+`stealth_mode`/`undetected_browser` lanzan un navegador Chromium dedicado solo para esa petición si su valor difiere del `.env` (más lento, limitado por `CRAWL4AI_MAX_CONCURRENT_DEDICATED_BROWSERS`, 2 por defecto en este nodo — cada uno es un proceso Chromium completo, hay que limitar cuántos se lanzan a la vez para no agotar la RAM de la Pi). El resto de campos no tienen coste extra, siempre reutilizan el navegador compartido. Detalle completo: `services/crawl4ai-scraper-service/README.md`.
 
 ### Sub-subdominio a propósito
 
@@ -230,38 +221,16 @@ A diferencia del valor por defecto del propio servicio (`false`), este despliegu
 
 ### ⚠️ El `Dockerfile` necesita instalar Chromium dos veces (Playwright *y* patchright)
 
-Con `ENABLE_UNDETECTED_BROWSER=true` (activo en este nodo), Crawl4AI usa el
-Undetected Browser Adapter, que se ejecuta sobre **`patchright`** (fork de
-Playwright con parches de evasión), no sobre el paquete `playwright`
-normal. `patchright` gestiona su propio build de Chromium — mismo
-`PLAYWRIGHT_BROWSERS_PATH`, revisión de navegador distinta. El `Dockerfile`
-original solo tenía `playwright install --with-deps chromium`; con
-undetected activado, el arranque fallaba con `BrowserType.launch:
-Executable doesn't exist at .../chromium_headless_shell-.../headless_shell`.
-Los tests no lo detectan (mockean el repositorio entero, nunca lanzan un
-navegador real) — solo apareció en este primer despliegue real. Fix:
-también `patchright install --with-deps chromium` en el `Dockerfile`
-(`services/crawl4ai-scraper-service/Dockerfile`, imagen `0.1.1+`).
+Con `ENABLE_UNDETECTED_BROWSER=true` (activo en este nodo), Crawl4AI usa el Undetected Browser Adapter, que se ejecuta sobre **`patchright`** (fork de Playwright con parches de evasión), no sobre el paquete `playwright` normal. `patchright` gestiona su propio build de Chromium — mismo `PLAYWRIGHT_BROWSERS_PATH`, revisión de navegador distinta. El `Dockerfile` original solo tenía `playwright install --with-deps chromium`; con undetected activado, el arranque fallaba con `BrowserType.launch: Executable doesn't exist at .../chromium_headless_shell-.../headless_shell`. Los tests no lo detectan (mockean el repositorio entero, nunca lanzan un navegador real) — solo apareció en este primer despliegue real. Fix: también `patchright install --with-deps chromium` en el `Dockerfile` (`services/crawl4ai-scraper-service/Dockerfile`, imagen `0.1.1+`).
 
 ### ⚠️ Calidad del markdown — limitación conocida en sitios complejos
 
-Probado con 5 URLs reales tras el despliegue. 3/5 dieron markdown limpio y
-completo (AWS Big Data Blog, dev.to, HackerNoon — con algo de ruido de
-sitio en HackerNoon). 2/5 fallaron de forma real:
+Probado con 5 URLs reales tras el despliegue. 3/5 dieron markdown limpio y completo (AWS Big Data Blog, dev.to, HackerNoon — con algo de ruido de sitio en HackerNoon). 2/5 fallaron de forma real:
 
 - **arstechnica.com**: la respuesta solo traía el `<title>` (86 caracteres), nada del cuerpo del artículo.
 - **blog.bytebytego.com** (Substack): la respuesta traía la sección de comentarios/posts recomendados, no el artículo real.
 
-**Diagnóstico confirmado** (no es bloqueo anti-bot ni fallo de carga): en
-ambos casos el navegador capturó la página completa (610 KB / 198 KB de
-HTML crudo, verificado con una llamada directa a `crawler.arun()` dentro
-del contenedor, sin pasar por el pipeline de la app) — el problema está en
-`PruningContentFilter` (el filtro de contenido usado para generar el
-markdown final, `core/crawler_config.py`), que en estos dos sitios
-concretos puntúa como "irrelevante" el cuerpo real del artículo y conserva
-solo bloques de navegación/comentarios. Cambiar el `wait_until` a
-`networkidle` **no** lo soluciona (probado) — confirma que no es un
-problema de timing de carga.
+**Diagnóstico confirmado** (no es bloqueo anti-bot ni fallo de carga): en ambos casos el navegador capturó la página completa (610 KB / 198 KB de HTML crudo, verificado con una llamada directa a `crawler.arun()` dentro del contenedor, sin pasar por el pipeline de la app) — el problema está en `PruningContentFilter` (el filtro de contenido usado para generar el markdown final, `core/crawler_config.py`), que en estos dos sitios concretos puntúa como "irrelevante" el cuerpo real del artículo y conserva solo bloques de navegación/comentarios. Cambiar el `wait_until` a `networkidle` **no** lo soluciona (probado) — confirma que no es un problema de timing de carga.
 
 **Sin resolver todavía** — posibles vías, ninguna aplicada aún:
 1. Ajustar los parámetros de `PruningContentFilter` (umbral, longitud mínima de bloque) — riesgo: es una configuración global, podría empeorar otros sitios que hoy funcionan bien.
