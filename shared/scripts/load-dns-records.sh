@@ -28,6 +28,7 @@ HOSTS='[
   "192.168.1.150 ryzen.home.arpa",
   "192.168.1.174 retaco.home.arpa",
   "192.168.1.174 postgresql.home.arpa",
+  "192.168.1.174 valkey.home.arpa",
   "192.168.1.180 ketekasko.home.arpa",
   "192.168.1.170 pi-dns.home.arpa",
   "192.168.1.171 pi-obs.home.arpa",

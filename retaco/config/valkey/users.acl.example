@@ -1,0 +1,2 @@
+user default off
+user valkey-admin on >CHANGE_ME_valkey_admin_password ~* &* +@all

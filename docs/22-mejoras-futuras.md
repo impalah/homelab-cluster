@@ -627,11 +627,15 @@ Bajo — cambio de configuración, no de arquitectura; Bifrost ya sabe hablar co
 
 ---
 
-## 24. Servidor Redis/Valkey securizado (key-value + pub/sub)
+## 24. ~~Servidor Redis/Valkey securizado (key-value + pub/sub)~~ — hecho
 
-**Prioridad: media**
+**Prioridad: media** — **completado**
 
-### Qué hay hoy
+### Qué se implementó
+
+Desplegado en `retaco` como contenedor `valkey` (`valkey/valkey:9.1.1-alpine`) — sin persistencia a propósito (`--save ""`, `--appendonly no`, uso previsto hoy: solo caché, sin consumidor real todavía), límite de memoria 256 MB con política `allkeys-lru`, expuesto como `valkey.home.arpa` (alias DNS directo, mismo patrón que `postgresql.home.arpa`). Seguridad vía ACL (no `requirepass` a secas: usuario `default` desactivado, un usuario `valkey-admin` de gestión) **y TLS** — certificado propio firmado por la CA interna del clúster (`pi-dns/config/nginx/generate-valkey-cert.sh`), `--port 0` desactiva el puerto en claro por completo. Verificado en vivo, tanto local como cross-host desde `ryzen`/`mole` vía DNS real: sin `--tls` → `Connection reset by peer`; con TLS sin autenticar → `NOAUTH`; con TLS + credenciales → `PONG`. Detalle completo, incluido el aviso de que el `aclfile` de esta versión no admite comentarios (causó un crash-loop real en el primer intento): `docs/25-valkey-cache.md`.
+
+### Qué hay hoy (histórico, previo a la implementación)
 
 No existe ningún almacén key-value ni sistema de pub/sub de propósito general en el clúster. El estado de aplicación vive en `postgres-main` (n8n, SonarQube, apikeys, Open WebUI, y Bifrost tras la mejora 23), y no hay ningún mecanismo de caché o mensajería ligera compartido. La propia mejora 16 (Infisical) ya identificó que necesitaría Redis como dependencia si se despliega en solitario — sería el primer consumidor natural de este servicio en vez de duplicar la pieza.
 
@@ -705,6 +709,27 @@ Medio — no es un despliegue nuevo, es investigación dirigida sobre dos sistem
 
 ---
 
+## 27. Activar TLS en `postgres-main`
+
+**Prioridad: media**
+
+### Qué hay hoy
+
+`postgres-main` (retaco) no usa TLS — protegido solo por contraseña, mismo criterio que tenía Valkey antes de la mejora 24 (`docs/25-valkey-cache.md`). A diferencia de Valkey, que se activó sin ningún consumidor real que migrar, `postgres-main` ya lo usan n8n, SonarQube, apikey-service, Open WebUI y `postgres-exporter` (pi-obs) — cualquier cambio aquí tiene que convivir con clientes ya en producción, no es un lienzo en blanco.
+
+### Qué haría falta
+
+1. Certificado propio de Postgres, firmado por la CA interna del clúster (`docs/15-ca-interna.md`) — mismo patrón que se acaba de usar para Valkey (`pi-dns/config/nginx/generate-valkey-cert.sh` como plantilla directa para un `generate-postgres-cert.sh` equivalente, CN `postgresql.home.arpa`).
+2. Activar `ssl = on` en `postgres-main` (imagen oficial `postgres:16-alpine` lo soporta de fábrica vía `ssl_cert_file`/`ssl_key_file`, sin parches) — probar primero con `ssl = on` sin forzar (`hostssl` opcional en `pg_hba.conf`), para no cortar a ningún cliente existente de golpe.
+3. Migrar cada consumidor a `sslmode=require` (o `verify-ca`/`verify-full` para validar contra la CA interna) en su cadena de conexión, uno a uno: n8n (`DB_POSTGRESDB_*`), SonarQube, apikey-service, Open WebUI (`DATABASE_URL`), y el DSN de `postgres-exporter` en pi-obs — confirmando cada uno antes de pasar al siguiente, no todos a la vez.
+4. Solo cuando todos los consumidores confirmen `sslmode=require`, endurecer `pg_hba.conf` a `hostssl` exclusivamente (rechaza conexiones sin TLS) — hasta entonces, dejar `host` y `hostssl` coexistiendo.
+5. Documentar en `docs/05-instalacion-retaco.md` (o un `docs/26-*` propio si el cambio es lo bastante grande) siguiendo el mismo criterio de honestidad que el resto de mejoras completadas — probar de verdad cada consumidor, no dar por hecho que "debería funcionar".
+
+### Esfuerzo estimado
+Medio-alto — no por la parte técnica de Postgres en sí (activar TLS es sencillo con la CA ya existente), sino por el número de consumidores reales a migrar sin cortar nada que ya funciona; hacerlo bien implica probar uno a uno, no un cambio atómico.
+
+---
+
 ## Resumen
 
 | # | Mejora | Prioridad | Esfuerzo | Depende de |
@@ -732,8 +757,9 @@ Medio — no es un despliegue nuevo, es investigación dirigida sobre dos sistem
 | 21 | ~~Bifrost — gateway hacia AWS Bedrock, conectado a Open WebUI~~ | Media | — | **Completado** — `docs/23-bifrost-gateway-llm.md` |
 | 22 | Integrar las métricas de Bifrost (`/metrics`) en Grafana | Media | Bajo | Bifrost ya desplegado (`docs/23`); Prometheus/Grafana ya desplegados (`docs/08`) |
 | 23 | ~~Mover `logs.db`/`config.db` de Bifrost a Postgres centralizado~~ | Media | — | **Completado** — `docs/23-bifrost-gateway-llm.md` |
-| 24 | Servidor Valkey (compatible Redis) securizado — key-value + pub/sub | Media | Bajo-medio | `retaco` ya desplegado; primer consumidor natural: mejora 16 |
+| 24 | ~~Servidor Valkey (compatible Redis) securizado — key-value + pub/sub~~ | Media | — | **Completado** — `docs/25-valkey-cache.md` |
 | 25 | Authentik — authn/authz centralizado (SSO + forward-auth) | Media | Alto | `postgres-main` ya desplegado; reutiliza el Valkey de la mejora 24; `prometheus.home.arpa` hoy sin ninguna autenticación |
 | 26 | Investigar tool-calling fiable — modelos locales (Ollama) y Bedrock/Claude (Bifrost) | Media | Medio | Open Terminal MCP ya desplegado (mejora 17, `docs/24`); ningún modelo probado completa una llamada de herramienta hoy |
+| 27 | Activar TLS en `postgres-main` | Media | Medio-alto | CA interna ya desplegada (`docs/15`); patrón ya probado con Valkey (mejora 24, `docs/25`) |
 
 Ninguna de estas mejoras es urgente ni bloqueante — el clúster funciona correctamente sin ellas.

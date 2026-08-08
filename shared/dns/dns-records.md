@@ -47,9 +47,10 @@ Estos registros deben añadirse en la interfaz de Pi-hole: **Local DNS → DNS R
 | Nombre de host | IP | Servicio real | Puerto real |
 |---|---|---|---|
 | `postgresql.home.arpa` | `192.168.1.174` | postgres-main en retaco | 5432 |
+| `valkey.home.arpa` | `192.168.1.174` | Valkey (caché clave-valor) en retaco — protegido por ACL propia (usuario `default` desactivado), no por `apikey-service` | 6379 |
 | `ketekasko.home.arpa` | `192.168.1.180` | NAS UGREEN NASync DH2300 (UGOS Pro) — no forma parte del clúster Docker | 9443 |
 
-`postgresql.home.arpa` **no** pasa por `pi-dns`/nginx como el resto de la tabla anterior — es un alias directo a la IP de `retaco`. Motivo: Postgres habla su propio protocolo binario por TCP, no HTTP, así que no puede convivir con los vhosts HTTP/HTTPS de nginx del mismo modo. El cliente conecta directamente a `retaco:5432`, exactamente igual que si usara la IP a secas, solo que con un nombre más cómodo de recordar. Ver `docs/05-instalacion-retaco.md`.
+`postgresql.home.arpa`/`valkey.home.arpa` **no** pasan por `pi-dns`/nginx como el resto de la tabla anterior — son alias directos a la IP de `retaco`. Motivo: ambos hablan su propio protocolo binario por TCP, no HTTP, así que no pueden convivir con los vhosts HTTP/HTTPS de nginx del mismo modo. El cliente conecta directamente a `retaco:<puerto>`, exactamente igual que si usara la IP a secas, solo que con un nombre más cómodo de recordar. Ver `docs/05-instalacion-retaco.md` y `docs/25-valkey-cache.md`.
 
 `ketekasko.home.arpa` tampoco pasa por nginx — es HTTP(S), pero UGOS Pro sirve su propia interfaz con su propio certificado TLS en el puerto `9443` (no el 443 que usa nginx), así que un alias directo a la IP es más simple que meterlo detrás del proxy inverso. El NAS tiene IP fija `192.168.1.180` configurada en el propio dispositivo (fuera del rango que gestiona este repo), no en `pi-dns`.
 

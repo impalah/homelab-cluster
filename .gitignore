@@ -26,6 +26,12 @@ graphify-out/*
 **/.env
 !**/.env.example
 
+# ACL de Valkey — contiene la contraseña real de administración, mismo
+# criterio que .env: solo se versiona la plantilla (users.acl.example). Ver
+# docs/25-valkey-cache.md.
+**/users.acl
+!**/users.acl.example
+
 # Entornos virtuales / dependencias
 .venv/
 venv/

@@ -2,7 +2,7 @@ name: homelab-retaco
 
 # =============================================================================
 # Stack del nodo Retaco (192.168.1.174)
-# Servicios: postgres-main, qdrant, n8n-main, registry, open-webui, open-terminal-mcp
+# Servicios: postgres-main, qdrant, n8n-main, registry, open-webui, open-terminal-mcp, valkey
 #
 # postgres-main y qdrant migrados desde ryzen (192.168.1.150) para liberar al
 # Ryzen 9 de servicios de datos. n8n-main migrado después, para que las
@@ -22,6 +22,11 @@ name: homelab-retaco
 # medidos en vivo antes de desplegarlo). Descartado ryzen/mole a petición
 # expresa — no siempre está encendido. Detalle completo, incluida la razón
 # de por qué va detrás de apikey-service, en docs/24-open-terminal-mcp.md.
+#
+# valkey (mejora 24, docs/22-mejoras-futuras.md) también en retaco: nodo de
+# datos, ya aloja postgres-main/qdrant/registry. Sin persistencia (uso
+# previsto hoy: solo caché), expuesto como valkey.home.arpa — ver
+# comentario junto al propio servicio y docs/25-valkey-cache.md.
 # =============================================================================
 
 services:
@@ -525,6 +530,71 @@ services:
     command: -config.file=/etc/promtail/config.yaml
     networks:
       - retaco-net
+
+  # ---------------------------------------------------------------------------
+  # valkey — Almacén clave-valor y pub/sub compartido del clúster (mejora 24,
+  # docs/25-valkey-cache.md). Fork de Redis con licencia BSD-3 real (Linux
+  # Foundation) — mismo protocolo/comandos que Redis, elegido en vez de Redis
+  # OSS por el mismo criterio FOSS ya aplicado a Infisical/Forgejo en
+  # docs/22-mejoras-futuras.md.
+  #
+  # Sin persistencia a propósito (--save ""/--appendonly no): uso previsto
+  # hoy es solo caché, sin ningún consumidor real todavía. El contenido se
+  # pierde en cada reinicio — comportamiento correcto para lo que se
+  # despliega ahora mismo, no un descuido. Si en el futuro algún consumidor
+  # necesita persistir datos, activarla entonces (docs/22, mejora 24, punto 3).
+  #
+  # Seguridad vía ACL, no requirepass a secas: usuario "default" desactivado
+  # en retaco/config/valkey/users.acl (NO versionado, mismo criterio que
+  # .env — plantilla en users.acl.example), un único usuario de
+  # administración por ahora.
+  #
+  # Puerto publicado a la LAN a propósito, como qdrant/postgres-main —
+  # expuesto como valkey.home.arpa (alias DNS directo, sin nginx por medio:
+  # el protocolo RESP no es HTTP, ver shared/dns/dns-records.md). Protegido
+  # por la ACL (usuario "default" desactivado) y por TLS (certificado propio
+  # firmado por la CA interna del clúster, docs/15-ca-interna.md — generado
+  # con pi-dns/config/nginx/generate-valkey-cert.sh, clave nunca compartida
+  # con la de nginx). --port 0 desactiva el puerto en claro por completo:
+  # solo se acepta TLS en 6379, no ambos a la vez. --tls-auth-clients no
+  # porque la autenticación ya la hace la ACL (usuario/contraseña) — TLS
+  # aquí es solo para cifrar el transporte, no pide certificado al cliente.
+  # ---------------------------------------------------------------------------
+  valkey:
+    image: valkey/valkey:9.1.1-alpine
+    container_name: valkey
+    restart: unless-stopped
+    command: >
+      valkey-server
+      --aclfile /etc/valkey/users.acl
+      --save ""
+      --appendonly no
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --port 0
+      --tls-port 6379
+      --tls-cert-file /etc/valkey/tls/valkey.crt
+      --tls-key-file /etc/valkey/tls/valkey.key
+      --tls-ca-cert-file /etc/valkey/tls/ca.crt
+      --tls-auth-clients no
+    volumes:
+      - /srv/homelab/retaco/valkey/users.acl:/etc/valkey/users.acl:ro
+      - /srv/homelab/retaco/valkey/tls:/etc/valkey/tls:ro
+    ports:
+      - "6379:6379"
+    networks:
+      - retaco-net
+    healthcheck:
+      # Sin contraseña a propósito: con el usuario "default" desactivado, un
+      # PING sin autenticar responde "NOAUTH" en vez de fallar la conexión —
+      # suficiente para confirmar que el servidor está vivo, sin tener que
+      # meter la contraseña de administración en el healthcheck. --tls con
+      # el mismo CA montado, ya que --port 0 deja solo el puerto TLS vivo.
+      test: ["CMD-SHELL", "valkey-cli --tls --cacert /etc/valkey/tls/ca.crt PING 2>&1 | grep -qE 'PONG|NOAUTH'"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
 networks:
   retaco-net:
