@@ -371,7 +371,7 @@ Medio — muy distinto según se opte por un panel propio (más trabajo, más co
 
 ---
 
-## 16. Sistema de secretos para consumo programático (HashiCorp Vault / Infisical)
+## 16. Sistema de secretos para consumo programático — Infisical
 
 **Prioridad: media**
 
@@ -379,18 +379,36 @@ Medio — muy distinto según se opte por un panel propio (más trabajo, más co
 
 Vaultwarden guarda las credenciales del clúster, pero está pensado para que una persona las desbloquee, no para que un contenedor las pida solo al arrancar — no tiene secretos dinámicos, ni permisos finos por servicio, ni auditoría de quién leyó qué y cuándo. El patrón real hoy es manual: los valores se copian a mano desde Vaultwarden a los `.env.example` → `.env` de cada nodo/servicio durante el despliegue (`docs/05` a `docs/10`), y ahí se quedan, fijos, hasta que alguien los rota también a mano.
 
-### Qué haría falta
+### Decisión: Infisical, no HashiCorp Vault
 
-1. Elegir entre dos filosofías distintas, no solo dos productos:
-   - **HashiCorp Vault (OSS)** — autenticación por servicio vía `AppRole` (cada microservicio con su `role_id`/`secret_id`), con un motor de secretos dinámicos que podría llegar a generar credenciales de Postgres de vida corta para `postgres-main` en vez de contraseñas fijas eternas, más versionado (KV v2) y auditoría. Más potente, pero una pieza de infraestructura real que aprender a operar bien (proceso de *unseal*, políticas de acceso).
-   - **Infisical** — mismo concepto de fondo (identidades de máquina, secretos versionados, `infisical run --` para inyectar variables de entorno sin tocar el código), pero mucho más ligero de desplegar y mantener, con una interfaz web más amigable — a cambio de no tener secretos dinámicos.
-2. Nodo: `retaco` encaja mejor que una Raspberry Pi — es el nodo de datos, siempre encendido, y ya aloja `postgres-main` (Infisical necesita Postgres + Redis; Vault, con almacenamiento Raft integrado, no necesita nada externo).
-3. Migración incremental, no de golpe: empezar por un único servicio —`apikey-service` es el candidato obvio, ya que su propio `APIKEY_ADMIN_TOKEN` y el DSN de su base de datos son justo el tipo de secreto que tiene sentido dejar de tener fijo en un `.env`—, confirmar que el patrón funciona bien en la práctica, y solo entonces extenderlo al resto.
-4. Decidir si se publica detrás de `nginx`/`apikey-service` o no: probablemente no vía HTTPS público del clúster — el acceso debería quedar limitado a la red interna, ya que es la pieza que termina protegiendo a todas las demás.
-5. Vaultwarden no desaparece: sigue siendo el sitio correcto para credenciales que de verdad usa una persona (paneles de administración, cuentas de servicios de terceros). El sistema de secretos nuevo cubre el consumo entre máquinas, no sustituye a Vaultwarden.
+Se evaluaron las dos opciones y se descartó Vault, por varios motivos combinados:
+
+- **Vault es matar moscas a cañonazos** para un clúster de un solo operador sobre Docker Compose (no Kubernetes): exige aprender a operar `AppRole`, políticas de acceso granulares y motores de secretos — infraestructura pensada para equipos, no para un homelab.
+- El problema práctico real de Vault es el **sellado**: arranca sellado tras cada reinicio y, sin desellado automático, deja bloqueados todos los servicios que dependen de él hasta que alguien lo desbloquea a mano — inviable con el apagado/encendido completo del clúster (`docs/20-apagado-y-encendido-cluster.md`). La única forma práctica de evitarlo es el auto-unseal vía un KMS externo (típicamente AWS KMS), y ahora mismo **no se quiere añadir esa dependencia sobre AWS** solo para operar el propio sistema de secretos — la cuenta AWS que ya existe (Bedrock/Bifrost, `docs/23`) es para otra cosa y no debe mezclarse con esto.
+- Lo único que Vault ofrecía y Infisical no —secretos dinámicos, p. ej. credenciales de Postgres de vida corta— no compensa la complejidad operativa añadida para el caso de uso real de este clúster: secretos que casi nunca rotan, un solo operador.
+- Infisical resuelve el mismo problema de fondo (nada de secretos fijos en `.env` en claro, identidades de máquina, auditoría) con una superficie operativa mucho menor: sin concepto de sellado, backend en Postgres (que ya se opera en `retaco`), interfaz web sencilla — mismo espíritu que Vaultwarden pero para máquinas en vez de personas.
+
+### Qué haría falta (implementación con Infisical)
+
+1. **Despliegue**: contenedor `infisical` en `retaco` (mismo nodo que `postgres-main`, siempre encendido). Backend propio en Postgres, con el patrón ya establecido: `bash create-postgres-db.sh postgres-main dbadmin infisical infisical`. Infisical también necesita **Redis** (caché/rate-limiting) — dependencia nueva en `retaco`, un contenedor `redis` sin rol de almacén de secretos, solo caché.
+2. **Acceso**: `infisical.home.arpa` vía el `nginx` de `pi-dns`, sin pasar por `apikey-service` — Infisical gestiona su propio login. Igual que se planteaba para Vault, el acceso debe quedar limitado a la red interna del clúster, no expuesto más allá del `.home.arpa` habitual.
+3. **Identidades de máquina**: cada servicio migrado obtiene una *Machine Identity* propia con **Universal Auth** (`client_id`/`client_secret`), con acceso restringido a un único proyecto/entorno/ruta de secretos — nunca una identidad compartida para todo el clúster.
+4. **Integración con Docker Compose**: Infisical no tiene sidecar ni *injector* nativo para Compose (eso solo existe para Kubernetes) — el patrón real es envolver el proceso principal con su CLI:
+   ```yaml
+   services:
+     apikey-service:
+       image: registry.home.arpa/apikey-service:latest
+       environment:
+         INFISICAL_TOKEN: ${APIKEY_SERVICE_INFISICAL_TOKEN}   # único secreto que queda en el .env
+       entrypoint: ["infisical", "run", "--env=prod", "--", "uvicorn", "apikey_service.main:app", "--host", "0.0.0.0"]
+   ```
+   El binario de la CLI `infisical` se añade a la imagen del microservicio (una línea más en el `Dockerfile`, mismo patrón multi-stage que ya usan `epub2pdf-service`/`pdf2chunks-service`). Al arrancar, `infisical run` resuelve los secretos de ese proyecto/entorno vía API, los inyecta como variables de entorno del proceso hijo y solo entonces hace `exec` del comando real — la aplicación nunca sabe que los secretos vinieron de Infisical.
+5. **El problema del arranque no desaparece del todo**: sigue haciendo falta un secreto para autenticarse ante Infisical (el `client_id`/`client_secret` de la Machine Identity, simplificado aquí a un único `INFISICAL_TOKEN`). La diferencia real frente a hoy no es "cero secretos en `.env`", es pasar de **N secretos fijos por servicio** (DSN de BD, tokens de terceros, claves de API) a **un único token de acceso, de alcance mínimo y rotable de forma independiente** — que es la reducción de superficie que de verdad se busca.
+6. **Migración incremental**: empezar por `apikey-service` — su `APIKEY_ADMIN_TOKEN` y el DSN de su base de datos son el caso más claro —, confirmar el patrón en producción, y solo entonces extenderlo al resto de microservicios propios y, más adelante, a servicios de terceros (n8n, Open WebUI, Bifrost).
+7. Vaultwarden no desaparece: sigue siendo el sitio correcto para credenciales que usa una persona desde un navegador (paneles de administración, cuentas de terceros). Infisical cubre el consumo entre máquinas, no sustituye a Vaultwarden.
 
 ### Esfuerzo estimado
-Medio-alto — sobre todo por decidir la arquitectura de acceso (qué servicio tiene qué política) y migrar credenciales existentes sin romper nada por el camino; desplegar el propio servicio es la parte más sencilla.
+Medio — desplegar Infisical + Redis es sencillo y la CLI simplifica la integración en cada `Dockerfile`; el grueso del esfuerzo sigue siendo decidir el reparto de proyectos/entornos por servicio y migrar credenciales existentes sin romper nada por el camino.
 
 ---
 
@@ -626,7 +644,7 @@ Bajo — cambio de configuración, no de arquitectura; Bifrost ya sabe hablar co
 | 13 | Copiar logs/métricas de pi-obs al NAS | Media | Medio | NFS del NAS ya montado (`docs/21`) |
 | 14 | Evaluar Floci como emulador local de AWS | Media | Bajo | — |
 | 15 | Panel de control de servicios + estado en `index.home.arpa` | Media | Medio | Portainer ya desplegado (`docs/10`) |
-| 16 | Sistema de secretos programático (Vault / Infisical) | Media | Medio-alto | `postgres-main` ya desplegado (`docs/05`); complementa a Vaultwarden (`docs/10`) |
+| 16 | Sistema de secretos programático (Infisical) | Media | Medio | `postgres-main` ya desplegado (`docs/05`); complementa a Vaultwarden (`docs/10`) |
 | 17 | Open Terminal en modo MCP (Open WebUI + n8n) | Media | Bajo-medio | Open WebUI y n8n ya desplegados |
 | 18 | OpenClaw — asistente personal de IA autoalojado | Media | Medio | Ollama ya desplegado si se apunta a modelos locales |
 | 19 | Opencode — agente de código open source para terminal | Media | Bajo | Ollama ya desplegado si se apunta a modelos locales |
