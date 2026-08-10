@@ -6,6 +6,7 @@
 # Ejemplo:
 #   bash backup-postgres.sh retaco postgres-main n8n
 #   bash backup-postgres.sh retaco postgres-main sonarqube
+#   bash backup-postgres.sh retaco postgres-infisical infisical
 # =============================================================================
 set -euo pipefail
 
@@ -35,6 +36,11 @@ case "${CONTAINER}" in
     ;;
   sonarqube-db)
     PG_USER="sonarqube"
+    ;;
+  postgres-infisical)
+    # Postgres DEDICADO de Infisical, no multi-tenant como postgres-main —
+    # ver docs/adr/0002-infisical-postgres-dedicado.md. Un único rol/base.
+    PG_USER="infisical"
     ;;
   *)
     PG_USER="postgres"

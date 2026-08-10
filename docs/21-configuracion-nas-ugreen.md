@@ -144,15 +144,8 @@ Volumen total 3.6 TB (RAID 1), repartido en dos carpetas compartidas:
 **`nfs-data`** — `Propiedades → pestaña "Permiso NFS"`:
 - Host/red permitida: `192.168.1.0/24`
 - Privilegio: Lectura/Escritura
-- Squash de root: **desactivado** — decisión consciente para que procesos
-  dentro de contenedores que escriban como `root` lo hagan también como
-  `root` en el NAS, sin mapear a un usuario sin privilegios (evita fallos
-  de permisos opacos en bind mounts de Docker). Contrapartida asumida:
-  cualquier `root` en la LAN `192.168.1.0/24` tiene control total sobre
-  esta carpeta — aceptable en esta LAN de confianza, no expuesta a
-  Tailscale/internet.
-- No requiere usuario del NAS — NFS con `AUTH_SYS` controla acceso por
-  IP/red, no por cuenta.
+- Squash de root: **desactivado** — decisión consciente para que procesos dentro de contenedores que escriban como `root` lo hagan también como `root` en el NAS, sin mapear a un usuario sin privilegios (evita fallos de permisos opacos en bind mounts de Docker). Contrapartida asumida: cualquier `root` en la LAN `192.168.1.0/24` tiene control total sobre esta carpeta — aceptable en esta LAN de confianza, no expuesta a Tailscale/internet.
+- No requiere usuario del NAS — NFS con `AUTH_SYS` controla acceso por IP/red, no por cuenta.
 
 **`media`** — SMB sí requiere una cuenta de usuario del NAS (`Panel de control → Usuario → Crear`) con permiso de Lectura/Escritura asignado en `Propiedades → pestaña "Permiso"` de la carpeta — sin acceso anónimo/invitado, coherente con el resto del clúster (todo autenticado).
 
@@ -160,13 +153,9 @@ Volumen total 3.6 TB (RAID 1), repartido en dos carpetas compartidas:
 
 `linus` era originalmente la cuenta de administración del NAS (la del primer acceso, en la configuración inicial) — reutilizarla también para montar `media` por SMB habría expuesto credenciales de administrador completo en cualquier dispositivo/app que las guardara, solo para acceder a una carpeta de medios. Esquema aplicado en su lugar:
 
-1. Cuenta de administración **nueva y separada**, creada y verificada
-   (inicio de sesión + acceso al Panel de control completo) antes de tocar nada más.
-2. `linus` **degradado a usuario normal** (`Panel de control → Usuario` —
-   quitar el rol/grupo de administrador) — degradar la cuenta no concede permisos de
-   carpeta automáticamente, son independientes.
-3. `linus` con Lectura/Escritura explícita sobre `media`
-   (`Propiedades de "media" → pestaña "Permiso"`).
+1. Cuenta de administración **nueva y separada**, creada y verificada (inicio de sesión + acceso al Panel de control completo) antes de tocar nada más.
+2. `linus` **degradado a usuario normal** (`Panel de control → Usuario` — quitar el rol/grupo de administrador) — degradar la cuenta no concede permisos de carpeta automáticamente, son independientes.
+3. `linus` con Lectura/Escritura explícita sobre `media` (`Propiedades de "media" → pestaña "Permiso"`).
 
 Así, la cuenta que queda guardada en portátiles/apps para el día a día (`linus`) no tiene ningún privilegio de administración del NAS, aunque se filtre su contraseña — la cuenta de administración solo se usa puntualmente, de forma manual.
 
@@ -190,19 +179,8 @@ En UGOS Pro, una misma carpeta compartida tiene **pestañas de permisos independ
 
 **Recomendación**: para uso doméstico normal (documentos, backups, medios), una sola carpeta con ambos protocolos activados es lo habitual y más simple. Dos puntos a vigilar si se comparte así:
 
-- **UID/GID consistentes** — SMB usa su propio modelo de usuarios; NFS
-  (sobre todo v3) se basa en UID/GID Unix. Si un fichero se crea desde SMB
-  y el UID resultante no coincide con el usuario Linux que lo ve por NFS,
-  aparecen permisos incoherentes o propietario `nobody`. NFSv4 lo mitiga
-  algo (usa identidades `usuario@dominio`), pero conviene revisar el mapeo
-  de identidades (`/etc/idmapd.conf` en los clientes Linux) si aparece ese
-  síntoma.
-- **Escritura concurrente real** (mismo fichero editado desde SMB y NFS a
-  la vez) — el bloqueo de ficheros no es 100% intercambiable entre ambos
-  protocolos. Para uso normal (cada máquina trabaja con sus propios
-  ficheros) no es problema; para algo que escriba activamente desde ambos
-  lados a la vez (p. ej. una base de datos en fichero), mejor separar
-  carpetas o protocolos.
+- **UID/GID consistentes** — SMB usa su propio modelo de usuarios; NFS (sobre todo v3) se basa en UID/GID Unix. Si un fichero se crea desde SMB y el UID resultante no coincide con el usuario Linux que lo ve por NFS, aparecen permisos incoherentes o propietario `nobody`. NFSv4 lo mitiga algo (usa identidades `usuario@dominio`), pero conviene revisar el mapeo de identidades (`/etc/idmapd.conf` en los clientes Linux) si aparece ese síntoma.
+- **Escritura concurrente real** (mismo fichero editado desde SMB y NFS a la vez) — el bloqueo de ficheros no es 100% intercambiable entre ambos protocolos. Para uso normal (cada máquina trabaja con sus propios ficheros) no es problema; para algo que escriba activamente desde ambos lados a la vez (p. ej. una base de datos en fichero), mejor separar carpetas o protocolos.
 
 ## Fuentes consultadas
 

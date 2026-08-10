@@ -2,7 +2,7 @@ name: homelab-retaco
 
 # =============================================================================
 # Stack del nodo Retaco (192.168.1.174)
-# Servicios: postgres-main, qdrant, n8n-main, registry, open-webui, open-terminal-mcp, valkey
+# Servicios: postgres-main, qdrant, n8n-main, registry, open-webui, open-terminal-mcp, valkey, postgres-infisical, infisical
 #
 # postgres-main y qdrant migrados desde ryzen (192.168.1.150) para liberar al
 # Ryzen 9 de servicios de datos. n8n-main migrado después, para que las
@@ -27,6 +27,14 @@ name: homelab-retaco
 # datos, ya aloja postgres-main/qdrant/registry. Sin persistencia (uso
 # previsto hoy: solo caché), expuesto como valkey.home.arpa — ver
 # comentario junto al propio servicio y docs/25-valkey-cache.md.
+#
+# infisical (mejora 16, docs/22-mejoras-futuras.md) también en retaco: NO
+# comparte postgres-main (Postgres DEDICADO, "postgres-infisical" — ver
+# docs/adr/0002-infisical-postgres-dedicado.md, motivo: aislar su radio de
+# fallo del resto de servicios multi-tenant) y reutiliza el valkey ya
+# desplegado (sin Redis dedicado), expuesto como infisical.home.arpa. Detalle
+# completo, incluido cómo se inyectan los secretos en cada servicio migrado,
+# en docs/26-infisical-secretos.md y docs/adr/0001-infisical-inyeccion-bind-mount-vs-imagen-derivada.md.
 # =============================================================================
 
 services:
@@ -595,6 +603,131 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # postgres-infisical — Postgres DEDICADO, solo para Infisical — separado a
+  # propósito de postgres-main (decisión: docs/adr/0002-infisical-postgres-dedicado.md).
+  # Motivo: postgres-main es multi-tenant (n8n, openwebui, sonarqube, apikeys)
+  # — si Infisical dependiera de él, cualquier mantenimiento/incidente de
+  # postgres-main por un motivo AJENO a Infisical tumbaría también al gestor
+  # de secretos, y con él a cualquier servicio migrado que necesite
+  # `infisical run` para arrancar (efecto cascada). Aislar a Infisical en su
+  # propia instancia reduce ese radio de fallo, al coste de un contenedor más
+  # que respaldar por separado (backup-postgres.sh retaco postgres-infisical
+  # infisical — ya soportado, mismo script que postgres-main).
+  #
+  # NO multi-tenant a propósito (a diferencia de postgres-main): un único
+  # rol/base "infisical", creados automáticamente por la propia imagen
+  # oficial de postgres al arrancar (POSTGRES_USER/POSTGRES_DB) — no hace
+  # falta create-postgres-db.sh aquí, no hay nada más que aislar dentro de
+  # esta instancia.
+  #
+  # Sin "ports:" publicado — solo lo consume el contenedor "infisical", en
+  # este mismo nodo y red Docker; ningún otro nodo necesita alcanzarlo.
+  # ---------------------------------------------------------------------------
+  postgres-infisical:
+    image: postgres:16-alpine
+    container_name: postgres-infisical
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: infisical
+      POSTGRES_PASSWORD: ${INFISICAL_POSTGRES_PASSWORD}
+      POSTGRES_DB: infisical
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - /srv/homelab/retaco/postgres-infisical/data:/var/lib/postgresql/data
+    networks:
+      - retaco-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U infisical -d infisical"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ---------------------------------------------------------------------------
+  # infisical — Gestor de secretos para consumo entre máquinas (mejora 16,
+  # docs/22-mejoras-futuras.md). Despliegue completo, procedimiento de
+  # migración de un servicio y estado actual: docs/26-infisical-secretos.md.
+  # Decisión de CÓMO se inyectan los secretos en cada servicio migrado
+  # (binario CLI por bind-mount + entrypoint: en Compose, no horneado en
+  # ninguna imagen): docs/adr/0001-infisical-inyeccion-bind-mount-vs-imagen-derivada.md.
+  # Decisión de POR QUÉ tiene Postgres dedicado en vez de compartir
+  # postgres-main: docs/adr/0002-infisical-postgres-dedicado.md.
+  #
+  # Imagen standalone oficial (backend Postgres+Redis EXTERNOS, no los
+  # bundled del docker-compose.prod.yml oficial) — versión fijada, no
+  # "latest", mismo criterio que registry:2.8.3/valkey:9.1.1-alpine.
+  #
+  # Backend: postgres-infisical (arriba), instancia DEDICADA, no postgres-main
+  # — ver ADR 0002. Redis: NO se despliega uno dedicado — reutiliza el Valkey
+  # ya desplegado (mejora 24,
+  # docs/25-valkey-cache.md, que ya anticipaba a Infisical como primer
+  # consumidor real), con un usuario ACL propio (retaco/config/valkey/users.acl)
+  # SIN restricción de prefijo de clave/canal (~* &*, no ~infisical:* como
+  # sugería el ejemplo de docs/25) — confirmado en vivo: BullMQ (cola interna
+  # de Infisical) usa nombres de clave propios con hash-tags ({cron}:slot:0),
+  # no un prefijo "infisical:", y también necesita el comando INFO (bajo
+  # @dangerous en Valkey) — de ahí "+@all -@admin -@dangerous +info" en vez
+  # del "+@read +@write -@dangerous" del ejemplo original. Ver docs/26.
+  # rediss:// obligatorio (Valkey no acepta puerto en claro) contra el
+  # hostname valkey.home.arpa,
+  # NO el nombre de contenedor "valkey" — el certificado TLS de Valkey solo
+  # lleva ese CN/SAN. NODE_EXTRA_CA_CERTS: Infisical (Node/NestJS) no confía
+  # en la CA interna del clúster por defecto — mismo problema ya resuelto
+  # para n8n-main en este mismo fichero — sin esto, la conexión a Valkey por
+  # TLS falla con verificación de certificado.
+  #
+  # TRUSTED_PROXY_CIDRS: solo nginx (pi-dns, 192.168.1.170) le hace proxy —
+  # evita que un cliente falsifique X-Forwarded-For. TELEMETRY_ENABLED=false
+  # y DISABLE_UPDATE_CHECK=true: mismo criterio ya aplicado a n8n-main
+  # (N8N_DIAGNOSTICS_ENABLED/N8N_VERSION_NOTIFICATIONS_ENABLED) — sin
+  # servicio propio detrás que necesite avisos de versión ni telemetría
+  # saliendo del clúster.
+  #
+  # Publicado a la LAN (8006, siguiente libre tras epub2pdf/pdf2chunks/
+  # open-terminal-mcp): nginx (pi-dns) le hace proxy cross-host, igual que
+  # qdrant/n8n-main/registry — sin puerto publicado, pi-dns no puede
+  # alcanzarlo (viven en nodos distintos, no comparten red Docker).
+  # Gestionable con toggle-direct-access.sh (docs/17).
+  # ---------------------------------------------------------------------------
+  infisical:
+    image: infisical/infisical:v0.162.18
+    container_name: infisical
+    restart: unless-stopped
+    depends_on:
+      postgres-infisical:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "8080"
+      SITE_URL: https://infisical.home.arpa
+      DB_CONNECTION_URI: ${INFISICAL_DB_CONNECTION_URI}
+      REDIS_URL: ${INFISICAL_REDIS_URL}
+      ENCRYPTION_KEY: ${INFISICAL_ENCRYPTION_KEY}
+      AUTH_SECRET: ${INFISICAL_AUTH_SECRET}
+      TRUSTED_PROXY_CIDRS: ${INFISICAL_TRUSTED_PROXY_CIDRS:-192.168.1.170/32}
+      NODE_EXTRA_CA_CERTS: /etc/ssl/certs/homelab-ca.crt
+      TELEMETRY_ENABLED: "false"
+      DISABLE_UPDATE_CHECK: "true"
+    volumes:
+      # CA interna del clúster, de solo lectura — necesaria para que el
+      # cliente Redis de Infisical confíe en el certificado TLS de Valkey.
+      # Descargar antes del primer arranque:
+      #   curl -s http://192.168.1.170/ca.crt -o /srv/homelab/retaco/infisical/ca/homelab-ca.crt
+      - /srv/homelab/retaco/infisical/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
+    ports:
+      - "8006:8080"
+    networks:
+      - retaco-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/api/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
 networks:
   retaco-net:

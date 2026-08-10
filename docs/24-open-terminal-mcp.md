@@ -16,16 +16,7 @@ Ninguna variante publicada de `ghcr.io/open-webui/open-terminal` (`latest`/`slim
 
 Solución: `services/open-terminal-mcp/Dockerfile`, que parte de `ghcr.io/open-webui/open-terminal:slim` y añade `fastmcp` encima (reinstalando `pip` temporalmente vía `ensurepip`, instalando el paquete, y desinstalando `pip` otra vez). Sigue el tag `slim` oficial en cada rebuild sin duplicar su Dockerfile — el único cambio real es una dependencia Python de más. Publicada como `registry.home.arpa/open-terminal-mcp:latest`.
 
-**Nota de proceso (para no repetir el error):** la primera versión de ese
-Dockerfile encadenaba las tres instrucciones con `&& ... && ... 2>/dev/null
-|| true`, pensado solo para tolerar el fallo del `pip uninstall` final. Por
-precedencia de operadores, el `|| true` final enmascaraba un fallo real del
-`pip install` anterior — el build "funcionaba" (exit 0) sin `fastmcp`
-instalado en absoluto, y no se detectó hasta arrancar el contenedor y
-probarlo (`ModuleNotFoundError: No module named 'fastmcp'`). Corregido
-quitando el `|| true` de la cadena y usando `python3 -m pip` en vez de
-`pip` a secas (justo tras `ensurepip`, el script `pip` no queda en el PATH
-del shell aunque el paquete se instale bien).
+**Nota de proceso (para no repetir el error):** la primera versión de ese Dockerfile encadenaba las tres instrucciones con `&& ... && ... 2>/dev/null || true`, pensado solo para tolerar el fallo del `pip uninstall` final. Por precedencia de operadores, el `|| true` final enmascaraba un fallo real del `pip install` anterior — el build "funcionaba" (exit 0) sin `fastmcp` instalado en absoluto, y no se detectó hasta arrancar el contenedor y probarlo (`ModuleNotFoundError: No module named 'fastmcp'`). Corregido quitando el `|| true` de la cadena y usando `python3 -m pip` en vez de `pip` a secas (justo tras `ensurepip`, el script `pip` no queda en el PATH del shell aunque el paquete se instale bien).
 
 ## Hallazgo de seguridad real — por qué va detrás de `apikey-service`
 
@@ -172,10 +163,8 @@ Hay que repetirlo **por cada modelo** con el que se quiera usar la herramienta (
 
 1. Añadir el nodo **MCP Client Tool**.
 2. **Endpoint**: `https://open-terminal.home.arpa/mcp`.
-3. **Authentication**: Header Auth — nombre `X-Api-Key`, valor la key de
-   `apikey-service`.
-4. Las herramientas (terminal, ficheros, ejecución de comandos) se
-   auto-descubren desde el propio servidor MCP al conectar.
+3. **Authentication**: Header Auth — nombre `X-Api-Key`, valor la key de `apikey-service`.
+4. Las herramientas (terminal, ficheros, ejecución de comandos) se auto-descubren desde el propio servidor MCP al conectar.
 
 ## Modo multiusuario
 

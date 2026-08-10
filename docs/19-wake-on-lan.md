@@ -90,12 +90,10 @@ Primer intento: la opción de WoL **no aparecía en absoluto** en la BIOS. Causa
 
 **Pasos aplicados (funcionando, verificado con apagado real + magic packet)**:
 
-1. Entrar a la BIOS (`Supr` al arrancar) → **Advanced Mode** (`F7` si
-   arranca en modo EZ)
+1. Entrar a la BIOS (`Supr` al arrancar) → **Advanced Mode** (`F7` si arranca en modo EZ)
 2. `Advanced → APM Configuration`
 3. **ErP Ready** → `Disabled`
-4. **Power On By PCI-E/PCI** → `Enabled` (este es el interruptor de WoL en
-   sí, en placas ASUS vive en este mismo submenú)
+4. **Power On By PCI-E/PCI** → `Enabled` (este es el interruptor de WoL en sí, en placas ASUS vive en este mismo submenú)
 5. Guardar y salir (`F10`)
 
 Si en otra placa/fabricante la opción de WoL tampoco aparece a la primera, buscar primero un ajuste de tipo **ErP/EuP** en el mismo menú de energía — es la causa más común de "la opción no existe" cuando el hardware sí la soporta.

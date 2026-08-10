@@ -210,19 +210,12 @@ Acceso remoto mediante Tailscale ya desplegado (`docs/18-tailscale.md`, subnet r
 
 ### Qué haría falta
 
-1. Decidir si conviene restringir por dispositivo/usuario (p. ej. un
-   dispositivo de invitado que solo debería llegar a `open-webui`, no a
-   `vaultwarden` o `postgresql.home.arpa`).
-2. Escribir una política de ACL (tags + reglas) en el editor de políticas
-   del panel de Tailscale — no es un fichero de este repo, vive en la
-   configuración del tailnet.
-3. Etiquetar el nodo `pi-dns` (p. ej. `tag:subnet-router`) para que la
-   auth key deje de estar ligada a la cuenta personal — más robusto a
-   largo plazo que una key de usuario.
+1. Decidir si conviene restringir por dispositivo/usuario (p. ej. un dispositivo de invitado que solo debería llegar a `open-webui`, no a `vaultwarden` o `postgresql.home.arpa`).
+2. Escribir una política de ACL (tags + reglas) en el editor de políticas del panel de Tailscale — no es un fichero de este repo, vive en la configuración del tailnet.
+3. Etiquetar el nodo `pi-dns` (p. ej. `tag:subnet-router`) para que la auth key deje de estar ligada a la cuenta personal — más robusto a largo plazo que una key de usuario.
 
 ### Esfuerzo estimado
-Bajo-medio — configuración, no código; el esfuerzo real es decidir la
-política, no aplicarla.
+Bajo-medio — configuración, no código; el esfuerzo real es decidir la política, no aplicarla.
 
 ---
 
@@ -236,25 +229,14 @@ NFSv3 funciona perfectamente para `nfs-data` (root sin squash, confirmado en uso
 
 ### Qué haría falta
 
-1. Confirmar el mecanismo real que usa UGOS Pro para generar
-   `/etc/exports` (¿desde `nfs.json`, igual que `nfs.conf`, o desde otro
-   sitio?) antes de tocarlo a mano — mismo riesgo ya conocido de que la
-   GUI lo sobrescriba en cuanto se vuelva a tocar esa pantalla.
-2. Añadir a mano, por SSH, un export raíz con `fsid=0` (p. ej. algo del
-   estilo `/volume1 192.168.1.0/24(ro,fsid=0,no_subtree_check)`, o el
-   ajuste equivalente si UGOS Pro expone alguna opción para esto en la
-   GUI que no se haya encontrado todavía).
-3. Probar montaje v4 desde un cliente Linux con la ruta relativa a esa
-   raíz (no la ruta real `/volume1/nfs-data` usada hoy con v3).
-4. Si funciona: actualizar `docs/21-configuracion-nas-ugreen.md` y el
-   `/etc/fstab` de los clientes que usen `nfs-data`.
-5. Si UGOS Pro no lo permite de forma estable (revierte el export raíz al
-   tocar la GUI): documentar como limitación permanente del NAS y
-   descartar el punto, quedándose en v3 definitivamente.
+1. Confirmar el mecanismo real que usa UGOS Pro para generar `/etc/exports` (¿desde `nfs.json`, igual que `nfs.conf`, o desde otro sitio?) antes de tocarlo a mano — mismo riesgo ya conocido de que la GUI lo sobrescriba en cuanto se vuelva a tocar esa pantalla.
+2. Añadir a mano, por SSH, un export raíz con `fsid=0` (p. ej. algo del estilo `/volume1 192.168.1.0/24(ro,fsid=0,no_subtree_check)`, o el ajuste equivalente si UGOS Pro expone alguna opción para esto en la GUI que no se haya encontrado todavía).
+3. Probar montaje v4 desde un cliente Linux con la ruta relativa a esa raíz (no la ruta real `/volume1/nfs-data` usada hoy con v3).
+4. Si funciona: actualizar `docs/21-configuracion-nas-ugreen.md` y el `/etc/fstab` de los clientes que usen `nfs-data`.
+5. Si UGOS Pro no lo permite de forma estable (revierte el export raíz al tocar la GUI): documentar como limitación permanente del NAS y descartar el punto, quedándose en v3 definitivamente.
 
 ### Esfuerzo estimado
-Bajo-medio — la parte técnica es sencilla si UGOS Pro lo permite; la
-incertidumbre real es si la GUI lo revierte.
+Bajo-medio — la parte técnica es sencilla si UGOS Pro lo permite; la incertidumbre real es si la GUI lo revierte.
 
 ---
 
@@ -362,11 +344,19 @@ Medio — muy distinto según se opte por un panel propio (más trabajo, más co
 
 ---
 
-## 16. Sistema de secretos para consumo programático — Infisical
+## 16. ~~Sistema de secretos para consumo programático — Infisical~~ — hecho
 
-**Prioridad: media**
+**Prioridad: media** — **completado**
 
-### Qué hay hoy
+### Qué se implementó (2026-08-09)
+
+Infisical desplegado en `retaco`, en producción, con `apikey-service` migrado como primer servicio piloto y verificado de extremo a extremo — detalle completo en `docs/26-infisical-secretos.md`. Dos decisiones de arquitectura con ADR propia: `docs/adr/0001-infisical-inyeccion-bind-mount-vs-imagen-derivada.md` (cómo se inyectan los secretos — distinto de lo previsto originalmente en el punto 4 de más abajo, ver nota ahí) y `docs/adr/0002-infisical-postgres-dedicado.md` (Postgres dedicado, no compartido con `postgres-main`, decidido tras revisión — el plan original de este mismo documento asumía compartir `postgres-main`, como el resto de servicios).
+
+Esta mejora se da por completada con la infraestructura desplegada y el patrón de migración validado en producción con un servicio real — no con todos los servicios del clúster ya migrados. Migrar el resto (auditoría completa ya hecha, `docs/26-infisical-secretos.md`) pasa a ser la mejora 28, para no bloquear esto en algo que va a llevar varias iteraciones separadas.
+
+El razonamiento de la decisión Infisical-vs-Vault de abajo sigue vigente tal cual — no se repite, se implementó como estaba planteado.
+
+### Qué hay hoy (histórico, previo a la implementación)
 
 Vaultwarden guarda las credenciales del clúster, pero está pensado para que una persona las desbloquee, no para que un contenedor las pida solo al arrancar — no tiene secretos dinámicos, ni permisos finos por servicio, ni auditoría de quién leyó qué y cuándo. El patrón real hoy es manual: los valores se copian a mano desde Vaultwarden a los `.env.example` → `.env` de cada nodo/servicio durante el despliegue (`docs/05` a `docs/10`), y ahí se quedan, fijos, hasta que alguien los rota también a mano.
 
@@ -381,25 +371,16 @@ Se evaluaron las dos opciones y se descartó Vault, por varios motivos combinado
 
 ### Qué haría falta (implementación con Infisical)
 
-1. **Despliegue**: contenedor `infisical` en `retaco` (mismo nodo que `postgres-main`, siempre encendido). Backend propio en Postgres, con el patrón ya establecido: `bash create-postgres-db.sh postgres-main dbadmin infisical infisical`. Infisical también necesita **Redis** (caché/rate-limiting) — dependencia nueva en `retaco`, un contenedor `redis` sin rol de almacén de secretos, solo caché.
-2. **Acceso**: `infisical.home.arpa` vía el `nginx` de `pi-dns`, sin pasar por `apikey-service` — Infisical gestiona su propio login. Igual que se planteaba para Vault, el acceso debe quedar limitado a la red interna del clúster, no expuesto más allá del `.home.arpa` habitual.
-3. **Identidades de máquina**: cada servicio migrado obtiene una *Machine Identity* propia con **Universal Auth** (`client_id`/`client_secret`), con acceso restringido a un único proyecto/entorno/ruta de secretos — nunca una identidad compartida para todo el clúster.
-4. **Integración con Docker Compose**: Infisical no tiene sidecar ni *injector* nativo para Compose (eso solo existe para Kubernetes) — el patrón real es envolver el proceso principal con su CLI:
-   ```yaml
-   services:
-     apikey-service:
-       image: registry.home.arpa/apikey-service:latest
-       environment:
-         INFISICAL_TOKEN: ${APIKEY_SERVICE_INFISICAL_TOKEN}   # único secreto que queda en el .env
-       entrypoint: ["infisical", "run", "--env=prod", "--", "uvicorn", "apikey_service.main:app", "--host", "0.0.0.0"]
-   ```
-   El binario de la CLI `infisical` se añade a la imagen del microservicio (una línea más en el `Dockerfile`, mismo patrón multi-stage que ya usan `epub2pdf-service`/`pdf2chunks-service`). Al arrancar, `infisical run` resuelve los secretos de ese proyecto/entorno vía API, los inyecta como variables de entorno del proceso hijo y solo entonces hace `exec` del comando real — la aplicación nunca sabe que los secretos vinieron de Infisical.
-5. **El problema del arranque no desaparece del todo**: sigue haciendo falta un secreto para autenticarse ante Infisical (el `client_id`/`client_secret` de la Machine Identity, simplificado aquí a un único `INFISICAL_TOKEN`). La diferencia real frente a hoy no es "cero secretos en `.env`", es pasar de **N secretos fijos por servicio** (DSN de BD, tokens de terceros, claves de API) a **un único token de acceso, de alcance mínimo y rotable de forma independiente** — que es la reducción de superficie que de verdad se busca.
-6. **Migración incremental**: empezar por `apikey-service` — su `APIKEY_ADMIN_TOKEN` y el DSN de su base de datos son el caso más claro —, confirmar el patrón en producción, y solo entonces extenderlo al resto de microservicios propios y, más adelante, a servicios de terceros (n8n, Open WebUI, Bifrost).
-7. Vaultwarden no desaparece: sigue siendo el sitio correcto para credenciales que usa una persona desde un navegador (paneles de administración, cuentas de terceros). Infisical cubre el consumo entre máquinas, no sustituye a Vaultwarden.
+1. ~~**Despliegue**: contenedor `infisical` en `retaco`... Backend propio en Postgres... compartiendo `postgres-main`... Redis dedicado...~~ **Superado por la implementación real**: Postgres DEDICADO (`postgres-infisical`, no `postgres-main` — ver ADR 0002), y Redis reutiliza el `valkey` ya desplegado (mejora 24) en vez de un contenedor dedicado. Ver `docs/26-infisical-secretos.md`.
+2. **Acceso**: `infisical.home.arpa` vía el `nginx` de `pi-dns`, sin pasar por `apikey-service` — Infisical gestiona su propio login. Igual que se planteaba para Vault, el acceso queda limitado a la red interna del clúster. **Implementado tal cual.**
+3. **Identidades de máquina**: cada servicio migrado obtiene una *Machine Identity* propia con **Universal Auth** (`client_id`/`client_secret`), con acceso restringido a un único proyecto/entorno/ruta de secretos — nunca una identidad compartida para todo el clúster. **Implementado tal cual** — nota: el *IP allowlisting* de estas identidades es una función de pago (Infisical Pro/Enterprise), no disponible en la edición community autoalojada; el alcance mínimo se consigue solo con el rol/ruta del proyecto, no con restricción de IP.
+4. ~~**Integración con Docker Compose**: ... El binario de la CLI `infisical` se añade a la imagen del microservicio (una línea más en el `Dockerfile`...)~~ **Descartado y sustituido**, ver `docs/adr/0001-infisical-inyeccion-bind-mount-vs-imagen-derivada.md`: hornear el CLI en la imagen obligaría a reconstruirla solo para subir de versión el CLI. Mecanismo real: binario estático por nodo, montado por bind-mount, `entrypoint:`/`command:` sobreescritos en el `docker-compose.yml` del nodo — ninguna imagen se toca. Además, el `entrypoint:` de una sola línea del ejemplo original no basta en la práctica: la versión del CLI usada necesita un login previo (`infisical login --method=universal-auth`) para obtener un token antes de `infisical run --token=...` — wrapper de dos pasos, detalle en `docs/26`.
+5. **El problema del arranque no desaparece del todo**: confirmado en vivo, no solo en teoría — con `apikey-service` migrado, se probó apagar Infisical (el servicio ya en marcha sigue funcionando sin problema) y forzar después un reinicio de `apikey-service` con Infisical aún caído (se queda reintentando en bucle hasta que Infisical vuelve, `restart: unless-stopped` lo recupera solo, sin intervención manual). La diferencia real frente a hoy no es "cero secretos en `.env`", es pasar de **N secretos fijos por servicio** a **una identidad de alcance mínimo, rotable de forma independiente**.
+6. **Migración incremental**: `apikey-service` migrado y verificado en producción (piloto) — con esto, el patrón queda validado y esta mejora se cierra aquí. El alcance real es TODO servicio con secretos en `.env` del clúster, propio o de terceros — no solo los microservicios propios; auditoría completa ya hecha (candidatos limpios, bloqueados por falta de shell, bloqueados por comportamiento "solo al primer arranque" como `postgres-main`/`grafana`, y casos con secreto en fichero como `registry`) en `docs/26-infisical-secretos.md`, sección "Inventario completo". Migrar el resto: **mejora 28**.
+7. Vaultwarden no desaparece: sigue siendo el sitio correcto para credenciales que usa una persona desde un navegador (paneles de administración, cuentas de terceros). Infisical cubre el consumo entre máquinas, no sustituye a Vaultwarden. **Vigente sin cambios.**
 
 ### Esfuerzo estimado
-Medio — desplegar Infisical + Redis es sencillo y la CLI simplifica la integración en cada `Dockerfile`; el grueso del esfuerzo sigue siendo decidir el reparto de proyectos/entornos por servicio y migrar credenciales existentes sin romper nada por el camino.
+Medio — confirmado en la implementación real: el despliegue del servidor (Postgres dedicado + Valkey reutilizado + nginx/DNS/CA) fue la parte más mecánica; el grueso real del esfuerzo fue depurar el mecanismo de inyección en vivo (wrapper de dos pasos, confianza en la CA interna desde el CLI) y decidir la arquitectura (Postgres dedicado, ADR 0002) — no la integración por servicio en sí, que una vez resuelto el patrón es repetible. Migrar el resto de servicios queda como mejora 28, debería ser más rápido por servicio al reutilizar el patrón ya validado aquí.
 
 ---
 
@@ -456,7 +437,7 @@ Ollama + Open WebUI cubren el caso de "chat con modelos locales" cuando una pers
    npm i -g openclaw
    openclaw onboard
    ```
-   El instalador trae Node.js y dependencias; compatible Linux/macOS/Windows. Alternativa desde fuente: clonar `github.com/openclaw/openclaw`, `corepack enable && pnpm install`, `pnpm openclaw onboard`.
+El instalador trae Node.js y dependencias; compatible Linux/macOS/Windows. Alternativa desde fuente: clonar `github.com/openclaw/openclaw`, `corepack enable && pnpm install`, `pnpm openclaw onboard`.
 2. Nodo: al tener estado local persistente (memoria entre conversaciones) y tareas en segundo plano 24/7, encaja mejor en un nodo siempre encendido y con margen de recursos (`retaco` o `ryzen`) que en una Raspberry Pi.
 3. Modelo: soporta Claude (Anthropic), GPT (OpenAI) y modelos locales — para mantener el criterio "todo local" del resto del clúster, evaluar apuntarlo a Ollama con los modelos ya desplegados (`qwen2.5:14b`/`32b`) en vez de a una API en la nube; probar antes de comprometerse a un flujo de trabajo real, ya que el uso de herramientas/razonamiento agente de un modelo de 14-32B puede quedarse corto frente a Claude o GPT en tareas complejas.
 4. Integraciones: 29 canales de chat disponibles (WhatsApp, Telegram, Discord, Slack, Signal, iMessage) y herramientas (Gmail, GitHub, Obsidian, Notion, Todoist, Philips Hue, 1Password, Spotify, WHOOP...) — no activar todo de golpe; empezar por una única integración de bajo riesgo (p. ej. Telegram o Discord solo para consulta) antes de dar acceso a correo o gestores de contraseñas.
@@ -494,7 +475,7 @@ Claude Code (esta misma herramienta) es hoy el único agente de codificación en
    brew install anomalyco/tap/opencode                # Homebrew (macOS/Linux)
    docker run -it --rm ghcr.io/anomalyco/opencode     # sin instalar nada
    ```
-   También disponible como extensión para VS Code, Cursor, Zed, Windsurf y VSCodium, y como app de escritorio (beta) para quien prefiera GUI en vez de terminal.
+También disponible como extensión para VS Code, Cursor, Zed, Windsurf y VSCodium, y como app de escritorio (beta) para quien prefiera GUI en vez de terminal.
 2. Configuración de proveedor: acepta cualquier proveedor de modelos vía API key (OpenAI, Anthropic Claude, Google Gemini, AWS Bedrock, Groq, Azure OpenAI, OpenRouter...) y ofrece "OpenCode Zen" como lista curada de modelos ya probados — para este clúster, el interés real está en apuntarlo a Ollama para tener un agente de código 100% local, o a Claude para comparar calidad de generación frente a Claude Code en tareas reales.
 3. Caso de uso dentro de este clúster: banco de pruebas directo frente a Claude Code sobre las mismas tareas de mantenimiento del repo — "¿qué tan bien razona sobre este código un modelo local (`qwen2.5:32b` vía Ollama) frente a un modelo en la nube?" — en línea con el motivo original del clúster (aprendizaje y comparativas en hardware controlado, mismo criterio que la mejora 14, Floci).
 4. Sin necesidad de nodo dedicado: es una CLI que se ejecuta bajo demanda en la máquina de quien la use (como Claude Code), no un servicio persistente — no requiere entrada en ningún `docker-compose.yml` ni excepción de firewall, salvo que se apunte a Ollama, que ya está expuesto en la red interna del clúster.
@@ -561,7 +542,7 @@ Mismo hueco que la mejora 20: sin gateway unificado hacia proveedores cloud. [Bi
    - Web UI propia en `http://bifrost:8080` ("visual provider setup") — añadir el provider Bedrock sin tocar ficheros, más simple para un despliegue de un único nodo.
    - `config.json` declarativo si se prefiere dejarlo versionado en el repo (`config_store` en modo solo-lectura, cambios requieren reinicio) — mismo criterio de "todo en git" ya aplicado al resto del clúster (mejora 2).
 
-   Credenciales: `access_key`/`secret_key` explícitas, con el mismo IAM de permiso mínimo descrito en la mejora 20 (no crear uno nuevo). Bifrost también soporta detectar automáticamente el rol IAM del host si ambas credenciales quedan vacías — no aplica a este clúster on-prem por ahora, relevante solo si en el futuro algo del pipeline corriera dentro de AWS. Región configurable (p. ej. `eu-west-1`), con enrutamiento ponderado entre regiones si interesara failover a `us-west-2`.
+Credenciales: `access_key`/`secret_key` explícitas, con el mismo IAM de permiso mínimo descrito en la mejora 20 (no crear uno nuevo). Bifrost también soporta detectar automáticamente el rol IAM del host si ambas credenciales quedan vacías — no aplica a este clúster on-prem por ahora, relevante solo si en el futuro algo del pipeline corriera dentro de AWS. Región configurable (p. ej. `eu-west-1`), con enrutamiento ponderado entre regiones si interesara failover a `us-west-2`.
 4. Conectar desde Open WebUI: mismo patrón que la mejora 20 — `Admin Settings → Connections` → "OpenAI API" apuntando a `http://bifrost:8080/v1`, con la clave que Bifrost genere para ese acceso.
 5. Decidir cuál de las dos (mejora 20 o esta) se queda como gateway definitivo antes de mantener ambas en producción a la vez — mismo tipo de decisión ya planteada entre Vault e Infisical (mejora 16): resuelven el mismo problema; Bifrost destaca en rendimiento/latencia bajo carga alta, LiteLLM en madurez del ecosistema Python y presupuestos por equipo. Evaluar una junto a la otra y quedarse solo con una.
 6. Mismo aviso de coste que la mejora 20: Bedrock factura por AWS, a diferencia del resto del clúster.
@@ -723,10 +704,40 @@ Medio — no es un despliegue nuevo, es investigación dirigida sobre dos sistem
 2. Activar `ssl = on` en `postgres-main` (imagen oficial `postgres:16-alpine` lo soporta de fábrica vía `ssl_cert_file`/`ssl_key_file`, sin parches) — probar primero con `ssl = on` sin forzar (`hostssl` opcional en `pg_hba.conf`), para no cortar a ningún cliente existente de golpe.
 3. Migrar cada consumidor a `sslmode=require` (o `verify-ca`/`verify-full` para validar contra la CA interna) en su cadena de conexión, uno a uno: n8n (`DB_POSTGRESDB_*`), SonarQube, apikey-service, Open WebUI (`DATABASE_URL`), y el DSN de `postgres-exporter` en pi-obs — confirmando cada uno antes de pasar al siguiente, no todos a la vez.
 4. Solo cuando todos los consumidores confirmen `sslmode=require`, endurecer `pg_hba.conf` a `hostssl` exclusivamente (rechaza conexiones sin TLS) — hasta entonces, dejar `host` y `hostssl` coexistiendo.
-5. Documentar en `docs/05-instalacion-retaco.md` (o un `docs/26-*` propio si el cambio es lo bastante grande) siguiendo el mismo criterio de honestidad que el resto de mejoras completadas — probar de verdad cada consumidor, no dar por hecho que "debería funcionar".
+5. Documentar en `docs/05-instalacion-retaco.md` (o un `docs/27-*` propio si el cambio es lo bastante grande — `docs/26` ya ocupado por Infisical) siguiendo el mismo criterio de honestidad que el resto de mejoras completadas — probar de verdad cada consumidor, no dar por hecho que "debería funcionar".
 
 ### Esfuerzo estimado
 Medio-alto — no por la parte técnica de Postgres en sí (activar TLS es sencillo con la CA ya existente), sino por el número de consumidores reales a migrar sin cortar nada que ya funciona; hacerlo bien implica probar uno a uno, no un cambio atómico.
+
+---
+
+## 28. Migrar el resto de servicios del clúster a Infisical
+
+**Prioridad: media**
+
+### Qué hay hoy
+
+La mejora 16 dejó Infisical desplegado en producción y el mecanismo de inyección de secretos validado con un único servicio real, `apikey-service` — detalle completo en `docs/26-infisical-secretos.md`. El resto de servicios del clúster con secretos en su `.env` siguen exactamente igual que antes de la mejora 16: valores en claro, copiados a mano desde Vaultwarden, sin identidad de máquina propia ni rotación independiente.
+
+`docs/26-infisical-secretos.md` ya tiene la auditoría completa de los 27 servicios del clúster, servicio por servicio, clasificados en cuatro categorías — no hace falta repetirla aquí, solo enlazarla:
+
+- **Candidatos limpios**, mismo patrón que `apikey-service` sin obstáculos conocidos: `markitdown-service`, `epub2pdf-service`, `pdf2chunks-service`, `crawl4ai-scraper-service`, `open-terminal-mcp`, `n8n-main`, `n8n-aux`, `qdrant`, `vaultwarden`, `rsshub`, `sonarqube`, la mayoría de variables de `bifrost`, `open-webui` (con la particularidad de su entrypoint ya sobreescrito), `postgres-exporter`, `whisper-service`, `vllm`. De estos, **10 ya tienen sus secretos reales pre-cargados en Infisical** (importación masiva hecha el 2026-08-10, ver `docs/26` sección "Secretos pre-cargados") — falta solo conectar el `docker-compose.yml` de cada uno, no volver a copiar valores a mano.
+- **Bloqueados por falta de shell en la imagen**: `portainer`, `otel-collector` (este último sin secretos reales de todas formas).
+- **Bloqueados por comportamiento "solo al primer arranque"** (cambiar la variable de entorno no cambia la credencial real una vez inicializado el servicio): `postgres-main`, `postgres-infisical`, `grafana`, `tailscale` — necesitan un mecanismo distinto (aplicar el secreto vía la API propia de cada servicio tras leerlo de Infisical), no el wrapper genérico.
+- **Secreto real en fichero, no en variable de entorno**: `registry` (el credential de `docker login` vive en `htpasswd`).
+
+### Qué haría falta
+
+1. Completar la identidad de máquina + acceso al proyecto (Viewer, restringido a su carpeta) para cada uno de los "candidatos limpios" — algunos ya tienen el secreto importado, otros necesitan también el volcado inicial (ver "Importación masiva de secretos" en `docs/26`).
+2. Por cada uno: bind-mount del binario CLI en el nodo (`shared/scripts/deploy-infisical-cli.sh <nodo>`, si no está ya desplegado ahí), averiguar `ENTRYPOINT`/`CMD` real si es de terceros, editar el `docker-compose.yml` con el wrapper de dos pasos, desplegar y verificar de extremo a extremo — mismo procedimiento ya validado con `apikey-service`, repetible.
+3. Prestar atención particular a `open-webui` (combinar el wrapper con su entrypoint ya existente, que combina el bundle de `certifi` con la CA interna) y a `bifrost` (confirmar antes si `BIFROST_ADMIN_USERNAME`/`_PASSWORD` son "cada arranque" o "solo primera vez", pendiente desde la auditoría de la mejora 16).
+4. Decidir un mecanismo para los bloqueados por "solo al primer arranque" (`postgres-main`, `postgres-infisical`, `grafana`, `tailscale`) — o aceptarlos como excepción permanente, documentada, si el esfuerzo no compensa frente a lo poco que rotan hoy.
+5. Decidir un mecanismo para `registry` (renderizar `htpasswd` a partir de un secreto de Infisical al arrancar) o aceptarlo también como excepción documentada.
+6. Reorganizar los secretos ya importados en sus carpetas correspondientes si hiciera falta ajustar el reparto original.
+7. Mantener viva la identidad `bulk-import` (rol Editor, creada durante la mejora 16) para este trabajo — decisión consciente de no revocarla todavía, dado que se va a seguir usando para más importaciones masivas durante esta mejora. Revisar si conviene revocarla una vez migrado el último servicio de la lista de candidatos limpios.
+
+### Esfuerzo estimado
+Medio — el patrón ya está validado y documentado paso a paso (`docs/26`); el trabajo es mecánico y repetible por servicio, salvo los casos bloqueados (postgres/grafana/tailscale/registry), que si se abordan necesitan diseño propio, no solo repetición.
 
 ---
 
@@ -749,7 +760,7 @@ Medio-alto — no por la parte técnica de Postgres en sí (activar TLS es senci
 | 13 | Copiar logs/métricas de pi-obs al NAS | Media | Medio | NFS del NAS ya montado (`docs/21`) |
 | 14 | Evaluar Floci como emulador local de AWS | Media | Bajo | — |
 | 15 | Panel de control de servicios + estado en `index.home.arpa` | Media | Medio | Portainer ya desplegado (`docs/10`) |
-| 16 | Sistema de secretos programático (Infisical) | Media | Medio | `postgres-main` ya desplegado (`docs/05`); complementa a Vaultwarden (`docs/10`) |
+| 16 | ~~Sistema de secretos programático (Infisical)~~ | Media | — | **Completado** — `docs/26-infisical-secretos.md`; solo `apikey-service` migrado, resto en mejora 28 |
 | 17 | ~~Open Terminal en modo MCP (Open WebUI + n8n)~~ | Media | — | **Completado** — `docs/24-open-terminal-mcp.md` |
 | 18 | OpenClaw — asistente personal de IA autoalojado | Media | Medio | Ollama ya desplegado si se apunta a modelos locales |
 | 19 | Opencode — agente de código open source para terminal | Media | Bajo | Ollama ya desplegado si se apunta a modelos locales |
@@ -761,5 +772,6 @@ Medio-alto — no por la parte técnica de Postgres en sí (activar TLS es senci
 | 25 | Authentik — authn/authz centralizado (SSO + forward-auth) | Media | Alto | `postgres-main` ya desplegado; reutiliza el Valkey de la mejora 24; `prometheus.home.arpa` hoy sin ninguna autenticación |
 | 26 | Investigar tool-calling fiable — modelos locales (Ollama) y Bedrock/Claude (Bifrost) | Media | Medio | Open Terminal MCP ya desplegado (mejora 17, `docs/24`); ningún modelo probado completa una llamada de herramienta hoy |
 | 27 | Activar TLS en `postgres-main` | Media | Medio-alto | CA interna ya desplegada (`docs/15`); patrón ya probado con Valkey (mejora 24, `docs/25`) |
+| 28 | Migrar el resto de servicios del clúster a Infisical | Media | Medio | Infisical ya desplegado y patrón validado (mejora 16, `docs/26`) |
 
 Ninguna de estas mejoras es urgente ni bloqueante — el clúster funciona correctamente sin ellas.

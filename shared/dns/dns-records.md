@@ -41,6 +41,7 @@ Estos registros deben añadirse en la interfaz de Pi-hole: **Local DNS → DNS R
 | `epub2pdf.home.arpa` | `192.168.1.170` | epub2pdf-service en retaco — protegido con apikey-service | 8003 |
 | `pdf2chunks.home.arpa` | `192.168.1.170` | pdf2chunks-service en retaco — protegido con apikey-service | 8004 |
 | `open-terminal.home.arpa` | `192.168.1.170` | open-terminal-mcp (servidor MCP) en retaco — protegido con apikey-service, obligatorio (el transporte MCP no tiene auth propia, ver `docs/24-open-terminal-mcp.md`) | 8005 |
+| `infisical.home.arpa` | `192.168.1.170` | Infisical (gestor de secretos) en retaco — auth propia, no protegido con apikey-service. Ver `docs/26-infisical-secretos.md` | 8006 |
 
 ## Alias directos (sin proxy — no son HTTP)
 

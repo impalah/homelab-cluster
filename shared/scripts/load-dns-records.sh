@@ -57,7 +57,8 @@ HOSTS='[
   "192.168.1.170 registry.home.arpa",
   "192.168.1.170 epub2pdf.home.arpa",
   "192.168.1.170 pdf2chunks.home.arpa",
-  "192.168.1.170 open-terminal.home.arpa"
+  "192.168.1.170 open-terminal.home.arpa",
+  "192.168.1.170 infisical.home.arpa"
 ]'
 
 echo "[INFO] Autenticando en ${PIHOLE_URL}..."

@@ -7,7 +7,7 @@ Se trata de seis nodos conectados a la misma red local doméstica, sin Kubernete
 | Nodo | IP | Función en una frase |
 |---|---|---|
 | `ryzen` (alias `mole`) | 192.168.1.150 | Cómputo con GPU: modelos de lenguaje (Ollama/vLLM), transcripción de audio, generación de imágenes |
-| `retaco` | 192.168.1.174 | Datos y automatización: PostgreSQL compartido, Qdrant, n8n, Open WebUI |
+| `retaco` | 192.168.1.174 | Datos y automatización: PostgreSQL compartido, Qdrant, n8n, Open WebUI, gestor de secretos (Infisical) |
 | `pi-dns` | 192.168.1.170 | DNS interno y puerta de entrada HTTPS de todo el clúster |
 | `pi-obs` | 192.168.1.171 | Observabilidad: métricas, registros, trazas, paneles |
 | `pi-sonar` | 192.168.1.172 | Análisis estático de código (SonarQube) + gateway LLM hacia AWS Bedrock y Ollama (Bifrost) |
@@ -58,7 +58,7 @@ flowchart LR
     nginx -->|"auth_request\n(solo servicios sin\nauth propia)"| apikey
 
     nginx --> ryzen["ryzen\nollama · vllm · comfyui · whisper"]
-    nginx --> retaco["retaco\nn8n-main · qdrant · registry\nopen-webui"]
+    nginx --> retaco["retaco\nn8n-main · qdrant · registry\nopen-webui · infisical"]
     nginx --> piobs["pi-obs\ngrafana · prometheus"]
     nginx --> pisonar["pi-sonar\nsonarqube · bifrost"]
     retaco -.->|"chat: Bedrock + Ollama\nvía virtual key"| pisonar
@@ -196,41 +196,11 @@ Todos los datos persistentes, las configuraciones y los ficheros `docker-compose
 
 Los documentos de `docs/` están numerados siguiendo el orden real en que hay que instalar y configurar cada cosa. No es un orden alfabético ni cronológico según cuándo se escribió cada documento, sino el que marcan las dependencias reales entre los nodos:
 
-1. **Fundamentos** (`docs/02` a `docs/04`) — planificación de IP y DNS,
-   instalación base del sistema operativo, servicios comunes a todos los
-   nodos. No tienen dependencias entre sí, así que se hacen antes que
-   cualquier nodo.
-2. **`retaco` en primer lugar** (`docs/05`) — aunque `pi-dns` es,
-   conceptualmente, la "puerta de entrada" del clúster, su propio
-   `docker-compose.yml` **no arranca correctamente si `retaco` no está ya
-   en marcha**: `apikey-service` (en `pi-dns`) necesita que su base de
-   datos ya exista en `postgres-main` (retaco), y `nginx` (también en
-   `pi-dns`) no arranca hasta que `apikey-service` esté en estado
-   `healthy` (mediante `depends_on`). `retaco` también aloja el registro
-   de imágenes privado (`registry.home.arpa`), que varios nodos necesitan
-   más adelante para publicar y descargar imágenes (`apikey-service`,
-   `markitdown-service`, `whisper-service`).
-3. **`pi-dns` en segundo lugar** (`docs/06`) — con `retaco` ya en marcha,
-   `apikey-service` puede arrancar correctamente, y `nginx` con él. A
-   partir de aquí, el resto del clúster ya puede resolver `*.home.arpa` y
-   pasar por la puerta de entrada HTTPS.
-4. **El resto de los nodos, en cualquier orden entre sí** (`docs/07` a
-   `docs/10`) — `ryzen`, `pi-obs`, `pi-sonar` y `pi-utils`. Todos dan por
-   hecho que `pi-dns` y `retaco` ya están en marcha (entidad certificadora
-   interna, DNS, registro privado, bases de datos aisladas en
-   `postgres-main`), pero no dependen unos de otros.
-5. **Operación** (`docs/11` en adelante) — una vez el clúster está en
-   pie: uso diario, copias de seguridad, resolución de problemas,
-   monitorización, entidad certificadora interna, mantenimiento,
-   cortafuegos, acceso remoto, Wake-on-LAN, y el apagado y encendido
-   ordenado para tareas de mantenimiento físico
-   (`docs/20-apagado-y-encendido-cluster.md`, que sigue exactamente este
-   mismo orden de dependencias al volver a encender el clúster), además
-   de la configuración del NAS UGREEN
-   (`docs/21-configuracion-nas-ugreen.md`, un dispositivo adicional de la
-   red local, fuera del clúster de Docker). El documento
-   `docs/22-mejoras-futuras.md` cierra la documentación a propósito: es
-   un listado de tareas pendientes, no un paso más a seguir.
+1. **Fundamentos** (`docs/02` a `docs/04`) — planificación de IP y DNS, instalación base del sistema operativo, servicios comunes a todos los nodos. No tienen dependencias entre sí, así que se hacen antes que cualquier nodo.
+2. **`retaco` en primer lugar** (`docs/05`) — aunque `pi-dns` es, conceptualmente, la "puerta de entrada" del clúster, su propio `docker-compose.yml` **no arranca correctamente si `retaco` no está ya en marcha**: `apikey-service` (en `pi-dns`) necesita que su base de datos ya exista en `postgres-main` (retaco), y `nginx` (también en `pi-dns`) no arranca hasta que `apikey-service` esté en estado `healthy` (mediante `depends_on`). `retaco` también aloja el registro de imágenes privado (`registry.home.arpa`), que varios nodos necesitan más adelante para publicar y descargar imágenes (`apikey-service`, `markitdown-service`, `whisper-service`).
+3. **`pi-dns` en segundo lugar** (`docs/06`) — con `retaco` ya en marcha, `apikey-service` puede arrancar correctamente, y `nginx` con él. A partir de aquí, el resto del clúster ya puede resolver `*.home.arpa` y pasar por la puerta de entrada HTTPS.
+4. **El resto de los nodos, en cualquier orden entre sí** (`docs/07` a `docs/10`) — `ryzen`, `pi-obs`, `pi-sonar` y `pi-utils`. Todos dan por hecho que `pi-dns` y `retaco` ya están en marcha (entidad certificadora interna, DNS, registro privado, bases de datos aisladas en `postgres-main`), pero no dependen unos de otros.
+5. **Operación** (`docs/11` en adelante) — una vez el clúster está en pie: uso diario, copias de seguridad, resolución de problemas, monitorización, entidad certificadora interna, mantenimiento, cortafuegos, acceso remoto, Wake-on-LAN, y el apagado y encendido ordenado para tareas de mantenimiento físico (`docs/20-apagado-y-encendido-cluster.md`, que sigue exactamente este mismo orden de dependencias al volver a encender el clúster), además de la configuración del NAS UGREEN (`docs/21-configuracion-nas-ugreen.md`, un dispositivo adicional de la red local, fuera del clúster de Docker). El documento `docs/22-mejoras-futuras.md` cierra la documentación a propósito: es un listado de tareas pendientes, no un paso más a seguir.
 
 ## Índice de documentación
 
@@ -261,3 +231,4 @@ Los documentos de `docs/` están numerados siguiendo el orden real en que hay qu
 | 23 | `docs/23-bifrost-gateway-llm.md` | Bifrost: gateway LLM hacia AWS Bedrock y Ollama (`pi-sonar`), conectado a Open WebUI y n8n; incluye la migración de Open WebUI de `ryzen` a `retaco` |
 | 24 | `docs/24-open-terminal-mcp.md` | Open Terminal en modo MCP (`retaco`): terminal/ficheros expuestos a Open WebUI y n8n; incluye el hallazgo de que el transporte MCP no tiene auth propia |
 | 25 | `docs/25-valkey-cache.md` | Valkey (`retaco`): caché clave-valor compartido, sin persistencia, ACL sin usuario por defecto |
+| 26 | `docs/26-infisical-secretos.md` | Infisical (`retaco`): gestor de secretos para consumo entre máquinas — Postgres dedicado, Valkey reutilizado, `apikey-service` migrado como piloto. Decisiones formales en `docs/adr/` (0001: mecanismo de inyección; 0002: Postgres dedicado) |

@@ -8,24 +8,8 @@ Procedimiento para apagar de forma segura la mayor parte del clúster (por ejemp
 
 ## Por qué importa el orden
 
-- **Al apagar**: no es estrictamente necesario un orden concreto entre
-  nodos — cada `docker compose down` es una operación local a ese nodo. Lo
-  que sí es crítico es **no cortar la alimentación en frío**: hacer siempre
-  un apagado limpio del sistema operativo (`sudo poweroff`) antes de
-  desconectar. Las Raspberry Pi arrancan desde tarjeta SD, especialmente
-  sensible a corrupción si se corta la alimentación con el filesystem
-  montado en lectura-escritura a medio escribir; `retaco` tiene un SSD, más
-  tolerante pero con el mismo riesgo en el `postgres-main` que aloja.
-- **Al encender**: el orden **sí es crítico** y es el mismo que en la
-  instalación (`docs/01-topologia.md`, sección "Orden de instalación"):
-  `retaco` primero — el propio `docker-compose.yml` de `pi-dns` no arranca
-  sano sin retaco ya arriba, porque `nginx` depende (`depends_on:
-  condition: service_healthy`) de `apikey-service`, y `apikey-service`
-  necesita conectar con su base de datos en `postgres-main` (retaco) para
-  arrancar sano. Si `pi-dns` arranca antes que `retaco`, `apikey-service`
-  queda reintentando la conexión (`restart: unless-stopped`) hasta que
-  `retaco` responde — se autocorrige solo, pero es innecesario esperar a
-  que se autocorrija pudiendo evitarlo con el orden correcto.
+- **Al apagar**: no es estrictamente necesario un orden concreto entre nodos — cada `docker compose down` es una operación local a ese nodo. Lo que sí es crítico es **no cortar la alimentación en frío**: hacer siempre un apagado limpio del sistema operativo (`sudo poweroff`) antes de desconectar. Las Raspberry Pi arrancan desde tarjeta SD, especialmente sensible a corrupción si se corta la alimentación con el filesystem montado en lectura-escritura a medio escribir; `retaco` tiene un SSD, más tolerante pero con el mismo riesgo en el `postgres-main` que aloja.
+- **Al encender**: el orden **sí es crítico** y es el mismo que en la instalación (`docs/01-topologia.md`, sección "Orden de instalación"): `retaco` primero — el propio `docker-compose.yml` de `pi-dns` no arranca sano sin retaco ya arriba, porque `nginx` depende (`depends_on: condition: service_healthy`) de `apikey-service`, y `apikey-service` necesita conectar con su base de datos en `postgres-main` (retaco) para arrancar sano. Si `pi-dns` arranca antes que `retaco`, `apikey-service` queda reintentando la conexión (`restart: unless-stopped`) hasta que `retaco` responde — se autocorrige solo, pero es innecesario esperar a que se autocorrija pudiendo evitarlo con el orden correcto.
 
 ## Apagado
 

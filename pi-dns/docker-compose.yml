@@ -84,17 +84,62 @@ services:
   # "docker compose pull"/"up -d". Sin label de watchtower a propósito —
   # mismo criterio que markitdown-service/whisper-service, ver
   # docs/16-mantenimiento-actualizaciones.md.
+  #
+  # PILOTO de la migración a Infisical (mejora 16, docs/26-infisical-secretos.md)
+  # — primer servicio migrado. NO se toca la imagen/Dockerfile en absoluto
+  # (ver docs/adr/0001-infisical-inyeccion-bind-mount-vs-imagen-derivada.md):
+  # el binario del CLI se monta por bind-mount desde el host
+  # (/srv/homelab/pi-dns/infisical-cli/infisical, desplegado con
+  # shared/scripts/deploy-infisical-cli.sh) y "entrypoint:"/"command:" se
+  # sobreescriben con un wrapper de shell.
+  #
+  # Wrapper de DOS pasos, no un simple prefijo — descubierto en vivo probando
+  # contra la identidad real antes de tocar este contenedor: la versión del
+  # CLI desplegada (0.43.121) NO soporta Universal Auth directamente en
+  # "infisical run" vía las variables INFISICAL_UNIVERSAL_AUTH_CLIENT_ID/
+  # _CLIENT_SECRET (dispara un flujo de login interactivo por navegador en su
+  # lugar) — hace falta "infisical login --method=universal-auth" primero
+  # (devuelve un token de corta duración) y pasarlo a "infisical run
+  # --token=...". Por eso "command:" SÍ hace falta aquí (a diferencia de lo
+  # previsto originalmente en el ADR 0001 para el caso simple) — con
+  # entrypoint: sh -c no hay "CMD heredado de la imagen" al que agarrarse, así
+  # que el arranque real de uvicorn se reescribe explícito, igual que en el
+  # Dockerfile del servicio (services/apikey-service/Dockerfile).
   # ---------------------------------------------------------------------------
   apikey-service:
     image: registry.home.arpa/apikey-service:latest
     container_name: apikey-service
     restart: unless-stopped
     environment:
-      APIKEY_DATABASE_URL: ${APIKEY_DATABASE_URL}
-      APIKEY_ADMIN_TOKEN: ${APIKEY_ADMIN_TOKEN}
+      INFISICAL_UNIVERSAL_AUTH_CLIENT_ID: ${APIKEY_SERVICE_INFISICAL_CLIENT_ID}
+      INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET: ${APIKEY_SERVICE_INFISICAL_CLIENT_SECRET}
+      INFISICAL_PROJECT_ID: ${APIKEY_SERVICE_INFISICAL_PROJECT_ID}
+      INFISICAL_DOMAIN: https://infisical.home.arpa/api
+      # El CLI de Infisical (binario Go) no trae la CA interna del clúster en
+      # su almacén — SSL_CERT_FILE es la variable que respeta el propio
+      # runtime de Go (crypto/x509) para añadir una CA además de las públicas
+      # del sistema, sin tener que reconstruir la imagen ni instalar paquetes
+      # en el entrypoint. Sin esto: "x509: certificate signed by unknown
+      # authority" al llamar a infisical.home.arpa. Confirmado en vivo.
+      SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
       APIKEY_OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: ${APIKEY_OTEL_EXPORTER_OTLP_LOGS_ENDPOINT:-http://192.168.1.171:4318/v1/logs}
       APIKEY_LOG_LEVEL: ${APIKEY_LOG_LEVEL:-INFO}
       APIKEY_LOG_FORMAT: ${APIKEY_LOG_FORMAT:-json}
+    volumes:
+      - /srv/homelab/pi-dns/infisical-cli/infisical:/usr/local/bin/infisical:ro
+      # CA interna del clúster, de solo lectura — copiada localmente desde
+      # /srv/homelab/pi-dns/nginx/ca/ca.crt (pi-dns YA la aloja, sin red).
+      - /srv/homelab/pi-dns/apikey-service/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        TOKEN=$$(infisical login --method=universal-auth \
+          --client-id="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_ID" \
+          --client-secret="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET" \
+          --plain --silent) &&
+        exec infisical run --token="$$TOKEN" --projectId="$$INFISICAL_PROJECT_ID" --env=prod --path=/apikey-service/ -- \
+          python3 -m uvicorn apikey_service.main:app --host 0.0.0.0 --port 8090 --app-dir src
     networks:
       pi-dns-net:
         ipv4_address: 172.20.0.9
@@ -103,7 +148,7 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 10s
+      start_period: 15s
 
   # ---------------------------------------------------------------------------
   # nginx — Proxy inverso HTTPS para todos los servicios del clúster

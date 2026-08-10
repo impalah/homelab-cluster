@@ -91,19 +91,7 @@ sudo iptables -L DOCKER-USER -n --line-numbers -v
 
 ## Notas
 
-- **El tráfico remoto mediante Tailscale (`docs/18-tailscale.md`) no se ve afectado por este mecanismo** —
-  llega con NAT aplicado a la IP LAN de `pi-dns` (comportamiento por defecto del
-  subnet router), indistinguible del tráfico legítimo que ya generaba
-  `nginx`. Con `off` activado en cualquier nodo, un dispositivo Tailscale
-  sigue llegando igual — es lo esperado (Tailscale debe sentirse como estar
-  en la LAN, pasando por `pi-dns` como de costumbre), no una forma nueva de saltarse la protección.
-- Este mecanismo es independiente de `apikey-service` (`docs/06-instalacion-pi1-dns.md`) — son dos
-  capas distintas. Con `off` activado, ni siquiera hace falta la API key
-  para que el salto por IP deje de ser un problema, porque ese salto ya
-  no existe; la API key sigue protegiendo la vía correcta
-  (`*.home.arpa`), que es la única que queda disponible.
-- Idempotente: ejecutar `off` dos veces seguidas no duplica reglas
-  (comprueba con `iptables -C` antes de insertar); igual con `on`.
-- Si algún día `docker compose down && up -d` recrea un contenedor y el
-  puerto sigue publicado igual, las reglas de `DOCKER-USER` no se ven
-  afectadas — no dependen del contenedor en sí, solo del puerto del host.
+- **El tráfico remoto mediante Tailscale (`docs/18-tailscale.md`) no se ve afectado por este mecanismo** — llega con NAT aplicado a la IP LAN de `pi-dns` (comportamiento por defecto del subnet router), indistinguible del tráfico legítimo que ya generaba `nginx`. Con `off` activado en cualquier nodo, un dispositivo Tailscale sigue llegando igual — es lo esperado (Tailscale debe sentirse como estar en la LAN, pasando por `pi-dns` como de costumbre), no una forma nueva de saltarse la protección.
+- Este mecanismo es independiente de `apikey-service` (`docs/06-instalacion-pi1-dns.md`) — son dos capas distintas. Con `off` activado, ni siquiera hace falta la API key para que el salto por IP deje de ser un problema, porque ese salto ya no existe; la API key sigue protegiendo la vía correcta (`*.home.arpa`), que es la única que queda disponible.
+- Idempotente: ejecutar `off` dos veces seguidas no duplica reglas (comprueba con `iptables -C` antes de insertar); igual con `on`.
+- Si algún día `docker compose down && up -d` recrea un contenedor y el puerto sigue publicado igual, las reglas de `DOCKER-USER` no se ven afectadas — no dependen del contenedor en sí, solo del puerto del host.

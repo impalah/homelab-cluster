@@ -23,6 +23,16 @@ bash /srv/homelab/shared/scripts/backup-postgres.sh retaco postgres-main apikeys
 
 Genera `/srv/homelab/backups/retaco/postgres-main_<db>_<fecha>.sql.gz`.
 
+### Retaco — postgres-infisical
+
+Instancia SEPARADA de `postgres-main` a propósito — no multi-tenant, solo Infisical (mejora 16, `docs/adr/0002-infisical-postgres-dedicado.md`):
+
+```bash
+bash /srv/homelab/shared/scripts/backup-postgres.sh retaco postgres-infisical infisical
+```
+
+Además del volcado SQL, `retaco/.env` guarda `ENCRYPTION_KEY`/`AUTH_SECRET` de Infisical — sin ellos, un volcado restaurado no sirve de nada (`ENCRYPTION_KEY` cifra todos los secretos guardados). Copiarlos también a Vaultwarden, no solo confiar en el `.env` del nodo.
+
 ## Restauración de PostgreSQL
 
 ```bash

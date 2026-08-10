@@ -72,15 +72,10 @@ También se vio (y se corrigió) un aviso de `failed to enable src_valid_mark: .
 
 ### 3. Autenticación
 
-**Manual, en el panel de Tailscale** (`https://login.tailscale.com/admin/settings/keys`
-→ *Generate auth key*):
-- **Reusable: ON** — si el volumen de estado se pierde alguna vez, el
-  contenedor puede volver a autenticarse solo con la misma key, sin
-  intervención manual.
-- **Ephemeral: OFF** — si quedara en ON, el nodo desaparecería del tailnet en
-  cuanto el contenedor se reiniciara.
-- Caduca a los 90 días por defecto — pasada esa fecha, si hace falta
-  re-autenticar, generar una key nueva y actualizar `TS_AUTHKEY` en `.env`.
+**Manual, en el panel de Tailscale** (`https://login.tailscale.com/admin/settings/keys` → *Generate auth key*):
+- **Reusable: ON** — si el volumen de estado se pierde alguna vez, el contenedor puede volver a autenticarse solo con la misma key, sin intervención manual.
+- **Ephemeral: OFF** — si quedara en ON, el nodo desaparecería del tailnet en cuanto el contenedor se reiniciara.
+- Caduca a los 90 días por defecto — pasada esa fecha, si hace falta re-autenticar, generar una key nueva y actualizar `TS_AUTHKEY` en `.env`.
 
 Copiar la key generada (`tskey-auth-...`) a `TS_AUTHKEY` en `/srv/homelab/pi-dns/.env` (nunca en `.env.example`, nunca en el repo).
 
@@ -112,13 +107,9 @@ print('AllowedIPs:', d['AllowedIPs'])   # debe incluir 192.168.1.0/24
 
 ## Uso desde un dispositivo cliente
 
-1. Instalar la app oficial de Tailscale (móvil, portátil) e iniciar sesión
-   con la cuenta autorizada.
-2. Instalar la CA interna del clúster en ese dispositivo — `docs/15-ca-interna.md`
-   (mismo procedimiento que cualquier equipo de la LAN).
-3. Con Tailscale activo, cualquier `https://*.home.arpa` funciona igual que
-   estando en casa — probado de verdad con datos móviles (fuera de la LAN),
-   `index.home.arpa` resuelve y carga.
+1. Instalar la app oficial de Tailscale (móvil, portátil) e iniciar sesión con la cuenta autorizada.
+2. Instalar la CA interna del clúster en ese dispositivo — `docs/15-ca-interna.md` (mismo procedimiento que cualquier equipo de la LAN).
+3. Con Tailscale activo, cualquier `https://*.home.arpa` funciona igual que estando en casa — probado de verdad con datos móviles (fuera de la LAN), `index.home.arpa` resuelve y carga.
 
 ## Verificación
 
@@ -134,29 +125,9 @@ curl -sk https://index.home.arpa -o /dev/null -w "HTTP %{http_code}\n"
 
 ## Seguridad — decisiones tomadas y pendientes
 
-- **Sin ACL personalizada por ahora** — cualquier dispositivo autenticado en
-  el tailnet llega a todo el clúster (comportamiento por defecto de
-  Tailscale). Suficiente para un tailnet personal de un único usuario; si
-  en el futuro se añaden más cuentas/dispositivos al tailnet, revisar si
-  conviene una política de ACL (tags, grupos) para restringir por
-  dispositivo/usuario — no bloqueante, se puede añadir sin rehacer nada de
-  lo anterior.
-- **Tráfico remoto y el firewall `DOCKER-USER`** (`docs/17-firewall-acceso-directo.md`):
-  el tráfico que llega a otros nodos a través de la ruta anunciada por
-  `pi-dns` sale NAT'eado con la IP LAN de `pi-dns` (comportamiento por
-  defecto de Tailscale, `snat=true`) — indistinguible del tráfico legítimo
-  que ya generaba `nginx` proxificando peticiones. Si algún nodo tiene el
-  acceso directo por IP y puerto restringido a "solo pi-dns"
-  (`toggle-direct-access.sh <nodo> off`), el tráfico remoto por Tailscale
-  sigue funcionando igual — es exactamente el comportamiento esperado (que
-  Tailscale se sienta como estar en la LAN, pasando por pi-dns como de
-  costumbre), no una forma de saltarse esa protección.
-- **Sin puerto abierto en el router** — Tailscale usa NAT traversal
-  (UDP 41641 saliente, con retransmisión mediante relés DERP de Tailscale si el
-  tráfico directo no es posible). Si la conexión parece lenta/retransmitida,
-  se puede abrir opcionalmente el puerto UDP 41641 hacia `192.168.1.170` en
-  el router para favorecer conexión directa — no es necesario para que
-  funcione, solo para rendimiento.
+- **Sin ACL personalizada por ahora** — cualquier dispositivo autenticado en el tailnet llega a todo el clúster (comportamiento por defecto de Tailscale). Suficiente para un tailnet personal de un único usuario; si en el futuro se añaden más cuentas/dispositivos al tailnet, revisar si conviene una política de ACL (tags, grupos) para restringir por dispositivo/usuario — no bloqueante, se puede añadir sin rehacer nada de lo anterior.
+- **Tráfico remoto y el firewall `DOCKER-USER`** (`docs/17-firewall-acceso-directo.md`): el tráfico que llega a otros nodos a través de la ruta anunciada por `pi-dns` sale NAT'eado con la IP LAN de `pi-dns` (comportamiento por defecto de Tailscale, `snat=true`) — indistinguible del tráfico legítimo que ya generaba `nginx` proxificando peticiones. Si algún nodo tiene el acceso directo por IP y puerto restringido a "solo pi-dns" (`toggle-direct-access.sh <nodo> off`), el tráfico remoto por Tailscale sigue funcionando igual — es exactamente el comportamiento esperado (que Tailscale se sienta como estar en la LAN, pasando por pi-dns como de costumbre), no una forma de saltarse esa protección.
+- **Sin puerto abierto en el router** — Tailscale usa NAT traversal (UDP 41641 saliente, con retransmisión mediante relés DERP de Tailscale si el tráfico directo no es posible). Si la conexión parece lenta/retransmitida, se puede abrir opcionalmente el puerto UDP 41641 hacia `192.168.1.170` en el router para favorecer conexión directa — no es necesario para que funcione, solo para rendimiento.
 
 ## Resolución de problemas
 
