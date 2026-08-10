@@ -13,12 +13,13 @@ Las copias de seguridad se guardan localmente en cada nodo, bajo `/srv/homelab/b
 
 ### Retaco — postgres-main
 
-`postgres-main` vive en `retaco` y aloja **varias bases aisladas** (n8n, sonarqube, apikeys, y cualquier otra creada con `create-postgres-db.sh`) — hay que respaldar cada una por separado:
+`postgres-main` vive en `retaco` y aloja **varias bases aisladas** (n8n, sonarqube, apikeys, authentik, y cualquier otra creada con `create-postgres-db.sh`) — hay que respaldar cada una por separado:
 
 ```bash
 bash /srv/homelab/shared/scripts/backup-postgres.sh retaco postgres-main n8n
 bash /srv/homelab/shared/scripts/backup-postgres.sh retaco postgres-main sonarqube
 bash /srv/homelab/shared/scripts/backup-postgres.sh retaco postgres-main apikeys
+bash /srv/homelab/shared/scripts/backup-postgres.sh retaco postgres-main authentik
 ```
 
 Genera `/srv/homelab/backups/retaco/postgres-main_<db>_<fecha>.sql.gz`.
@@ -94,6 +95,7 @@ crontab -e
 0 3 * * * /bin/bash /srv/homelab/shared/scripts/backup-postgres.sh retaco postgres-main n8n >> /var/log/homelab-backup.log 2>&1
 5 3 * * * /bin/bash /srv/homelab/shared/scripts/backup-postgres.sh retaco postgres-main sonarqube >> /var/log/homelab-backup.log 2>&1
 10 3 * * * /bin/bash /srv/homelab/shared/scripts/backup-postgres.sh retaco postgres-main apikeys >> /var/log/homelab-backup.log 2>&1
+15 3 * * * /bin/bash /srv/homelab/shared/scripts/backup-postgres.sh retaco postgres-main authentik >> /var/log/homelab-backup.log 2>&1
 
 # pi-utils: vaultwarden, a las 4:00
 0 4 * * * /bin/bash /srv/homelab/shared/scripts/backup-vaultwarden.sh >> /var/log/homelab-backup.log 2>&1

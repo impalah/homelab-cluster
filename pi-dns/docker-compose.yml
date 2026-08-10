@@ -168,6 +168,7 @@ services:
       - /srv/homelab/pi-dns/nginx/conf/nginx.conf:/etc/nginx/nginx.conf:ro
       - /srv/homelab/pi-dns/nginx/conf/proxy-common.conf:/etc/nginx/proxy-common.conf:ro
       - /srv/homelab/pi-dns/nginx/conf/apikey-auth.conf:/etc/nginx/apikey-auth.conf:ro
+      - /srv/homelab/pi-dns/nginx/conf/authentik-auth.conf:/etc/nginx/authentik-auth.conf:ro
       - /srv/homelab/pi-dns/nginx/certs:/etc/nginx/certs:ro
       # Solo el .crt público de la CA (nunca la clave), para poder
       # descargarla por HTTP en /ca.crt — ver docs/15-ca-interna.md

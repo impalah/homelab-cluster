@@ -7,7 +7,7 @@ Se trata de seis nodos conectados a la misma red local doméstica, sin Kubernete
 | Nodo | IP | Función en una frase |
 |---|---|---|
 | `ryzen` (alias `mole`) | 192.168.1.150 | Cómputo con GPU: modelos de lenguaje (Ollama/vLLM), transcripción de audio, generación de imágenes |
-| `retaco` | 192.168.1.174 | Datos y automatización: PostgreSQL compartido, Qdrant, n8n, Open WebUI, gestor de secretos (Infisical) |
+| `retaco` | 192.168.1.174 | Datos y automatización: PostgreSQL compartido, Qdrant, n8n, Open WebUI, gestor de secretos (Infisical), SSO (Authentik) |
 | `pi-dns` | 192.168.1.170 | DNS interno y puerta de entrada HTTPS de todo el clúster |
 | `pi-obs` | 192.168.1.171 | Observabilidad: métricas, registros, trazas, paneles |
 | `pi-sonar` | 192.168.1.172 | Análisis estático de código (SonarQube) + gateway LLM hacia AWS Bedrock y Ollama (Bifrost) |
@@ -58,7 +58,7 @@ flowchart LR
     nginx -->|"auth_request\n(solo servicios sin\nauth propia)"| apikey
 
     nginx --> ryzen["ryzen\nollama · vllm · comfyui · whisper"]
-    nginx --> retaco["retaco\nn8n-main · qdrant · registry\nopen-webui · infisical"]
+    nginx --> retaco["retaco\nn8n-main · qdrant · registry\nopen-webui · infisical · authentik"]
     nginx --> piobs["pi-obs\ngrafana · prometheus"]
     nginx --> pisonar["pi-sonar\nsonarqube · bifrost"]
     retaco -.->|"chat: Bedrock + Ollama\nvía virtual key"| pisonar
@@ -232,3 +232,4 @@ Los documentos de `docs/` están numerados siguiendo el orden real en que hay qu
 | 24 | `docs/24-open-terminal-mcp.md` | Open Terminal en modo MCP (`retaco`): terminal/ficheros expuestos a Open WebUI y n8n; incluye el hallazgo de que el transporte MCP no tiene auth propia |
 | 25 | `docs/25-valkey-cache.md` | Valkey (`retaco`): caché clave-valor compartido, sin persistencia, ACL sin usuario por defecto |
 | 26 | `docs/26-infisical-secretos.md` | Infisical (`retaco`): gestor de secretos para consumo entre máquinas — Postgres dedicado, Valkey reutilizado, `apikey-service` migrado como piloto. Decisiones formales en `docs/adr/` (0001: mecanismo de inyección; 0002: Postgres dedicado) |
+| 27 | `docs/27-authentik-sso.md` | Authentik (`retaco`): SSO/authn para personas — Postgres compartido con `postgres-main`, sin Redis, secretos vía Infisical desde el arranque. `prometheus.home.arpa` protegido con forward-auth como piloto |

@@ -640,29 +640,39 @@ Bajo-medio — desplegar el contenedor y fijar ACL/TLS es sencillo; el trabajo r
 
 ---
 
-## 25. Authentik — autenticación y autorización centralizada (authn/authz) para todo el clúster
+## 25. ~~Authentik — autenticación centralizada para personas, piloto en Prometheus~~ — hecho
 
-**Prioridad: media**
+**Prioridad: media** — **completado (alcance: infraestructura + Prometheus)**
 
-### Qué hay hoy
+### Qué se implementó (2026-08-10)
 
-`apikey-service` resuelve la autenticación **máquina a máquina** (n8n, Open WebUI, curl) contra servicios sin auth propia, vía `X-Api-Key` — ver `docs/06-instalacion-pi1-dns.md`. Pero no existe nada equivalente para **personas**: cada panel de administración del clúster tiene su propia cuenta, separada e independiente — Grafana, Portainer, SonarQube, Pi-hole, Vaultwarden, Open WebUI, n8n, cada uno con su propio usuario/contraseña, sin ningún inicio de sesión único entre ellos.
+Authentik desplegado en `retaco`, en producción, protegiendo `prometheus.home.arpa` (hoy sin ninguna autenticación, ni propia ni de `apikey-service` — el hueco de seguridad real que motivó esta mejora) vía forward-auth con el outpost embebido. Detalle completo: `docs/27-authentik-sso.md`.
 
-Peor todavía: **`prometheus.home.arpa` no tiene ninguna autenticación, ni propia ni de `apikey-service`** — cualquiera en la LAN puede consultar todas las métricas del clúster sin credencial alguna. No es una elección deliberada documentada en ningún sitio, es simplemente un hueco — Prometheus no trae login propio y nunca se le puso `apikey-service` delante, a diferencia de `ollama.home.arpa`/`epub2pdf.home.arpa`/etc.
+Dos decisiones que se apartan de lo previsto originalmente en el punto 2 de abajo:
+- **Postgres compartido con `postgres-main`**, no dedicado — decisión consciente, distinta de la que se tomó para Infisical (ADR 0002): Authentik solo gatea login de personas, no arranque de servicios máquina, así que el radio de fallo de compartir es mucho menor aquí.
+- **Sin Redis/Valkey** — versiones recientes de Authentik (confirmado con la `2026.5.6` desplegada) ya no lo necesitan, caché y tareas de fondo van sobre Postgres. La previsión original de reutilizar Valkey no hizo falta.
 
-### Qué haría falta
+Secretos (contraseña de Postgres, `AUTHENTIK_SECRET_KEY`) vía Infisical desde el primer despliegue, mismo mecanismo que `apikey-service` — no estaba en el plan original de este documento, se añadió porque para entonces Infisical ya estaba en producción (mejora 16).
 
-1. **Qué es y qué resuelve**: [Authentik](https://goauthentik.io/) (self-hosted, MIT) es un proveedor de identidad — SSO real vía OIDC/SAML para las apps que lo soportan nativamente, más un modo *forward-auth* (proxy provider + `outpost`) para las que no, con el mismo mecanismo de fondo que ya usa `apikey-service` (`auth_request` de nginx), pero para personas con sesión de navegador en vez de una cabecera `X-Api-Key` estática.
-2. **Nodo y dependencias**: `retaco` — Authentik necesita Postgres (reutilizar `postgres-main`, `create-postgres-db.sh`, mismo patrón que Infisical/mejora 16) y Redis (reutilizar el Valkey de la mejora 24 en vez de desplegar un tercer almacén clave-valor en el clúster — un consumidor más para justificar esa pieza).
-3. **Dos mecanismos de integración, elegir por servicio, no uno solo para todos**:
-   - **OIDC nativo**, cuando la app lo soporta — Grafana y Portainer lo traen de serie (Community Edition incluida); da identidad real dentro de la propia app (usuario, grupos, roles), no solo un "sí/no" en la puerta. Preferible siempre que exista.
-   - **Forward-auth vía nginx** (`outpost.goauthentik.io/auth/nginx` + `auth_request`), para lo que no tiene SSO propio — el caso claro es **Prometheus**, que además de no tener OIDC no tiene ningún login que proteger ni desactivar. Mismo mecanismo de nginx que `apikey-auth.conf`, pero redirigiendo a la pantalla de login de Authentik en vez de devolver un 401 seco.
-4. **Qué queda fuera a propósito**: `apikey-service` no desaparece — sigue siendo el mecanismo correcto para consumidores máquina (n8n, curl, `open-terminal-mcp`), Authentik resuelve un problema distinto (personas con navegador). Vaultwarden tampoco se pone detrás de Authentik — es un gestor de contraseñas con su propio modelo E2E, añadir una capa de SSO delante cambiaría ese modelo de seguridad sin necesidad real. n8n Community Edition no trae SSO propio (solo en Enterprise) — candidato a forward-auth si se hace, pero de menor prioridad que Prometheus.
-5. **Migración incremental, empezando por el hueco real**: primero `prometheus.home.arpa` (hoy sin ninguna protección — es la ganancia de seguridad concreta, no solo comodidad), después Grafana/Portainer vía OIDC nativo, evaluando SonarQube y Pi-hole (login propio ya débil/único) más adelante.
-6. **Publicación**: `authentik.home.arpa` en nginx (`pi-dns`), mismo patrón de siempre — añadir al SAN de `generate-cert.sh`, a `shared/dns/dns-records.md` y a `shared/scripts/load-dns-records.sh` (los tres, no solo uno — gotcha ya documentado en `CLAUDE.md`/`docs/01-topologia.md`).
+Esta mejora se da por completada con Prometheus protegido y el patrón de integración forward-auth validado — no con todos los servicios/paneles del clúster ya cubiertos. Grafana/Portainer vía OIDC nativo y evaluar SonarQube/Pi-hole pasan a la mejora 29, mismo criterio que se usó para separar Infisical (mejora 16) del resto de servicios pendientes (mejora 28).
+
+### Qué hay hoy (histórico, previo a la implementación)
+
+`apikey-service` resuelve la autenticación **máquina a máquina** (n8n, Open WebUI, curl) contra servicios sin auth propia, vía `X-Api-Key` — ver `docs/06-instalacion-pi1-dns.md`. Pero no existía nada equivalente para **personas**: cada panel de administración del clúster tenía su propia cuenta, separada e independiente — Grafana, Portainer, SonarQube, Pi-hole, Vaultwarden, Open WebUI, n8n, cada uno con su propio usuario/contraseña, sin ningún inicio de sesión único entre ellos.
+
+Peor todavía: **`prometheus.home.arpa` no tenía ninguna autenticación, ni propia ni de `apikey-service`** — cualquiera en la LAN podía consultar todas las métricas del clúster sin credencial alguna. No era una elección deliberada documentada en ningún sitio, era simplemente un hueco — Prometheus no trae login propio y nunca se le puso `apikey-service` delante, a diferencia de `ollama.home.arpa`/`epub2pdf.home.arpa`/etc.
+
+### Qué se planteó originalmente (referencia histórica)
+
+1. **Qué es y qué resuelve**: [Authentik](https://goauthentik.io/) (self-hosted, MIT) es un proveedor de identidad — SSO real vía OIDC/SAML para las apps que lo soportan nativamente, más un modo *forward-auth* (proxy provider + `outpost`) para las que no, con el mismo mecanismo de fondo que ya usa `apikey-service` (`auth_request` de nginx), pero para personas con sesión de navegador en vez de una cabecera `X-Api-Key` estática. **Implementado tal cual.**
+2. ~~**Nodo y dependencias**: `retaco`... Postgres (reutilizar `postgres-main`)... y Redis (reutilizar el Valkey de la mejora 24...)~~ **Redis superado por la implementación real** — ver "Qué se implementó" arriba, no hizo falta.
+3. **Dos mecanismos de integración, elegir por servicio, no uno solo para todos**: OIDC nativo donde exista (Grafana, Portainer), forward-auth donde no (Prometheus). **El caso de Prometheus, implementado y verificado; OIDC nativo pasa a la mejora 29.**
+4. **Qué queda fuera a propósito**: `apikey-service` no desaparece, Vaultwarden tampoco se pone detrás de Authentik. **Vigente sin cambios.**
+5. **Migración incremental, empezando por el hueco real**: primero `prometheus.home.arpa`. **Hecho — el resto pasa a la mejora 29.**
+6. **Publicación**: `authentik.home.arpa` en nginx (`pi-dns`), mismo patrón de siempre. **Implementado tal cual**, más un detalle no previsto: el snippet `authentik-auth.conf` es un fichero nuevo que hay que montar explícitamente en `pi-dns/docker-compose.yml` (nginx monta cada fichero de config individual, no el directorio) — un `nginx -s reload` no basta, hace falta recrear el contenedor.
 
 ### Esfuerzo estimado
-Alto — no por el despliegue del contenedor en sí, sino por la superficie: son varias integraciones distintas (OIDC nativo por app, forward-auth para el resto), decidir grupos/políticas de autorización, y migrar cada servicio uno a uno sin cortar el acceso propio mientras se prueba. El caso de Prometheus (sin ninguna auth hoy) es la parte que sí merece hacerse pronto independientemente del resto.
+Alto — confirmado: el despliegue del servidor en sí fue rápido (menos superficie de la esperada al no hacer falta Redis), el esfuerzo real estuvo en la integración forward-auth completa (Proxy Provider, outpost embebido — que no se asignó solo, hubo que añadirlo a mano —, snippet de nginx, verificación end-to-end). OIDC nativo por app (mejora 29) es un tipo de integración distinto, no directamente reutilizable de esto.
 
 ---
 
@@ -741,6 +751,33 @@ Medio — el patrón ya está validado y documentado paso a paso (`docs/26`); el
 
 ---
 
+## 29. Integrar Authentik en el resto de paneles del clúster (OIDC nativo)
+
+**Prioridad: media**
+
+### Qué hay hoy
+
+La mejora 25 dejó Authentik desplegado en producción, con `prometheus.home.arpa` protegido vía forward-auth como piloto — detalle completo en `docs/27-authentik-sso.md`. El resto de paneles de administración del clúster (Grafana, Portainer, SonarQube, Pi-hole, n8n) siguen exactamente igual que antes: cuentas propias, separadas, sin sesión única entre ellas.
+
+Auditoría adicional (2026-08-10): de todos los servicios protegidos hoy con `apikey-service` (pensado para consumidores máquina, `X-Api-Key`), se revisó cuáles tienen además una GUI real para personas — candidato a migrar de `X-Api-Key` a Authentik, no solo los que ya carecían de protección como Prometheus. Solo uno la tiene:
+
+- **`comfyui.home.arpa`** — interfaz web de edición de nodos (generación de imágenes), uso interactivo real por una persona. Protegerla hoy con `X-Api-Key` es incómodo de verdad (un navegador normal no manda esa cabecera al cargar la página) — candidata clara a forward-auth.
+- El resto de servicios tras `apikey-auth.conf` (`ollama`, `vllm`, `epub2pdf`, `pdf2chunks`, `markitdown`, `crawl4ai.scraper`, `open-terminal`) son APIs puras sin GUI propia (confirmado revisando `services/*/src` — como mucho Swagger `/docs` autogenerado) o un transporte MCP sin interfaz (`open-terminal`, en modo `streamable-http` en este despliegue) — consumidores máquina de verdad, `apikey-service` sigue siendo el mecanismo correcto para ellos, no hay nada que migrar.
+
+### Qué haría falta
+
+1. **Grafana y Portainer, vía OIDC nativo** — ambos lo traen de serie (Community Edition incluida), preferible a forward-auth siempre que exista: da identidad real dentro de la propia app (usuario, grupos, roles), no solo un "sí/no" en la puerta. Por cada uno: crear un OAuth2/OIDC Provider + Application en Authentik, configurar el cliente OIDC correspondiente en la app (`GF_AUTH_GENERIC_OAUTH_*` en Grafana; variables equivalentes en Portainer), probar sin cortar el acceso con la cuenta local existente hasta confirmar que el login SSO funciona.
+2. **ComfyUI, vía forward-auth** — mismo patrón que Prometheus (`authentik-auth.conf`, modo single-application obligatorio — ver `docs/27-authentik-sso.md` sección de la Public Suffix List). A diferencia de Prometheus, esto SÍ sustituye un mecanismo de auth ya existente (`X-Api-Key`) — coordinar el cambio para no dejar la GUI sin ninguna protección durante la transición (desplegar Authentik delante primero, confirmar que funciona, solo entonces quitar `apikey-auth.conf` del bloque).
+3. **Evaluar SonarQube y Pi-hole** — login propio ya débil/único en ambos hoy; decidir si compensa forward-auth (mismo patrón que Prometheus, `authentik-auth.conf` ya reutilizable) o dejarlos como están.
+4. **n8n** — Community Edition no trae SSO propio (solo Enterprise); candidato a forward-auth si se hace, menor prioridad que los anteriores (n8n ya tiene su propio basic auth activo, no es un hueco abierto como era Prometheus).
+4. **Cookie domain compartido**: el Proxy Provider de Prometheus ya se configuró en modo *domain-level* con `Cookie domain=home.arpa` — cualquier servicio nuevo protegido con forward-auth bajo ese mismo Provider comparte sesión automáticamente, sin volver a iniciar sesión. Para los servicios con OIDC nativo (Grafana/Portainer) esto no aplica igual — cada uno gestiona su propia sesión tras el login inicial vía Authentik, aunque el propio login pase por la misma pantalla de Authentik.
+5. Decidir grupos/políticas de autorización si hace falta distinguir accesos (p. ej. no todos los que entran a Grafana deberían poder administrar Portainer) — hasta ahora solo existe el usuario admin único, sin necesidad real de grupos todavía.
+
+### Esfuerzo estimado
+Medio — el patrón forward-auth ya está resuelto y documentado (`docs/27`); lo nuevo aquí es la integración OIDC nativa por app, que es un mecanismo distinto (configuración dentro de cada aplicación, no solo en nginx) y hay que probarlo una app a la vez sin cortar el acceso existente mientras se confirma.
+
+---
+
 ## Resumen
 
 | # | Mejora | Prioridad | Esfuerzo | Depende de |
@@ -769,9 +806,10 @@ Medio — el patrón ya está validado y documentado paso a paso (`docs/26`); el
 | 22 | Integrar las métricas de Bifrost (`/metrics`) en Grafana | Media | Bajo | Bifrost ya desplegado (`docs/23`); Prometheus/Grafana ya desplegados (`docs/08`) |
 | 23 | ~~Mover `logs.db`/`config.db` de Bifrost a Postgres centralizado~~ | Media | — | **Completado** — `docs/23-bifrost-gateway-llm.md` |
 | 24 | ~~Servidor Valkey (compatible Redis) securizado — key-value + pub/sub~~ | Media | — | **Completado** — `docs/25-valkey-cache.md` |
-| 25 | Authentik — authn/authz centralizado (SSO + forward-auth) | Media | Alto | `postgres-main` ya desplegado; reutiliza el Valkey de la mejora 24; `prometheus.home.arpa` hoy sin ninguna autenticación |
+| 25 | ~~Authentik — authn/authz centralizado, piloto en Prometheus~~ | Media | — | **Completado** — `docs/27-authentik-sso.md`; solo Prometheus protegido, resto en mejora 29 |
 | 26 | Investigar tool-calling fiable — modelos locales (Ollama) y Bedrock/Claude (Bifrost) | Media | Medio | Open Terminal MCP ya desplegado (mejora 17, `docs/24`); ningún modelo probado completa una llamada de herramienta hoy |
 | 27 | Activar TLS en `postgres-main` | Media | Medio-alto | CA interna ya desplegada (`docs/15`); patrón ya probado con Valkey (mejora 24, `docs/25`) |
 | 28 | Migrar el resto de servicios del clúster a Infisical | Media | Medio | Infisical ya desplegado y patrón validado (mejora 16, `docs/26`) |
+| 29 | Integrar Authentik en el resto de paneles (OIDC nativo: Grafana, Portainer...) | Media | Medio | Authentik ya desplegado y patrón forward-auth validado (mejora 25, `docs/27`) |
 
 Ninguna de estas mejoras es urgente ni bloqueante — el clúster funciona correctamente sin ellas.

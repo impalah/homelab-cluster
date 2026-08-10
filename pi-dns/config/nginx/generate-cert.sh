@@ -62,6 +62,7 @@ DOMAINS=(
   bifrost.home.arpa
   open-terminal.home.arpa
   infisical.home.arpa
+  authentik.home.arpa
 )
 
 mkdir -p "${CERT_DIR}"

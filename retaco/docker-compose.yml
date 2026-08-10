@@ -2,7 +2,7 @@ name: homelab-retaco
 
 # =============================================================================
 # Stack del nodo Retaco (192.168.1.174)
-# Servicios: postgres-main, qdrant, n8n-main, registry, open-webui, open-terminal-mcp, valkey, postgres-infisical, infisical
+# Servicios: postgres-main, qdrant, n8n-main, registry, open-webui, open-terminal-mcp, valkey, postgres-infisical, infisical, authentik
 #
 # postgres-main y qdrant migrados desde ryzen (192.168.1.150) para liberar al
 # Ryzen 9 de servicios de datos. n8n-main migrado después, para que las
@@ -728,6 +728,129 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # authentik-server / authentik-worker — Authentik (mejora 25,
+  # docs/22-mejoras-futuras.md): SSO/authn para PERSONAS con sesión de
+  # navegador — distinto de apikey-service, que resuelve auth máquina a
+  # máquina. Piloto: protege prometheus.home.arpa (hoy sin ninguna auth).
+  # Detalle completo, incluido cómo se protegió Prometheus:
+  # docs/27-authentik-sso.md.
+  #
+  # Postgres: base "authentik" COMPARTIDA en postgres-main (a diferencia de
+  # Infisical/ADR 0002) — decisión consciente: Authentik solo gatea login
+  # de personas, no el arranque de ningún servicio máquina, así que un
+  # incidente de postgres-main aquí solo deja sin SSO temporalmente, no
+  # tumba nada en cascada. Radio de fallo mucho menor que el de Infisical,
+  # compartir es defendible. Sin Redis/Valkey — confirmado contra la
+  # documentación oficial vigente (versión 2026.5.6): el docker-compose de
+  # referencia y la lista completa de variables AUTHENTIK_* ya no incluyen
+  # nada de Redis, versiones recientes lo quitaron como dependencia dura.
+  #
+  # Secretos (contraseña de Postgres, AUTHENTIK_SECRET_KEY) vía Infisical
+  # desde el primer despliegue, mismo wrapper de dos pasos que
+  # apikey-service (ADR 0001) — bind-mount del CLI + entrypoint/command
+  # sobreescritos. Entrypoint real de la imagen oficial: "dumb-init -- ak"
+  # (confirmado con docker inspect) — el wrapper re-invoca dumb-init
+  # explícitamente al final, no solo "ak", para conservar el mismo manejo
+  # de señales/zombies que trae la imagen de fábrica.
+  #
+  # AUTHENTIK_OUTPOSTS__DISCOVER=false — desactiva el descubrimiento
+  # automático de Docker para autodesplegar outposts, así el worker NO
+  # necesita montar /var/run/docker.sock (el ejemplo oficial lo monta por
+  # defecto para esa función). Se usa en su lugar el outpost EMBEBIDO que
+  # trae el propio "server" — confirmado en la documentación oficial que
+  # el modo forward-auth "domain-level" apunta /outpost.goauthentik.io
+  # directo al propio Authentik, sin outpost aparte. Mismo criterio de
+  # superficie de riesgo ya aplicado a Floci/open-terminal-mcp/
+  # portainer-agent: nada de acceso al Docker del host salvo que sea
+  # imprescindible, y aquí no lo es.
+  #
+  # Sin puerto 9443 (HTTPS propio) publicado — TLS lo termina nginx en
+  # pi-dns, mismo patrón que el resto del clúster, nunca doble TLS.
+  # ---------------------------------------------------------------------------
+  authentik-server:
+    image: ghcr.io/goauthentik/server:2026.5.6
+    container_name: authentik-server
+    restart: unless-stopped
+    depends_on:
+      postgres-main:
+        condition: service_healthy
+    environment:
+      INFISICAL_UNIVERSAL_AUTH_CLIENT_ID: ${AUTHENTIK_INFISICAL_CLIENT_ID}
+      INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET: ${AUTHENTIK_INFISICAL_CLIENT_SECRET}
+      INFISICAL_PROJECT_ID: ${AUTHENTIK_INFISICAL_PROJECT_ID}
+      INFISICAL_DOMAIN: https://infisical.home.arpa/api
+      SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
+      AUTHENTIK_POSTGRESQL__HOST: postgres-main
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+      AUTHENTIK_OUTPOSTS__DISCOVER: "false"
+    volumes:
+      - /srv/homelab/retaco/infisical-cli/infisical:/usr/local/bin/infisical:ro
+      - /srv/homelab/retaco/authentik/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
+      - /srv/homelab/retaco/authentik/data:/data
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        TOKEN=$$(infisical login --method=universal-auth \
+          --client-id="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_ID" \
+          --client-secret="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET" \
+          --plain --silent) &&
+        exec infisical run --token="$$TOKEN" --projectId="$$INFISICAL_PROJECT_ID" --env=prod --path=/authentik/ -- \
+          dumb-init -- ak server
+    shm_size: 512mb
+    ports:
+      - "9000:9000"
+    networks:
+      - retaco-net
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:9000/-/health/live/')\" || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  authentik-worker:
+    image: ghcr.io/goauthentik/server:2026.5.6
+    container_name: authentik-worker
+    restart: unless-stopped
+    depends_on:
+      postgres-main:
+        condition: service_healthy
+    environment:
+      INFISICAL_UNIVERSAL_AUTH_CLIENT_ID: ${AUTHENTIK_INFISICAL_CLIENT_ID}
+      INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET: ${AUTHENTIK_INFISICAL_CLIENT_SECRET}
+      INFISICAL_PROJECT_ID: ${AUTHENTIK_INFISICAL_PROJECT_ID}
+      INFISICAL_DOMAIN: https://infisical.home.arpa/api
+      SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
+      AUTHENTIK_POSTGRESQL__HOST: postgres-main
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+      AUTHENTIK_OUTPOSTS__DISCOVER: "false"
+    volumes:
+      - /srv/homelab/retaco/infisical-cli/infisical:/usr/local/bin/infisical:ro
+      - /srv/homelab/retaco/authentik/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
+      - /srv/homelab/retaco/authentik/data:/data
+      - /srv/homelab/retaco/authentik/certs:/certs
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        TOKEN=$$(infisical login --method=universal-auth \
+          --client-id="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_ID" \
+          --client-secret="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET" \
+          --plain --silent) &&
+        exec infisical run --token="$$TOKEN" --projectId="$$INFISICAL_PROJECT_ID" --env=prod --path=/authentik/ -- \
+          dumb-init -- ak worker
+    shm_size: 512mb
+    networks:
+      - retaco-net
 
 networks:
   retaco-net:

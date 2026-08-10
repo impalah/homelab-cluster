@@ -54,8 +54,10 @@ docker compose up -d node-exporter   # ahora coge la siguiente IP libre
 https://prometheus.home.arpa/targets
 ```
 
+Desde un navegador (mejora 25, `docs/27-authentik-sso.md`) esto ya pide login de Authentik primero — normal, es justo lo que protege ahora. Para consultarlo desde script/`curl`, ese login interactivo no vale — usar la IP directa del nodo en la LAN en su lugar (sin pasar por nginx/Authentik, mismo criterio que `check-health.sh`):
+
 ```bash
-curl -sk https://prometheus.home.arpa/api/v1/targets | \
+curl -s http://192.168.1.171:9090/api/v1/targets | \
   jq -r '.data.activeTargets[] | "\(.labels.job) \(.labels.node // "-") \(.health)"'
 ```
 
