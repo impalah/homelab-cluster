@@ -18,7 +18,8 @@ Estos registros deben añadirse en la interfaz de Pi-hole: **Local DNS → DNS R
 | Nombre de host | IP | Servicio real | Puerto real |
 |---|---|---|---|
 | `pihole.home.arpa` | `192.168.1.170` | Panel admin de Pi-hole (contenedor `pihole`) | 80 |
-| `index.home.arpa` | `192.168.1.170` | Panel estático de acceso a los servicios del clúster (HTML servido directo por nginx, sin proxy) | — |
+| `index.home.arpa` | `192.168.1.170` | Frontend de Capataz (consola de estado/automatización del clúster) — build estático servido directo por nginx, `/api/` proxifica a `pi-utils.home.arpa:8000` | — / 8000 (api) |
+| `old.index.home.arpa` | `192.168.1.170` | Panel estático original de acceso a los servicios del clúster (HTML servido directo por nginx, sin proxy) — movido aquí al desplegar Capataz en `index.home.arpa` | — |
 | `openwebui.home.arpa` | `192.168.1.170` | Open-WebUI en retaco (migrado desde ryzen, ver `docs/23-bifrost-gateway-llm.md`) | 8080 |
 | `n8n.home.arpa` | `192.168.1.170` | n8n-main en retaco | 5678 |
 | `ollama.home.arpa` | `192.168.1.170` | Ollama en ryzen — protegido con apikey-service | 11434 |

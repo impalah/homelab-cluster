@@ -180,9 +180,18 @@ Alto — sobre todo por el volumen de migrar repositorios uno a uno, montar/prob
 
 ## 8. Registry — limpieza y garbage collection
 
-**Prioridad: media**
+**Prioridad: media** — **implementado (uso manual), 2026-08-15**
 
-### Qué hay hoy
+### Qué se hizo
+
+Los tres scripts (`shared/scripts/registry-garbage-collect.sh`, `registry-prune-tags.sh`, `backup-registry.sh`) están listos y sincronizados en los 5 nodos — detalle completo, comandos y verificación en vivo en `docs/29-registry-mantenimiento.md`. Alcance decidido explícitamente al implementarlo:
+
+1. **Garbage collection**: script listo, **solo ejecución manual** (sin cron) — el propio comando exige que el registry no reciba pushes mientras corre, automatizarlo sin supervisión era más riesgo que beneficio en un clúster con pocos pushes reales.
+2. **Retención de tags**: **3 versiones antiguas por imagen** (además de `latest`) — script propio (`registry-prune-tags.sh`, vía la API HTTP del registry), también solo manual.
+3. **Copia de seguridad**: script listo (`backup-registry.sh`, mismo patrón que `backup-vaultwarden.sh`) pero **sin ejecutar todavía** — decisión explícita, las imágenes son reconstruibles desde el código fuente.
+4. **Alerta de espacio en disco**: **diferida a la mejora 3** (alertas de espacio en disco genéricas) — no tiene sentido una alerta específica de registry antes de que exista la genérica por nodo; `retaco` queda cubierto sin trabajo adicional en cuanto se aborde esa mejora.
+
+### Qué hay hoy (histórico, previo a la implementación)
 
 `registry.home.arpa` (contenedor `registry:2.8.3` en `retaco`, ver `docs/05-instalacion-retaco.md` sección 5.3) está desplegado y en uso, con `REGISTRY_STORAGE_DELETE_ENABLED=true` (deja la API DELETE lista) — pero **sin ninguna rutina de limpieza**. Cada `docker push` de una imagen con el mismo tag (p. ej. `:latest`) dobla el consumo de disco: el registry no sobrescribe capas antiguas automáticamente, solo deja de referenciarlas desde el manifest — quedan huérfanas hasta que algo las recolecte. Con imágenes como `whisper-service` (base `nvidia/cuda`, varios GB) esto crece rápido si se despliega con frecuencia.
 
@@ -778,6 +787,136 @@ Medio — el patrón forward-auth ya está resuelto y documentado (`docs/27`); l
 
 ---
 
+## 30. Entorno de notebooks en el clúster (JupyterLab / code-server) para estudios de datos
+
+**Prioridad: baja-media**
+
+### Qué hay hoy
+
+No existe ningún entorno de notebooks en el clúster. Las pruebas de análisis de datos se hacen hoy con el editor de notebooks de **Visual Studio Code** en la máquina de trabajo (normalmente `ryzen`/`mole`), con el kernel corriendo en local.
+
+Eso ya cubre bastante: editor, depurador, panel de variables, git integrado y asistente de IA delante, sobre la mejor máquina disponible del conjunto (62 GiB de RAM, 24 núcleos, dos GPUs) — muy por encima de cualquier nodo donde se instalaría el servicio. No hay mantenimiento, ni superficie de ataque nueva, ni copia de seguridad nueva que gestionar.
+
+Sus límites reales, que son exactamente los que justificarían montar el servicio:
+
+- **El kernel muere con la sesión de escritorio.** Si se cierra el portátil o se apaga `mole` (que está pensado precisamente para apagarse cuando no se usa, `docs/19-wake-on-lan.md`), el trabajo en curso se pierde. Un proceso de *embeddings* de decenas de miles de documentos contra Qdrant no sobrevive a eso.
+- **El entorno no es reproducible ni está versionado.** Vive en el `~` de la máquina de trabajo; al volver al notebook meses después, el entorno que lo hacía funcionar ya no existe.
+- **Los ficheros de entrada/salida acaban en disco local**, no en el NAS, y las credenciales de Postgres/Qdrant terminan en `.env` sueltos por el `$HOME` en vez de en Infisical (mejoras 16/28).
+
+### Punto de partida: no es una decisión excluyente
+
+VS Code se conecta a un servidor Jupyter remoto ya existente (`Select Kernel → Existing Jupyter Server → URL + token`). Es decir, el planteamiento correcto no es "JupyterLab **o** VS Code", sino el mismo criterio que ya se aplicó a Postgres: **el motor vive en el clúster, el cliente es el que apetezca en cada momento**. Se instala el servidor como kernel remoto siempre encendido y se sigue usando la interfaz de VS Code cuando se trabaja desde el escritorio.
+
+Con ese matiz, el servicio solo compensa cuando aparece alguna de estas tres necesidades — antes de eso, VS Code en local es la mejor opción y no hay nada que instalar:
+
+1. Trabajos que duren más que la sesión de escritorio.
+2. Querer abrir el notebook desde otro dispositivo (tablet, otro PC, remoto vía Tailscale).
+3. Querer un entorno de dependencias reproducible y compartible con otros consumidores (n8n, por ejemplo).
+
+### Ventajas de tenerlo en el clúster
+
+1. **Ejecución que sobrevive a la sesión.** Es la ventaja fuerte y la única que VS Code en local no puede replicar de ninguna manera: notebook lanzado, portátil cerrado, resultado al día siguiente.
+2. **Está al lado de los datos.** En `retaco` conviven `postgres-main`, `qdrant` y el registry: consultas y volcados a velocidad de red local del contenedor, sin sacar conjuntos de datos grandes a la LAN.
+3. **Entorno único y versionado.** Una imagen propia en `services/` (`pandas`/`polars`/`duckdb`/`psycopg`/`qdrant-client` fijados), construida y publicada como los otros seis servicios (`make build` → `registry.home.arpa`), multi-arch si alguna vez tuviera que correr en una Pi.
+4. **Encaja limpio en los patrones ya existentes**: bloque en nginx sobre TLS interno, registro DNS, fila en el `README.md`, y protección con Authentik (mejora 25, forward-auth) por ser una GUI de persona — no con `apikey-service`, que es para consumidores máquina; mismo criterio ya razonado para ComfyUI en la mejora 29. Acceso desde fuera vía Tailscale sin abrir nada nuevo al exterior.
+5. **NFS del NAS** para entradas y salidas: montar `ketekasko:/volume1/nfs-data` en el host y hacer *bind mount* al contenedor. Ojo — en la práctica es **NFSv3** (`-o vers=3`), el v4 quedó pendiente por el pseudo-root que UGOS Pro no expone (`docs/21-configuracion-nas-ugreen.md` y mejora 10 de este documento).
+6. **Secretos vía Infisical** en lugar de `.env` dispersos por el `$HOME`, que es además el camino en el que ya está el clúster.
+
+### Inconvenientes, con los números reales del clúster (medidos 2026-08-12)
+
+| Inconveniente | Concreción |
+|---|---|
+| **Contención de memoria** | `retaco` tiene 13 GiB totales y 8,3 GiB disponibles, compartidos con `postgres-main`, `qdrant`, `n8n-main`, `registry`, `open-terminal`, Infisical y Authentik. Un `read_csv` descuidado puede invocar al OOM killer **en el nodo de las bases de datos**. `mem_limit: 4g` no es opcional aquí, es requisito de entrada — y con la sintaxis de Compose v2 (`mem_limit`, no `deploy.resources.limits`, que es sintaxis de Swarm; ver el comentario en `pi-utils/docker-compose.yml`). |
+| **Es ejecución de código arbitrario con la red del nodo** | Exactamente el mismo tipo de decisión ya documentada para `open-terminal` (mejora 17) y Floci (mejora 14). Desde ese contenedor se alcanza `postgres-main`, que está publicado a la LAN a propósito. Mitigación: rol dedicado por proyecto vía `shared/scripts/create-postgres-db.sh`, de solo lectura donde se pueda, **nunca** el rol admin. |
+| **Estado nuevo que respaldar** | Los notebooks son datos. Otro directorio en la rotación de copias de seguridad, y excluido de watchtower por convención (es un servicio con estado, `docs/16-mantenimiento-actualizaciones.md`). |
+| **Higiene con git** | Los `.ipynb` versionan las salidas dentro del JSON: diffs ilegibles, y SonarQube no analiza notebooks. Se corrige con `jupytext` (pareja `.py` sincronizada) o eligiendo Marimo (ver alternativas). |
+| **Nodo equivocado = ventaja perdida** | En `ryzen` habría GPU y RAM de sobra, pero es el nodo que se apaga cuando no se usa: se pierde justo el "sobrevive a la sesión", que era el motivo de instalarlo. Mismo razonamiento por el que `open-terminal` acabó en `retaco` y no en `mole` (mejora 17). |
+| **Las Pi no dan el perfil** | `pi-utils`: 7,7 GiB de RAM, disco al 56% de 117 GB, arm64. El trabajo con datos irá mal y algunas ruedas pesadas dan guerra en ARM. |
+| **Otro entorno de dependencias que mantener** | Un séptimo `pyproject.toml` que puede divergir del resto. |
+
+### Dónde ponerlo
+
+**`retaco`, con `mem_limit: 4g` y `cpus` acotados.** Es donde están los datos y es un nodo siempre encendido — los dos criterios que importan. Verificar la carga en vivo antes de desplegar, igual que se hizo con `open-terminal` (mejora 17).
+
+Si en algún momento hiciera falta GPU (embeddings locales, entrenamientos de juguete), eso **no** es un caso de "notebook siempre encendido": ahí se lanza un kernel puntual en `mole` desde el propio VS Code, respetando las reglas de alternancia de GPU (`ryzen/switch-llm-backend.sh` / `switch-gpu1-backend.sh`, `docs/07-instalacion-ryzen.md`).
+
+### Alternativas evaluadas
+
+- **`code-server` / `openvscode-server`** — VS Code completo en el navegador: el mismo editor de notebooks que ya se usa, más terminal, git y extensiones, en un único servicio. **Es la opción preferida si el objetivo es "lo mismo que ahora, pero en el clúster"**, porque conserva íntegra la experiencia actual en vez de obligar a aprender otra interfaz.
+- **JupyterLab** — la opción clásica; mejor si lo que se quiere es específicamente el ecosistema Jupyter (widgets, extensiones propias) o servir el kernel a varios clientes distintos.
+- **Marimo** — notebooks reactivos guardados como `.py` puros: diffs limpios en git, sin estado oculto por orden de ejecución, y cualquier notebook se puede servir como aplicación web. Encaja muy bien con un repositorio que se toma en serio el versionado, pero supone un cambio de mentalidad respecto a Jupyter.
+- **JupyterHub** — descartado: es multiusuario, puro coste operativo para un solo usuario.
+- **No instalar nada** — `open-terminal-mcp` (mejora 17, ya desplegado en `retaco`) expone ejecución de notebooks en su API, pero está pensado para que lo consuman los LLM desde Open WebUI y n8n, no para trabajo interactivo de una persona. No cuenta como sustituto.
+
+### Qué haría falta
+
+1. Elegir producto según el criterio de arriba (por defecto `code-server`; JupyterLab si se quiere el ecosistema Jupyter; Marimo si prima la higiene en git).
+2. Desplegar en `retaco` con `mem_limit: 4g`, `cpus` acotados y volumen dedicado para los notebooks — comprobando la memoria libre real del nodo justo antes.
+3. Imagen propia en `services/<nombre>/` con las dependencias fijadas (`pandas`/`polars`/`duckdb`/`psycopg`/`qdrant-client`), publicada en `registry.home.arpa` con `make build` — no construida por el `docker-compose.yml` del nodo.
+4. Montar el NFS del NAS en el host (`-o vers=3`, ruta real del export confirmada con `showmount -e`) y hacer *bind mount* al contenedor para ficheros de entrada/salida.
+5. Rol de Postgres dedicado con `shared/scripts/create-postgres-db.sh`, de solo lectura donde sea posible; nunca reutilizar el rol admin ni el de otro proyecto.
+6. Secretos en Infisical siguiendo el patrón de `apikey-service` (`docs/26-infisical-secretos.md`), no en un `.env` en claro.
+7. Exponer como `<nombre>.home.arpa`: bloque en nginx (recordar la ruta real del *bind mount* en `pi-dns`, `/srv/homelab/pi-dns/nginx/conf/`), añadir al SAN del certificado interno, registro DNS en Pi-hole + `shared/dns/dns-records.md`, fila en el `README.md` y tarjeta en `index.home.arpa`.
+8. Protegerlo con **Authentik** (forward-auth, `authentik-auth.conf`, `docs/27-authentik-sso.md`) — es una GUI de persona, no una API de máquina.
+9. Incluir el volumen de notebooks en la rotación de copias de seguridad y **no** ponerle la etiqueta de watchtower.
+10. Decidir la estrategia de versionado de notebooks (`jupytext` si se elige Jupyter/code-server) antes de acumular `.ipynb` con salidas en el repositorio.
+
+### Esfuerzo estimado
+
+Bajo-medio — el contenedor en sí es sencillo y todos los patrones que necesita (nginx + TLS interno, Authentik, Infisical, registry propio, límites de memoria) están ya resueltos y documentados. El trabajo real está en fijar el entorno de dependencias y en no desestabilizar `retaco`.
+
+---
+
+## 31. Nexus (u alternativa) como repositorio centralizado de paquetes, integrado con Forgejo
+
+**Prioridad: baja — experimento deliberado, no cubre ninguna carencia operativa hoy**
+
+### Qué hay hoy
+
+`registry.home.arpa` (`registry:2.8.3`, mejora 8) solo hace Docker/OCI, sin proxy/cache de upstreams ni control de qué versiones de terceros entran al clúster. Forgejo (mejora 7) todavía no está desplegado; una vez lo esté, su Package Registry integrado cubrirá varios formatos (npm, PyPI, Maven, generic, container...) pero sin capacidad madura de proxy/cache de registries públicos (`docs/22`, sección 7.4, punto 1, ya apuntaba esto como pendiente de evaluar). Ningún paquete pip/npm de terceros pasa hoy por ningún punto de control: cada build tira directo contra `pypi.org`/`registry.npmjs.org`, sin capacidad de fijar versiones permitidas ni de seguir funcionando si el upstream cae.
+
+Motivación explícita de esta mejora, más allá de la necesidad técnica: usar un repositorio centralizado de paquetes al estilo de un proyecto de empresa real es en sí mismo uno de los objetivos declarados de este clúster (aprendizaje/comparativa en hardware controlado), no solo una solución a un problema concreto — igual que Floci (mejora 14) o `open-terminal` (mejora 17).
+
+### Qué haría falta
+
+#### 31.1 Instalación de Nexus (si se elige esa opción)
+
+1. Nodo: `retaco` es el candidato natural (siempre encendido, ya multi-tenant) — pero ver el aviso de memoria en "Alternativas evaluadas" antes de decidirlo sin más.
+2. Almacenamiento: blob store de tipo `File` contra un punto de montaje NFS del NAS (`ketekasko:/volume1/nfs-data`, NFSv3 — `docs/21-configuracion-nas-ugreen.md`), *bind mount* al contenedor, mismo patrón que se plantea en la mejora 30. Un blob store S3 real (contra MinIO o similar) queda fuera de alcance de esta mejora — no aporta nada sobre NFS para un solo nodo sin alta disponibilidad, y añadiría otro servicio con estado que mantener.
+3. `nexus.home.arpa` vía nginx en `pi-dns`, TLS con la CA interna, registro DNS (`shared/dns/dns-records.md` + Pi-hole), fila en el `README.md` raíz y tarjeta en `index.home.arpa`.
+4. Credenciales admin y tokens de los repos proxy en Infisical, siguiendo el patrón de `apikey-service`/mejora 16, no en un `.env` en claro.
+5. Protegerlo con Authentik (forward-auth, mejora 25/29) — es una consola de administración de persona, no una API de máquina.
+
+#### 31.2 Integración con Forgejo
+
+1. Cuando exista Forgejo Actions (mejora 7.3), sus builds npm/pip/Maven deben apuntar al proxy de Nexus en vez de directo a internet — reduce tráfico repetido y da un punto único de control.
+2. Decidir la relación entre ambos, no es excluyente: Forgejo Package Registry para artefactos propios versionados junto al código (equivalente al repo `raw` que se planteó para `capataz-frontend`), Nexus como proxy/cache de dependencias de terceros (pip, npm, y opcionalmente Maven Central/Docker Hub). Evitar duplicar el mismo rol en los dos sitios.
+
+#### 31.3 Proxy/cache de paquetes públicos (pip, npm, otros)
+
+1. Repos tipo `proxy` en Nexus contra `pypi.org` y `registry.npmjs.org` (y opcionalmente Maven Central) — cachea lo ya descargado, mantiene disponibilidad si el upstream cae, y da un punto donde bloquear versiones concretas si se detecta un problema.
+2. Cada proyecto consumidor apunta su `pip.conf`/`.npmrc` al proxy en vez de al índice público.
+3. **Aviso realista sobre "controlar la seguridad"**: Nexus Repository **OSS** no incluye escaneo de vulnerabilidades — eso es Nexus IQ Server, de pago. El control real que da la edición gratuita es curaduría manual (qué se cachea, qué se bloquea a mano), no análisis automático de CVEs. Si el objetivo prioritario fuera específicamente el escaneo de vulnerabilidades, Harbor (ver alternativas) lo resuelve gratis y Nexus OSS no.
+
+### Alternativas evaluadas (todas open source, sin producto comercial)
+
+- **Nexus Repository OSS** — licencia EPL-2.0. Java/JVM: el heap recomendado empieza en 4 GiB incluso con poco uso real. Dato concreto de este mismo clúster (mejora 30, medido 2026-08-12): `retaco` tiene 8,3 GiB disponibles compartidos con `postgres-main`, `qdrant`, `n8n-main`, `registry`, Infisical, Authentik y `open-terminal` — Nexus ahí sería, con diferencia, el consumidor más pesado del nodo. A cambio, es la opción con más cobertura de formatos (Docker, npm, PyPI, Maven, generic, apt, yum...) y la única con repos `group` (agregar varios repos bajo una sola URL) — nada de lo de abajo lo replica.
+- **Package Registry de Forgejo** (mejora 7) — llega "gratis" en cuanto se despliegue Forgejo, MIT, sin proceso nuevo que mantener. Cubre generic/npm/PyPI/Maven/container, pero sin proxy/cache maduro de upstreams públicos — no resuelve por sí solo el objetivo de control sobre paquetes de terceros que motiva esta mejora.
+- **Combinación de proxies ligeros, uno por ecosistema**, en vez de un todo-en-uno:
+  - [devpi](https://github.com/devpi/devpi) (Python) — proxy/cache de PyPI + índice privado.
+  - [Verdaccio](https://github.com/verdaccio/verdaccio) (Node.js, MIT) — proxy/cache de npm + registry privado, muy ligero.
+  - [Zot](https://github.com/project-zot/zot) (Go, Apache-2.0, sandbox de CNCF) — registry OCI/Docker moderno, binario único, huella mínima; candidato a sustituir `registry:2` (mejora 8) si se revisita esa pieza más adelante.
+  Cada componente consume una fracción del heap mínimo de Nexus y se actualiza/reinicia de forma independiente — más "filosofía Unix", pero más piezas sueltas que mantener (el trade-off inverso a Nexus).
+- **Harbor** — Apache-2.0, proyecto graduado de la CNCF. Solo OCI/Docker de forma nativa (no npm/pip). Trae de serie escaneo de vulnerabilidades con Trivy, RBAC granular y replicación entre registries — si el objetivo prioritario fuera específicamente "controlar la seguridad" vía escaneo automático, Harbor lo cubre gratis y Nexus OSS no. Más pesado que Zot (varios componentes: core, base de datos, Redis, Trivy) pero más moderno y ligero que Nexus.
+
+Para el objetivo declarado — repositorio centralizado + proxy pip/npm + experimento fiel a cómo se haría en un proyecto real con presupuesto de infraestructura — **Nexus OSS sigue siendo razonablemente la opción más representativa**, pero conviene comprobar la memoria libre real de `retaco` en el momento de desplegarlo (mismo ejercicio que en la mejora 30) antes de comprometerse, y no descartar devpi+Verdaccio si el consumo de Nexus resulta problemático en la práctica.
+
+### Esfuerzo estimado
+
+Medio — la instalación en sí es un contenedor con almacenamiento NFS, y encaja en patrones ya resueltos (nginx + TLS interno, Infisical, Authentik). El trabajo real está en configurar los repos proxy de pip/npm y en decidir la relación con el Package Registry de Forgejo una vez este exista (mejora 7).
+
+---
+
 ## Resumen
 
 | # | Mejora | Prioridad | Esfuerzo | Depende de |
@@ -789,7 +928,7 @@ Medio — el patrón forward-auth ya está resuelto y documentado (`docs/27`); l
 | 5 | Integración NUT del SAI existente | Media | Medio | Modelo de SAI compatible con `usbhid-ups` |
 | 6 | Migrar tooling de mantenimiento a Ansible | Media | Medio-alto | Punto 2 (ya cumplido) |
 | 7 | Forgejo (repos + CI + artefactos), con GitHub como espejo | Media | Alto | Punto 2 (ya cumplido) |
-| 8 | Registry: limpieza y garbage collection | Media | Bajo | Registry ya desplegado (`docs/05`) |
+| 8 | ~~Registry: limpieza y garbage collection~~ | Media | Bajo | **Implementado (uso manual)** — `docs/29-registry-mantenimiento.md`; alerta de disco diferida a la mejora 3 |
 | 9 | Tailscale: política de ACL | Baja | Bajo-medio | Tailscale ya desplegado (`docs/18`) |
 | 10 | NAS UGREEN: migrar `nfs-data` a NFSv4 | Baja | Bajo-medio | NAS ya configurado en NFSv3 (`docs/21`) |
 | 11 | k6 para pruebas de carga automatizadas | Media | Bajo-medio | Prometheus/Grafana ya desplegados (`docs/08`) |
@@ -811,5 +950,7 @@ Medio — el patrón forward-auth ya está resuelto y documentado (`docs/27`); l
 | 27 | Activar TLS en `postgres-main` | Media | Medio-alto | CA interna ya desplegada (`docs/15`); patrón ya probado con Valkey (mejora 24, `docs/25`) |
 | 28 | Migrar el resto de servicios del clúster a Infisical | Media | Medio | Infisical ya desplegado y patrón validado (mejora 16, `docs/26`) |
 | 29 | Integrar Authentik en el resto de paneles (OIDC nativo: Grafana, Portainer...) | Media | Medio | Authentik ya desplegado y patrón forward-auth validado (mejora 25, `docs/27`) |
+| 30 | Entorno de notebooks en el clúster (code-server / JupyterLab) para estudios de datos | Baja-media | Bajo-medio | Postgres/Qdrant y NFS del NAS ya disponibles; Authentik (mejora 25) para protegerlo; solo compensa si hace falta ejecución que sobreviva a la sesión de escritorio |
+| 31 | Nexus (u alternativa) como repositorio centralizado de paquetes, integrado con Forgejo | Baja | Medio | Forgejo (mejora 7) para la integración de CI; NFS del NAS ya disponible; experimento deliberado, no cubre carencia operativa hoy |
 
 Ninguna de estas mejoras es urgente ni bloqueante — el clúster funciona correctamente sin ellas.

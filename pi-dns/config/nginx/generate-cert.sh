@@ -38,6 +38,7 @@ fi
 DOMAINS=(
   pi-dns.home.arpa
   index.home.arpa
+  old.index.home.arpa
   pihole.home.arpa
   openwebui.home.arpa
   n8n.home.arpa

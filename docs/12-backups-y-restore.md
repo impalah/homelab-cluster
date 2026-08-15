@@ -62,6 +62,19 @@ bash /srv/homelab/shared/scripts/restore-vaultwarden.sh /srv/homelab/backups/pi-
 
 ---
 
+## Copia de seguridad del registry (retaco)
+
+Mismo patrón que Vaultwarden (para el contenedor, `tar` de `data/`+`auth/`, reinicia). Detalle completo (incluida la política de retención de tags y el garbage collection) en `docs/29-registry-mantenimiento.md`.
+
+```bash
+bash /srv/homelab/shared/scripts/backup-registry.sh
+# → /srv/homelab/backups/retaco/registry_<fecha>.tar.gz
+```
+
+⚠️ **Script preparado pero sin ejecución todavía** (decisión explícita, mejora 8 de `docs/22-mejoras-futuras.md`) — las imágenes son reconstruibles desde el código fuente, así que no se ha incorporado aún a la rotación real de copias de seguridad. No hay `restore-registry.sh` dedicado: restaurar es parar `registry`, vaciar `registry/{data,auth}` en el nodo y extraer ahí el `.tar.gz`, luego arrancar de nuevo.
+
+---
+
 ## Copia de seguridad de los volúmenes de datos
 
 ```bash

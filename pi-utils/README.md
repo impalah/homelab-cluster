@@ -16,8 +16,12 @@
 | node-exporter | 9100 | interno (consultado por Prometheus en pi-obs) |
 | cadvisor | 8081 | interno (consultado por Prometheus en pi-obs) |
 | vaultwarden | 8222 | https://vaultwarden.home.arpa (gestor de contraseñas del clúster, ver `docs/10-instalacion-pi4-utils.md`) |
+| capataz-api | 8000 | sin hostname propio — solo vía proxy `/api/` de `index.home.arpa` (nginx, pi-dns) o IP:puerto directo en la LAN |
+| capataz-runner | — | interno (worker Celery, sin puerto publicado) |
 
 > Los puertos publicados en `0.0.0.0` (no `127.0.0.1`) son a propósito: nginx (en pi-dns, un host distinto) necesita alcanzarlos por la LAN — ver `docs/13-troubleshooting.md`.
+
+`capataz-api`/`capataz-runner` se publican en `registry.home.arpa` (multi-arch, `linux/amd64` + `linux/arm64` — este nodo es arm64) desde el repo **propio** `capataz` (`impalah/capataz`, fuera de este monorepo, `api/Makefile`/`runner/Makefile` propios) — aquí solo `docker compose pull`, igual que `markitdown-service`/`crawl4ai-scraper-service`. `catalog/`, `alembic.ini`/`alembic/` y `certs/` siguen viniendo de un checkout parcial de ese repo en `/srv/homelab/pi-utils/capataz/` (no versionado en homelab-cluster, no se empaquetan en la imagen). Ver `docs/28-capataz-consola-automatizacion.md` para el procedimiento de actualización.
 
 ## Arranque rápido
 

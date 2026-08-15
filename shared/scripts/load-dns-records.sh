@@ -36,6 +36,7 @@ HOSTS='[
   "192.168.1.173 pi-utils.home.arpa",
   "192.168.1.170 pihole.home.arpa",
   "192.168.1.170 index.home.arpa",
+  "192.168.1.170 old.index.home.arpa",
   "192.168.1.170 openwebui.home.arpa",
   "192.168.1.170 n8n.home.arpa",
   "192.168.1.170 ollama.home.arpa",

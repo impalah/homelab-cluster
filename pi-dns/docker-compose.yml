@@ -173,8 +173,11 @@ services:
       # Solo el .crt público de la CA (nunca la clave), para poder
       # descargarla por HTTP en /ca.crt — ver docs/15-ca-interna.md
       - /srv/homelab/pi-dns/nginx/ca/ca.crt:/etc/nginx/ca.crt:ro
-      # Panel estático de servicios (index.home.arpa) — HTML/CSS/iconos, sin backend
+      # Panel estático original, ahora en old.index.home.arpa — HTML/CSS/iconos, sin backend
       - /srv/homelab/pi-dns/nginx/html:/etc/nginx/index-html:ro
+      # Capataz (index.home.arpa) — build estático de frontend/, sin contenedor propio.
+      # Ver docs/28-capataz-consola-automatizacion.md.
+      - /srv/homelab/pi-dns/nginx/capataz-html:/etc/nginx/capataz-html:ro
     ports:
       - "80:80"
       - "443:443"

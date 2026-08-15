@@ -2,8 +2,84 @@ name: homelab-pi-utils
 
 # =============================================================================
 # Stack del nodo pi-utils (192.168.1.173)
-# Servicios: rsshub, markitdown-service (build local), n8n-aux
+# Servicios: rsshub, markitdown-service (build local), n8n-aux, capataz-api,
+# capataz-runner
 # =============================================================================
+
+# ---------------------------------------------------------------------------
+# capataz-api / capataz-runner — Consola de estado y automatización del
+# clúster (repo propio, NO parte de este monorepo:
+# github.com/impalah/capataz). Sustituye al panel estático que antes ocupaba
+# index.home.arpa (nginx en pi-dns, ver docs/28-capataz-consola-automatizacion.md).
+#
+# Imágenes publicadas en el registry privado del clúster (registry.home.arpa),
+# igual que apikey-service/markitdown-service/whisper-service — build/push
+# multi-arch (linux/amd64,linux/arm64: este nodo es arm64) vive en el propio
+# repo de Capataz (api/Makefile, runner/Makefile — "make build" en cada uno),
+# NO en services/ de este monorepo, porque Capataz es un repositorio externo
+# (github.com/impalah/capataz) con su propio ciclo de vida. Este nodo solo
+# hace pull — ver docs/28-capataz-consola-automatizacion.md para el
+# procedimiento de actualización.
+#
+# catalog/, api/alembic.ini, api/alembic/ y certs/ (bind-mounts más abajo) SÍ
+# siguen viniendo de un checkout parcial del repo Capataz en
+# /srv/homelab/pi-utils/capataz/ — no se empaquetan en la imagen (el propio
+# Dockerfile de Capataz no los COPYa), así que ese checkout sigue haciendo
+# falta aunque ya no se construya nada localmente.
+#
+# Postgres/Redis: NO se despliegan los "postgres"/"redis" propios del
+# docker-compose.yml de Capataz (pensados para su quickstart standalone) —
+# api/runner apuntan a la infraestructura ya compartida del clúster
+# (postgres-main y valkey, ambos en retaco), vía los secrets database_url/
+# redis_url de abajo.
+#
+# Secrets: Capataz lee sus credenciales sensibles (DSN de Postgres/Redis,
+# token de Portainer, clave SSH del runner...) de ficheros bajo
+# /run/secrets/<nombre> (Compose "secrets:", no Swarm — funciona igual con
+# "docker compose" normal), NUNCA de variables de entorno — así lo exige su
+# propio código (capataz_api/infrastructure/secrets/file_secret_reader.py,
+# capataz_runner/config.py). Por eso este stack combina el patrón habitual
+# de este repo (config no sensible en .env) con "secrets:" para lo sensible,
+# en vez de todo por variables de entorno como el resto de servicios de este
+# fichero.
+# ---------------------------------------------------------------------------
+x-capataz-env: &capataz-env
+  CAPATAZ_ENV: ${CAPATAZ_ENV:-development}
+  CAPATAZ_LOG_LEVEL: ${CAPATAZ_LOG_LEVEL:-INFO}
+  CAPATAZ_LOG_JSON: ${CAPATAZ_LOG_JSON:-false}
+  CAPATAZ_API_HOST: ${CAPATAZ_API_HOST:-0.0.0.0}
+  CAPATAZ_API_PORT: ${CAPATAZ_API_PORT:-8000}
+  CAPATAZ_CORS_ORIGINS: ${CAPATAZ_CORS_ORIGINS:-https://index.home.arpa}
+  CAPATAZ_CELERY_QUEUE: ${CAPATAZ_CELERY_QUEUE:-automation}
+  CAPATAZ_CELERY_CONCURRENCY: ${CAPATAZ_CELERY_CONCURRENCY:-2}
+  CAPATAZ_PORTAINER_URL: ${CAPATAZ_PORTAINER_URL:-https://portainer.home.arpa}
+  CAPATAZ_GRAFANA_URL: ${CAPATAZ_GRAFANA_URL:-https://grafana.home.arpa}
+  CAPATAZ_PROMETHEUS_URL: ${CAPATAZ_PROMETHEUS_URL:-https://prometheus.home.arpa}
+  # CAPATAZ_LOKI_URL deliberadamente AUSENTE de este bloque (no ",: ${...:-}"
+  # con default vacío): el campo es `AnyHttpUrl | None` en el código de
+  # Capataz — con la clave presente pero vacía, Pydantic intenta parsear ""
+  # como URL y el arranque falla (visto en real: "Input should be a valid
+  # URL, input is empty"). Solo con la variable de entorno TOTALMENTE
+  # ausente cae al default None del propio código. loki.home.arpa no está
+  # expuesto en este clúster (se consulta vía Grafana) — si se quiere
+  # enlazar Loki en el futuro, añadir aquí con una URL real, no vacía.
+  CAPATAZ_COGNITO_REGION: ${CAPATAZ_COGNITO_REGION:-eu-west-1}
+  CAPATAZ_COGNITO_USER_POOL_ID: ${CAPATAZ_COGNITO_USER_POOL_ID:-}
+  CAPATAZ_COGNITO_APP_CLIENT_ID: ${CAPATAZ_COGNITO_APP_CLIENT_ID:-}
+  CAPATAZ_OIDC_ISSUER: ${CAPATAZ_OIDC_ISSUER:-}
+  CAPATAZ_OIDC_AUDIENCE: ${CAPATAZ_OIDC_AUDIENCE:-}
+  CAPATAZ_OIDC_JWKS_URI: ${CAPATAZ_OIDC_JWKS_URI:-}
+  CAPATAZ_OIDC_GROUPS_CLAIM: ${CAPATAZ_OIDC_GROUPS_CLAIM:-groups}
+  CAPATAZ_AUTH_MODE: ${CAPATAZ_AUTH_MODE:-dev_mock}
+  CAPATAZ_INITIAL_CATALOG_YAML_PATH: ${CAPATAZ_INITIAL_CATALOG_YAML_PATH:-/app/catalog/services.example.yaml}
+  CAPATAZ_HTTP_TIMEOUT_SECONDS: ${CAPATAZ_HTTP_TIMEOUT_SECONDS:-5}
+  CAPATAZ_HEALTH_ALLOWED_HOST_SUFFIXES: ${CAPATAZ_HEALTH_ALLOWED_HOST_SUFFIXES:-.home.arpa}
+  CAPATAZ_STATUS_CACHE_TTL_SECONDS: ${CAPATAZ_STATUS_CACHE_TTL_SECONDS:-30}
+  # CA interna del clúster — necesaria para que httpx (Portainer/Grafana/
+  # Prometheus) y el cliente Redis (Valkey, TLS obligatorio) confíen en
+  # certificados firmados por la CA de pi-dns. Generado con "make trust-ca"
+  # dentro de /srv/homelab/pi-utils/capataz/ — ver docs/28.
+  SSL_CERT_FILE: ${CAPATAZ_SSL_CERT_FILE:-/run/ca-certs/ca-bundle.pem}
 
 services:
 
@@ -183,6 +259,98 @@ services:
       start_period: 30s
 
   # ---------------------------------------------------------------------------
+  # capataz-api — FastAPI. Migraciones Alembic antes de arrancar Uvicorn (el
+  # Dockerfile no las empaqueta ejecutadas; hace falta correrlas en cada
+  # arranque). Importa el catálogo YAML de forma idempotente al iniciar.
+  # ---------------------------------------------------------------------------
+  capataz-api:
+    # Imagen del registry privado del clúster (registry.home.arpa), NO se
+    # construye aquí — build/push multi-arch (linux/amd64,linux/arm64,
+    # necesario: este nodo es arm64) vive en el propio repo de Capataz
+    # (api/Makefile "make build"), no en services/ de este repo — ver
+    # docs/28-capataz-consola-automatizacion.md. Requiere
+    # "docker login registry.home.arpa" una vez en este nodo antes del
+    # primer "docker compose pull"/"up -d".
+    image: registry.home.arpa/capataz-api:latest
+    container_name: capataz-api
+    restart: unless-stopped
+    environment: *capataz-env
+    volumes:
+      - ./capataz/catalog:/app/catalog:ro
+      - ./capataz/api/alembic.ini:/app/alembic.ini:ro
+      - ./capataz/api/alembic:/app/alembic:ro
+      - ./capataz/certs:/run/ca-certs:ro
+    secrets:
+      - database_url
+      - redis_url
+      - portainer_token
+      - cognito_client_secret
+    ports:
+      - "8000:8000"
+    networks:
+      - pi-utils-net
+    command:
+      - /bin/sh
+      - -ec
+      - >-
+        alembic upgrade head &&
+        exec uvicorn capataz_api.main:app --host 0.0.0.0 --port 8000
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 768m
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=3)\" || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # capataz-runner — Celery worker (+beat embebido) que ejecuta las acciones
+  # allow-listed (Portainer/Ansible) encoladas por capataz-api. Necesita
+  # cliente SSH (ya en su imagen) y la cuenta dedicada "capataz_automation"
+  # autorizada en los nodos del clúster — ver docs/28.
+  # ---------------------------------------------------------------------------
+  capataz-runner:
+    # Imagen del registry privado del clúster — mismo criterio que
+    # capataz-api justo arriba, ver ese comentario.
+    image: registry.home.arpa/capataz-runner:latest
+    container_name: capataz-runner
+    restart: unless-stopped
+    environment: *capataz-env
+    volumes:
+      - ./capataz/certs:/run/ca-certs:ro
+    secrets:
+      - database_url
+      - redis_url
+      - portainer_token
+      - runner_ssh_private_key
+      - runner_known_hosts
+      - ansible_vault_password
+    networks:
+      - pi-utils-net
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+      - /home/capataz/.ansible/tmp:rw,noexec,nosuid,size=128m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 1024m
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A capataz_runner.celery_app:app inspect ping --timeout=5 | grep -q pong"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+
+  # ---------------------------------------------------------------------------
   # node-exporter — Métricas del sistema host, scrapeadas por Prometheus en pi-obs
   # ---------------------------------------------------------------------------
   node-exporter:
@@ -352,3 +520,23 @@ networks:
   pi-utils-net:
     name: pi-utils-net
     driver: bridge
+
+# Ficheros reales bajo /srv/homelab/pi-utils/capataz/secrets/ (chmod 644 —
+# los contenedores corren como uid 10001, no como el usuario del host que
+# hace el bind mount; documentado así por el propio Capataz). Nunca
+# versionados — mismo criterio que cualquier ".env" real de este repo.
+secrets:
+  database_url:
+    file: ./capataz/secrets/database_url
+  redis_url:
+    file: ./capataz/secrets/redis_url
+  portainer_token:
+    file: ./capataz/secrets/portainer_token
+  cognito_client_secret:
+    file: ./capataz/secrets/cognito_client_secret
+  runner_ssh_private_key:
+    file: ./capataz/secrets/runner_ssh_private_key
+  runner_known_hosts:
+    file: ./capataz/secrets/runner_known_hosts
+  ansible_vault_password:
+    file: ./capataz/secrets/ansible_vault_password

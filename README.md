@@ -39,9 +39,10 @@ Infraestructura doméstica distribuida en 6 nodos: dos PCs (Ryzen 9 y MiniPC Ryz
 | vaultwarden.home.arpa       | pi-utils.home.arpa  | 8222            |
 | apikey.home.arpa            | pi-dns.home.arpa    | 8090            |
 | registry.home.arpa          | retaco.home.arpa    | 5000            |
-| index.home.arpa             | pi-dns.home.arpa    | — (estático, sin proxy) |
+| index.home.arpa             | pi-dns.home.arpa    | — (estático, sin proxy; `/api/` → pi-utils.home.arpa:8000) |
+| old.index.home.arpa         | pi-dns.home.arpa    | — (estático, sin proxy) |
 
-`index.home.arpa` es un panel HTML simple con tarjetas a todos los servicios con interfaz web — ver `pi-dns/README.md`.
+`index.home.arpa` sirve ahora el frontend de **Capataz** (consola de estado y automatización del clúster) — build estático desplegado a mano, `api`/`runner` en `pi-utils`. El antiguo panel HTML de tarjetas se movió a `old.index.home.arpa`. Ver `docs/28-capataz-consola-automatizacion.md`.
 
 ---
 
