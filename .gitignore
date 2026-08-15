@@ -6,9 +6,6 @@
 
 # Asistentes de IA / herramientas de desarrollo — no se versionan a propósito
 .claude/
-CLAUDE.md
-.github/copilot-instructions.md
-.copilot/
 
 # graphify — grafo de conocimiento generado localmente, no forma parte del proyecto.
 # Excepción: GRAPH_REPORT.md sí se versiona a propósito — es Markdown legible y
