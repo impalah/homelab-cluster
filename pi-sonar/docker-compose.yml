@@ -24,6 +24,14 @@ services:
 
   # ---------------------------------------------------------------------------
   # sonarqube — Plataforma de análisis de calidad de código
+  #
+  # Migrado a Infisical (mejora 28, docs/22-mejoras-futuras.md) — mismo patrón
+  # que el resto. SONAR_JDBC_USERNAME/SONAR_JDBC_PASSWORD ya no vienen de
+  # ${...} — los inyecta "infisical run" (secretos renombrados de
+  # SONARQUBE_DB_USER/SONARQUBE_DB_PASSWORD a SONAR_JDBC_USERNAME/
+  # SONAR_JDBC_PASSWORD en Infisical para que coincidan con lo que SonarQube
+  # espera de verdad). Entrypoint real de la imagen
+  # "/opt/sonarqube/docker/entrypoint.sh" (confirmado con docker inspect).
   # ---------------------------------------------------------------------------
   sonarqube:
     image: sonarqube:community
@@ -34,17 +42,36 @@ services:
       # vía el alias directo postgresql.home.arpa (ver
       # shared/dns/dns-records.md, sección "Alias directos").
       SONAR_JDBC_URL: jdbc:postgresql://postgresql.home.arpa:5432/${SONARQUBE_DB_NAME:-sonarqube}
-      SONAR_JDBC_USERNAME: ${SONARQUBE_DB_USER:-sonarqube}
-      SONAR_JDBC_PASSWORD: ${SONARQUBE_DB_PASSWORD}
       SONAR_WEB_JAVAOPTS: ${SONAR_WEB_JAVAOPTS:--Xmx512m -Xms128m}
       SONAR_CE_JAVAOPTS: ${SONAR_CE_JAVAOPTS:--Xmx512m -Xms128m}
       SONAR_SEARCH_JAVAOPTS: ${SONAR_SEARCH_JAVAOPTS:--Xmx1g -Xms1g -XX:MaxDirectMemorySize=256m}
       SONAR_CORE_SERVERBASEURL: ${SONAR_CORE_SERVERBASEURL:-https://sonarqube.home.arpa}
+      INFISICAL_UNIVERSAL_AUTH_CLIENT_ID: ${SONARQUBE_INFISICAL_CLIENT_ID}
+      INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET: ${SONARQUBE_INFISICAL_CLIENT_SECRET}
+      INFISICAL_PROJECT_ID: ${SONARQUBE_INFISICAL_PROJECT_ID}
+      INFISICAL_DOMAIN: https://infisical.home.arpa/api
+      SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
     volumes:
       - /srv/homelab/pi-sonar/sonarqube/data:/opt/sonarqube/data
       - /srv/homelab/pi-sonar/sonarqube/extensions:/opt/sonarqube/extensions
       - /srv/homelab/pi-sonar/sonarqube/logs:/opt/sonarqube/logs
       - /srv/homelab/pi-sonar/sonarqube/temp:/opt/sonarqube/temp
+      # CA interna del clúster, de solo lectura — necesaria para que el CLI de
+      # Infisical (Go) confíe en infisical.home.arpa. Descargar antes del
+      # primer arranque:
+      #   curl -s http://192.168.1.170/ca.crt -o /srv/homelab/pi-sonar/sonarqube/ca/homelab-ca.crt
+      - /srv/homelab/pi-sonar/sonarqube/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
+      - /srv/homelab/pi-sonar/infisical-cli/infisical:/usr/local/bin/infisical:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        TOKEN=$$(infisical login --method=universal-auth \
+          --client-id="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_ID" \
+          --client-secret="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET" \
+          --plain --silent) &&
+        exec infisical run --token="$$TOKEN" --projectId="$$INFISICAL_PROJECT_ID" --env=prod --path=/sonarqube/ -- \
+          /opt/sonarqube/docker/entrypoint.sh
     ports:
       - "9000:9000"
     networks:
@@ -88,15 +115,23 @@ services:
   # comportamiento de autenticación/gobernanza o romper la integración con
   # Bedrock sin que nadie lo revise antes — mismo criterio que sonarqube en
   # este mismo nodo.
+  #
+  # Migrado a Infisical (mejora 28, docs/22-mejoras-futuras.md) — mismo patrón
+  # que el resto. Los 7 secretos ya se llamaban igual en Infisical que lo que
+  # Bifrost espera (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_ROLE_ARN,
+  # BIFROST_VIRTUAL_KEY, BIFROST_ADMIN_USERNAME, BIFROST_ADMIN_PASSWORD,
+  # BIFROST_DB_PASSWORD) — sin necesidad de renombrar nada, a diferencia de
+  # n8n/qdrant/open-webui/rsshub/vaultwarden/sonarqube. Entrypoint real de la
+  # imagen "/app/docker-entrypoint.sh /app/main" (confirmado con docker
+  # inspect). Pendiente de verificar en el propio despliegue si
+  # BIFROST_ADMIN_USERNAME/_PASSWORD se releen en cada arranque o solo la
+  # primera vez (como Grafana) — ver docs/26-infisical-secretos.md.
   # ---------------------------------------------------------------------------
   bifrost:
     image: maximhq/bifrost:v1.6.8
     container_name: bifrost
     restart: unless-stopped
     environment:
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
-      AWS_ROLE_ARN: ${AWS_ROLE_ARN}
       AWS_REGION: ${AWS_REGION:-eu-west-1}
       # Ollama en ryzen, por IP:puerto directo (11434 publicado en el host,
       # ver ryzen/docker-compose.yml) — a propósito NO vía ollama.home.arpa/
@@ -107,20 +142,29 @@ services:
       # no tiene autenticación propia — igual que hoy, sin cambios de
       # superficie de riesgo real, solo cambia quién hace la llamada.
       OLLAMA_UPSTREAM_URL: ${OLLAMA_UPSTREAM_URL:-http://192.168.1.150:11434}
-      BIFROST_VIRTUAL_KEY: ${BIFROST_VIRTUAL_KEY}
-      # Panel/API de administración (logs, coste por request, gobernanza) —
-      # SIN esto quedaba sin ninguna autenticación, accesible por cualquiera
-      # en la LAN (encontrado en producción: /api/logs devolvía historial de
-      # prompts y coste real sin credencial). enforce_auth_on_inference NO
-      # cubre esta parte, solo /v1/chat/completions.
-      BIFROST_ADMIN_USERNAME: ${BIFROST_ADMIN_USERNAME}
-      BIFROST_ADMIN_PASSWORD: ${BIFROST_ADMIN_PASSWORD}
-      # config_store/logs_store en Postgres (postgres-main, retaco) — ver
-      # docs/22-mejoras-futuras.md punto 23. Host/usuario/db van hardcodeados
-      # en config.json (no son secreto), solo la contraseña pasa por env.
-      BIFROST_DB_PASSWORD: ${BIFROST_DB_PASSWORD}
+      INFISICAL_UNIVERSAL_AUTH_CLIENT_ID: ${BIFROST_INFISICAL_CLIENT_ID}
+      INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET: ${BIFROST_INFISICAL_CLIENT_SECRET}
+      INFISICAL_PROJECT_ID: ${BIFROST_INFISICAL_PROJECT_ID}
+      INFISICAL_DOMAIN: https://infisical.home.arpa/api
+      SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
     volumes:
       - /srv/homelab/pi-sonar/bifrost/data:/app/data
+      # CA interna del clúster, de solo lectura — necesaria para que el CLI de
+      # Infisical (Go) confíe en infisical.home.arpa. Descargar antes del
+      # primer arranque:
+      #   curl -s http://192.168.1.170/ca.crt -o /srv/homelab/pi-sonar/bifrost/ca/homelab-ca.crt
+      - /srv/homelab/pi-sonar/bifrost/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
+      - /srv/homelab/pi-sonar/infisical-cli/infisical:/usr/local/bin/infisical:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        TOKEN=$$(infisical login --method=universal-auth \
+          --client-id="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_ID" \
+          --client-secret="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET" \
+          --plain --silent) &&
+        exec infisical run --token="$$TOKEN" --projectId="$$INFISICAL_PROJECT_ID" --env=prod --path=/bifrost/ -- \
+          /app/docker-entrypoint.sh /app/main
     ports:
       - "8080:8080"
     networks:

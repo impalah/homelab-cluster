@@ -112,7 +112,106 @@ infisical secrets set --file=<servicio>.env --path=/<servicio>/ \
 
 **Importante — importar el VALOR no es lo mismo que MIGRAR el servicio**: esto deja el secreto listo en Infisical, pero el contenedor real sigue leyendo su `.env` de siempre hasta que se completan los pasos 5-7 del procedimiento de arriba (bind-mount del CLI, wrapper en el `docker-compose.yml`, verificación). Ver la tabla de "Estado actual" para saber qué servicios tienen ya el secreto en Infisical pero **todavía leen de `.env` en producción** — son casos distintos, no confundirlos.
 
-## Estado actual — solo `apikey-service` migrado (piloto)
+## Estado actual — mejora 28 completada: 11 servicios migrados
+
+`apikey-service`/`authentik` (mejora 16, piloto) más los 9 de la mejora 28
+(docs/22-mejoras-futuras.md), migrados y verificados en producción el
+2026-08-19: `n8n-main`, `qdrant`, `open-webui`, `open-terminal-mcp` (retaco),
+`n8n-aux`, `rsshub`, `vaultwarden` (pi-utils), `sonarqube`, `bifrost`
+(pi-sonar). Verificación aplicada a los 9: logs con `Injecting N Infisical
+secrets`, `healthy`, prueba funcional real (no solo el healthcheck) y
+`--force-recreate` repetido dos veces para confirmar que arrancan solos.
+
+### Hallazgo nuevo — el nombre del secreto en Infisical debe coincidir con el nombre real que consume la app, no con el de la variable `.env` original
+
+El volcado masivo del 2026-08-10 importó cada `.env` tal cual, con los
+nombres de variable **de ese fichero** — que no siempre coinciden con el
+nombre que la aplicación real espera (el `.env` de este repo suele añadir un
+prefijo por servicio o nodo para evitar colisiones entre `docker-compose.yml`
+distintos, cosa que Infisical no necesita porque cada servicio ya vive en su
+propia carpeta). Antes de conectar el wrapper de cada servicio (mejora 28) se
+revisó carpeta por carpeta y se renombraron las claves que no coincidían:
+
+| Servicio | Clave `.env` original (2026-08-10) | Clave real que consume la app (renombrada en Infisical) |
+|---|---|---|
+| `n8n-main` | `N8N_DB_PASSWORD` | `DB_POSTGRESDB_PASSWORD` |
+| `qdrant` | `QDRANT_API_KEY` / `QDRANT_READONLY_KEY` | `QDRANT__SERVICE__API_KEY` / `QDRANT__SERVICE__READ_ONLY_API_KEY` |
+| `open-webui` | `OPENWEBUI_SECRET_KEY` / `BIFROST_VIRTUAL_KEY` / `OPENWEBUI_DB_PASSWORD` | `WEBUI_SECRET_KEY` / `OPENAI_API_KEYS` / **`DATABASE_URL`** (ver nota abajo) |
+| `n8n-aux` | `N8N_AUX_ENCRYPTION_KEY` / `N8N_AUX_BASIC_AUTH_USER` / `N8N_AUX_BASIC_AUTH_PASSWORD` | `N8N_ENCRYPTION_KEY` / `N8N_BASIC_AUTH_USER` / `N8N_BASIC_AUTH_PASSWORD` |
+| `rsshub` | `RSSHUB_ACCESS_KEY` | `ACCESS_KEY` |
+| `vaultwarden` | `VAULTWARDEN_ADMIN_TOKEN` | `ADMIN_TOKEN` |
+| `sonarqube` | `SONARQUBE_DB_USER` / `SONARQUBE_DB_PASSWORD` | `SONAR_JDBC_USERNAME` / `SONAR_JDBC_PASSWORD` |
+| `open-terminal-mcp`, `bifrost` | (ya coincidían) | sin cambios |
+
+`open-webui` es el caso especial: `DATABASE_URL` no es una contraseña suelta,
+es la cadena de conexión completa (`postgresql://openwebui:<password>@postgres-main:5432/openwebui`)
+— Open WebUI solo sabe leer `DATABASE_URL` entera, no una variable de
+contraseña por separado. Se sustituyó el secreto `OPENWEBUI_DB_PASSWORD` por
+uno nuevo `DATABASE_URL` con la cadena completa ya construida, en vez de
+intentar componerla en el `docker-compose.yml` a partir de un secreto
+inyectado (no se puede: `infisical run` inyecta variables de entorno
+completas, no permite interpolar un secreto dentro de otro string en YAML).
+
+**Antes de migrar un servicio nuevo, comprobar siempre si el nombre de la
+clave en Infisical coincide con lo que la aplicación real espera** — no
+asumir que el volcado masivo ya lo dejó bien, aunque el servicio esté en la
+lista de "candidatos limpios" del inventario.
+
+### Hallazgo nuevo — el healthcheck no ve los secretos inyectados en caliente
+
+`docker exec` (que es como Docker ejecuta el `healthcheck:` de Compose) hereda
+el entorno **estático** con el que se creó el contenedor, no el entorno
+dinámico del proceso PID 1 después de que `infisical run` lo sustituyera por
+`exec`. Cualquier healthcheck que antes referenciara una variable de secreto
+directamente (`$$ACCESS_KEY`, etc.) deja de funcionar tal cual tras migrar
+ese servicio — se descubrió con `rsshub` (`/healthz?key=$$ACCESS_KEY` pasaba
+a mandar `key=` vacío, 403 constante). Solución aplicada: aceptar como "sano"
+tanto la respuesta autenticada (200) como el 403 esperado sin credencial
+—mismo criterio que ya usaba `registry` para 401/200. Revisar este mismo
+punto antes de migrar cualquier otro servicio cuyo healthcheck dependa de un
+secreto.
+
+### Hallazgo nuevo — un secreto migrado puede seguir haciendo falta en claro en el `.env` si otro servicio SIN migrar lo consume
+
+`postgres-main` (retaco) usa `N8N_DB_PASSWORD` en su propio `environment:`
+—no para autenticarse él mismo, sino como valor de semilla para su script de
+init (`01-init-n8n.sh`), que solo se ejecuta si el volumen de datos está
+vacío. Al migrar `n8n-main` se retiró `N8N_DB_PASSWORD` del `.env` de
+`retaco` por rutina (ya no lo necesita `n8n-main`, que ahora lo recibe vía
+Infisical con el nombre `DB_POSTGRESDB_PASSWORD`) — pero `postgres-main`
+**seguía referenciándolo por su nombre original**, así que se quedó apuntando
+a una variable vacía. No rompe nada mientras el volumen de `postgres-main` no
+se reinicialice desde cero, pero si algún día ocurre, crearía el rol `n8n`
+con una contraseña vacía que ya no coincidiría con la que `n8n-main` lee de
+Infisical. Corregido restaurando `N8N_DB_PASSWORD` en el `.env` de `retaco`
+(mismo valor, sin rotar) — `postgres-main` está en la lista de "bloqueados,
+solo primer arranque" precisamente por este tipo de acoplamiento, así que
+**antes de borrar una variable en claro tras migrar un servicio, comprobar
+que ningún OTRO servicio (típicamente `postgres-main`, por sus scripts de
+init) todavía la referencia por su nombre original**.
+
+### Hallazgo nuevo — recrear un servicio puede arrastrar a `postgres-main`
+
+`docker compose up -d --force-recreate <servicio>` recreó también
+`postgres-main` la primera vez que se probó (sin pedirlo), por depender de él
+vía `depends_on`. No perdió datos (bind-mount), pero sí cortó brevemente las
+conexiones activas de otros consumidores (reconectaron solos). A partir de
+ahí se usó `--force-recreate --no-deps <servicio>` en el resto de
+recreaciones para evitar tocar dependencias sanas sin necesidad.
+
+### Duda sin resolver — `BIFROST_ADMIN_USERNAME`/`_PASSWORD`
+
+Sigue sin confirmarse si Bifrost los relee en cada arranque o solo la primera
+vez (como Grafana) — la comprobación en vivo (cambiar el valor en Infisical y
+recrear el contenedor) quedó bloqueada por una restricción de seguridad de
+esta sesión (no está permitido teclear directamente en un campo de
+contraseña). El resto de secretos de `bifrost` (`AWS_*`, `BIFROST_VIRTUAL_KEY`,
+`BIFROST_DB_PASSWORD`) sí están confirmados de cada arranque y funcionando.
+Pendiente para quien retome esta duda: cambiar `BIFROST_ADMIN_PASSWORD` en
+Infisical, recrear `bifrost` y probar el login del panel admin con el valor
+nuevo.
+
+## Histórico — piloto `apikey-service`
 
 Migrado y verificado en producción el 2026-08-09. Detalle específico de esta migración:
 
@@ -123,22 +222,25 @@ Migrado y verificado en producción el 2026-08-09. Detalle específico de esta m
 - Verificación end-to-end realizada: `curl` sin credencial → 401 en `ollama.home.arpa`; creación de una API key con `APIKEY_ADMIN_TOKEN` (ya inyectado, no visible en `.env`) → éxito; validación de esa key contra `ollama.home.arpa` → 200; revocación → 204. Reinicio de `apikey-service` con Infisical arriba → recupera solo. Infisical apagado con `apikey-service` ya en marcha → sigue sirviendo sin problema (no reinyecta en caliente). `apikey-service` forzado a reiniciar con Infisical caído → bucle de reintentos (`restart: unless-stopped`) hasta que Infisical vuelve, sin intervención manual — el trade-off exacto que ya anticipaba `docs/22` mejora 16 punto 5, confirmado en vivo.
 - `pi-dns/.env`: `APIKEY_DATABASE_URL`/`APIKEY_ADMIN_TOKEN` eliminados tras confirmar el funcionamiento — quedan solo `APIKEY_SERVICE_INFISICAL_CLIENT_ID`/`_CLIENT_SECRET`/`_PROJECT_ID`.
 
-### Secretos pre-cargados en Infisical, pendientes de conectar (2026-08-10)
+### Servicios conectados en la mejora 28 (2026-08-19)
 
-Volcado masivo (ver "Importación masiva de secretos" arriba) de los servicios "candidatos limpios" del inventario — **el valor ya vive en Infisical, en su propia carpeta, pero el contenedor real sigue leyendo su `.env` de siempre** hasta que se le apliquen los pasos 5-7 del procedimiento (bind-mount + wrapper + verificación). No confundir "secreto importado" con "servicio migrado" — de los 11 servicios de abajo, solo `apikey-service` está realmente conectado hoy.
+De los 10 servicios que quedaron con el secreto ya importado pero sin
+conectar, 9 se conectaron y verificaron en la mejora 28 (claves finales tras
+los renombrados de la sección anterior). `registry` queda fuera a propósito
+(bajo valor, ver inventario).
 
-| Nodo | Servicio | Carpeta | Secretos importados |
+| Nodo | Servicio | Carpeta | Secretos (nombre final, ya conectado) |
 |---|---|---|---|
-| retaco | `n8n-main` | `/n8n-main/` | `N8N_DB_PASSWORD`, `N8N_ENCRYPTION_KEY`, `N8N_BASIC_AUTH_USER`, `N8N_BASIC_AUTH_PASSWORD` |
-| retaco | `qdrant` | `/qdrant/` | `QDRANT_API_KEY`, `QDRANT_READONLY_KEY` |
-| retaco | `registry` | `/registry/` | `REGISTRY_HTTP_SECRET` (el credential real de `docker login` sigue en `htpasswd`, fuera de alcance — ver inventario) |
-| retaco | `open-webui` | `/open-webui/` | `OPENWEBUI_SECRET_KEY`, `BIFROST_VIRTUAL_KEY`, `OPENWEBUI_DB_PASSWORD`, `QDRANT_API_KEY` (copia propia — cada servicio lee de su propia carpeta, aunque el valor coincida con el de `qdrant`) |
+| retaco | `n8n-main` | `/n8n-main/` | `DB_POSTGRESDB_PASSWORD`, `N8N_ENCRYPTION_KEY`, `N8N_BASIC_AUTH_USER`, `N8N_BASIC_AUTH_PASSWORD` |
+| retaco | `qdrant` | `/qdrant/` | `QDRANT__SERVICE__API_KEY`, `QDRANT__SERVICE__READ_ONLY_API_KEY` |
+| retaco | `registry` | `/registry/` | **sin conectar** — `REGISTRY_HTTP_SECRET` (el credential real de `docker login` sigue en `htpasswd`, fuera de alcance — ver inventario) |
+| retaco | `open-webui` | `/open-webui/` | `WEBUI_SECRET_KEY`, `OPENAI_API_KEYS`, `DATABASE_URL` (cadena de conexión completa), `QDRANT_API_KEY` (copia propia) |
 | retaco | `open-terminal-mcp` | `/open-terminal-mcp/` | `OPEN_TERMINAL_API_KEY` |
-| pi-utils | `n8n-aux` | `/n8n-aux/` | `N8N_AUX_ENCRYPTION_KEY`, `N8N_AUX_BASIC_AUTH_USER`, `N8N_AUX_BASIC_AUTH_PASSWORD` |
-| pi-utils | `rsshub` | `/rsshub/` | `RSSHUB_ACCESS_KEY` |
-| pi-utils | `vaultwarden` | `/vaultwarden/` | `VAULTWARDEN_ADMIN_TOKEN` |
-| pi-sonar | `sonarqube` | `/sonarqube/` | `SONARQUBE_DB_USER`, `SONARQUBE_DB_PASSWORD` |
-| pi-sonar | `bifrost` | `/bifrost/` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ROLE_ARN`, `BIFROST_VIRTUAL_KEY`, `BIFROST_DB_PASSWORD`, `BIFROST_ADMIN_USERNAME`, `BIFROST_ADMIN_PASSWORD` — estos dos últimos con la duda ya anotada en el inventario (posible patrón "solo primer arranque" tipo Grafana, sin confirmar) |
+| pi-utils | `n8n-aux` | `/n8n-aux/` | `N8N_ENCRYPTION_KEY`, `N8N_BASIC_AUTH_USER`, `N8N_BASIC_AUTH_PASSWORD` |
+| pi-utils | `rsshub` | `/rsshub/` | `ACCESS_KEY` |
+| pi-utils | `vaultwarden` | `/vaultwarden/` | `ADMIN_TOKEN` |
+| pi-sonar | `sonarqube` | `/sonarqube/` | `SONAR_JDBC_USERNAME`, `SONAR_JDBC_PASSWORD` |
+| pi-sonar | `bifrost` | `/bifrost/` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ROLE_ARN`, `BIFROST_VIRTUAL_KEY`, `BIFROST_DB_PASSWORD`, `BIFROST_ADMIN_USERNAME`, `BIFROST_ADMIN_PASSWORD` — estos dos últimos con la duda de "solo primer arranque" (tipo Grafana) todavía sin confirmar, ver más arriba |
 
 `markitdown-service`, `epub2pdf-service`, `pdf2chunks-service` y `crawl4ai-scraper-service` **no tienen secretos reales configurados hoy** (`CRAWL4AI_PROXY_*` existe como variable pero sin proxy activado/valor puesto) — nada que importar todavía.
 
@@ -178,22 +280,23 @@ La primera versión de este roadmap solo mencionaba "microservicios propios, lue
 |---|---|---|
 | `retaco` | `registry` | El credential real de `docker login` vive en `htpasswd` (bcrypt, fichero montado) — `REGISTRY_HTTP_SECRET` sí es env-var y migrable sin problema, pero no es el secreto que de verdad importa. |
 
-**Candidatos limpios — mismo patrón que `apikey-service`, sin obstáculos conocidos (shell presente, secreto releído en cada arranque, env-var puro)**, por orden sugerido (propios primero, terceros después, mismo criterio que `docs/22` mejora 16 punto 6):
+**Candidatos limpios ya migrados en la mejora 28** (2026-08-19): `n8n-main`, `qdrant`, `open-webui`, `open-terminal-mcp`, `n8n-aux`, `rsshub`, `vaultwarden`, `sonarqube`, `bifrost` — ver tabla más arriba. `BIFROST_ADMIN_USERNAME`/`_PASSWORD` migrados también (mismo mecanismo, valor sin cambiar) aunque la duda de "solo primer arranque" siga sin confirmar — no bloqueaba conectar el resto de secretos de `bifrost`, que sí están confirmados de cada arranque.
 
-1. `markitdown-service`, `epub2pdf-service`, `pdf2chunks-service`, `crawl4ai-scraper-service` (`PROXY_PASSWORD`), `open-terminal-mcp` (propios, `pi-utils`/`retaco`).
-2. `n8n-main` (`N8N_ENCRYPTION_KEY` — **nunca rotar sin plan de migración**, invalidaría credenciales ya cifradas en workflows existentes), `n8n-aux`, `qdrant`, `vaultwarden` (`ADMIN_TOKEN`, confirmado que sí se compara en cada petición a `/admin`, no se siembra una vez), `rsshub`.
-3. `sonarqube` (`SONAR_JDBC_PASSWORD`), y de `bifrost` al menos las variables confirmadas de cada arranque (`AWS_*`/`BIFROST_VIRTUAL_KEY`/`BIFROST_DB_PASSWORD`) una vez resuelta la duda de `BIFROST_ADMIN_USERNAME`/`_PASSWORD`.
-4. `open-webui` — mismo mecanismo, con una particularidad: su `entrypoint:` YA está sobreescrito hoy (combina el bundle de `certifi` con la CA interna, ver `retaco/docker-compose.yml`) — el wrapper de Infisical tendría que **combinarse** con ese script existente, no simplemente añadirse encima sin más.
-5. `postgres-exporter` (`pi-obs`) — su `DATA_SOURCE_NAME` embebe la contraseña de `postgres-main`; migrarlo depende de que esa contraseña siga siendo gestionable (ver el bloqueo de `postgres-main` arriba — no tiene sentido migrar el exporter mientras la fuente real del secreto siga fija).
-6. `whisper-service` (`ryzen`) — sin secretos reales hoy; revisar si alguno aparece en el futuro. Sin nodo siempre encendido, la Machine Identity necesita seguir funcionando igual tras cada arranque/apagado de `mole` (`docs/19-wake-on-lan.md`).
-7. `vllm` (`ryzen`) — `HUGGING_FACE_HUB_TOKEN`, opcional (vacío por defecto hoy) — baja prioridad.
+**Pendientes, sin tocar todavía:**
+
+1. `markitdown-service`, `epub2pdf-service`, `pdf2chunks-service`, `crawl4ai-scraper-service` (`PROXY_PASSWORD`) — sin secretos reales configurados hoy, nada que migrar hasta que aparezca uno.
+2. `registry` (`REGISTRY_HTTP_SECRET`) — bajo valor, descartado a propósito de esta ronda (el credential real de `docker login` sigue en `htpasswd`, fuera de alcance de Infisical de todas formas).
+3. `postgres-exporter` (`pi-obs`) — su `DATA_SOURCE_NAME` embebe la contraseña de `postgres-main`; migrarlo depende de que esa contraseña siga siendo gestionable (ver el bloqueo de `postgres-main` abajo — no tiene sentido migrar el exporter mientras la fuente real del secreto siga fija).
+4. `whisper-service` (`ryzen`) — sin secretos reales hoy; revisar si alguno aparece en el futuro. Sin nodo siempre encendido, la Machine Identity necesita seguir funcionando igual tras cada arranque/apagado de `mole` (`docs/19-wake-on-lan.md`).
+5. `vllm` (`ryzen`) — `HUGGING_FACE_HUB_TOKEN`, opcional (vacío por defecto hoy) — baja prioridad.
 
 **Sin secretos reales, no son candidatos** (revisado, solo variables de configuración: nivel de log, timezone, flags): `unbound`, `nginx`, `node-exporter`, `cadvisor`, `portainer-agent`, `watchtower`, `promtail`, `loki`, `tempo`, `prometheus`, `ollama`, `comfyui`, `valkey` (usa fichero ACL, no env vars — ya resuelto, `docs/25-valkey-cache.md`).
 
 **Otras tareas pendientes:**
 
-- Reorganizar los secretos de `apikey-service` en una carpeta `/apikey-service/` dentro del proyecto — quedaron en la raíz por un despiste al crearlos (no se entró en la carpeta antes de "Add Secret"); no bloqueante con un único servicio migrado, sí conviene antes de que haya varios compartiendo la raíz del entorno `prod`.
-- Decidir, para los tres bloqueados por "solo al primer arranque" (`postgres-main`, `postgres-infisical`, `grafana`, `tailscale`), si compensa un mecanismo distinto (script de arranque que lea el secreto de Infisical y lo aplique explícitamente vía la API propia de cada servicio) o si se aceptan como excepción permanente — no es una decisión urgente mientras ninguno de ellos rote hoy.
+- Reorganizar los secretos de `apikey-service` en una carpeta `/apikey-service/` dentro del proyecto — quedaron en la raíz por un despiste al crearlos (no se entró en la carpeta antes de "Add Secret"); no bloqueante, sí conviene antes de que haya más servicios compartiendo la raíz del entorno `prod`.
+- Decidir, para los cuatro bloqueados por "solo al primer arranque" (`postgres-main`, `postgres-infisical`, `grafana`, `tailscale`), si compensa un mecanismo distinto (script de arranque que lea el secreto de Infisical y lo aplique explícitamente vía la API propia de cada servicio) o si se aceptan como excepción permanente — no es una decisión urgente mientras ninguno de ellos rote hoy.
+- Con la mejora 28 ya cerrada, decidir si conviene revocar o bajar de rol la Machine Identity `bulk-import` (rol Editor, la única con permiso de escritura de secretos) — se mantuvo viva a propósito para esta ronda, ver nota más arriba.
 
 ## Actualizar el CLI en un nodo
 

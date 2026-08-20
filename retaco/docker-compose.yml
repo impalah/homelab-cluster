@@ -92,6 +92,15 @@ services:
   # n8n-main — Automatización de flujos de trabajo. Migrado desde ryzen para
   # que cron/webhooks sigan funcionando aunque el stack de IA (GPU) esté
   # parado — ver docs/05-instalacion-retaco.md.
+  #
+  # Migrado a Infisical (mejora 28, docs/22-mejoras-futuras.md) — mismo patrón
+  # de dos pasos que apikey-service/authentik (docs/26-infisical-secretos.md):
+  # bind-mount del CLI + entrypoint/command sobreescritos. DB_POSTGRESDB_PASSWORD/
+  # N8N_ENCRYPTION_KEY/N8N_BASIC_AUTH_USER/N8N_BASIC_AUTH_PASSWORD ya no vienen
+  # de ${...} (el .env real ya no los tiene) — los inyecta "infisical run" con
+  # esos mismos nombres, tras renombrar en Infisical las claves importadas en
+  # bloque el 2026-08-10 (N8N_DB_PASSWORD -> DB_POSTGRESDB_PASSWORD, el resto ya
+  # coincidía) para que coincidan con lo que n8n espera de verdad.
   # ---------------------------------------------------------------------------
   n8n-main:
     image: n8nio/n8n:latest
@@ -106,11 +115,7 @@ services:
       DB_POSTGRESDB_PORT: 5432
       DB_POSTGRESDB_DATABASE: ${N8N_DB_NAME:-n8n}
       DB_POSTGRESDB_USER: ${N8N_DB_USER:-n8n}
-      DB_POSTGRESDB_PASSWORD: ${N8N_DB_PASSWORD}
-      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
       N8N_BASIC_AUTH_ACTIVE: ${N8N_BASIC_AUTH_ACTIVE:-true}
-      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER}
-      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD}
       N8N_HOST: ${N8N_HOST}
       N8N_PORT: ${N8N_PORT:-5678}
       N8N_PROTOCOL: ${N8N_PROTOCOL:-https}
@@ -143,12 +148,30 @@ services:
       # Sin esto: "unable to verify the first certificate" al llamar a
       # cualquier *.home.arpa protegido con el certificado de la CA interna.
       NODE_EXTRA_CA_CERTS: /etc/ssl/certs/homelab-ca.crt
+      INFISICAL_UNIVERSAL_AUTH_CLIENT_ID: ${N8N_MAIN_INFISICAL_CLIENT_ID}
+      INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET: ${N8N_MAIN_INFISICAL_CLIENT_SECRET}
+      INFISICAL_PROJECT_ID: ${N8N_MAIN_INFISICAL_PROJECT_ID}
+      INFISICAL_DOMAIN: https://infisical.home.arpa/api
+      # Reutiliza el mismo CA que ya montaba NODE_EXTRA_CA_CERTS — el CLI de
+      # Infisical (Go) respeta SSL_CERT_FILE de forma nativa, sin instalar nada.
+      SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
     volumes:
       - /srv/homelab/retaco/n8n/data:/home/node/.n8n
       # CA interna del clúster, de solo lectura — ver docs/15-ca-interna.md.
       # Descargar antes del primer arranque con NODE_EXTRA_CA_CERTS:
       #   curl -s http://192.168.1.170/ca.crt -o /srv/homelab/retaco/n8n/ca/homelab-ca.crt
       - /srv/homelab/retaco/n8n/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
+      - /srv/homelab/retaco/infisical-cli/infisical:/usr/local/bin/infisical:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        TOKEN=$$(infisical login --method=universal-auth \
+          --client-id="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_ID" \
+          --client-secret="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET" \
+          --plain --silent) &&
+        exec infisical run --token="$$TOKEN" --projectId="$$INFISICAL_PROJECT_ID" --env=prod --path=/n8n-main/ -- \
+          tini -- /docker-entrypoint.sh
     ports:
       - "5678:5678"
     networks:
@@ -163,17 +186,45 @@ services:
 
   # ---------------------------------------------------------------------------
   # qdrant — Motor de búsqueda vectorial
+  #
+  # Migrado a Infisical (mejora 28, docs/22-mejoras-futuras.md) — mismo patrón
+  # que n8n-main/apikey-service. Entrypoint real de la imagen vacío (solo Cmd
+  # "./entrypoint.sh", confirmado con docker inspect) — el wrapper reemplaza
+  # el entrypoint entero, así que el arranque real tras "infisical run --" es
+  # directamente "./entrypoint.sh", sin Entrypoint previo que reconstruir.
+  # Nombres de secreto en Infisical renombrados para coincidir con lo que
+  # Qdrant espera de verdad (QDRANT_API_KEY -> QDRANT__SERVICE__API_KEY,
+  # QDRANT_READONLY_KEY -> QDRANT__SERVICE__READ_ONLY_API_KEY).
   # ---------------------------------------------------------------------------
   qdrant:
     image: qdrant/qdrant:latest
     container_name: qdrant
     restart: unless-stopped
     environment:
-      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY}
-      QDRANT__SERVICE__READ_ONLY_API_KEY: ${QDRANT_READONLY_KEY}
+      INFISICAL_UNIVERSAL_AUTH_CLIENT_ID: ${QDRANT_INFISICAL_CLIENT_ID}
+      INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET: ${QDRANT_INFISICAL_CLIENT_SECRET}
+      INFISICAL_PROJECT_ID: ${QDRANT_INFISICAL_PROJECT_ID}
+      INFISICAL_DOMAIN: https://infisical.home.arpa/api
+      SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
     volumes:
       - /srv/homelab/retaco/qdrant/storage:/qdrant/storage
       - /srv/homelab/retaco/qdrant/snapshots:/qdrant/snapshots
+      # CA interna del clúster, de solo lectura — necesaria para que el CLI de
+      # Infisical (Go) confíe en infisical.home.arpa. Descargar antes del
+      # primer arranque:
+      #   curl -s http://192.168.1.170/ca.crt -o /srv/homelab/retaco/qdrant/ca/homelab-ca.crt
+      - /srv/homelab/retaco/qdrant/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
+      - /srv/homelab/retaco/infisical-cli/infisical:/usr/local/bin/infisical:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        TOKEN=$$(infisical login --method=universal-auth \
+          --client-id="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_ID" \
+          --client-secret="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET" \
+          --plain --silent) &&
+        exec infisical run --token="$$TOKEN" --projectId="$$INFISICAL_PROJECT_ID" --env=prod --path=/qdrant/ -- \
+          ./entrypoint.sh
     ports:
       - "6333:6333"
       - "127.0.0.1:6334:6334"
@@ -318,6 +369,16 @@ services:
   # recrean desde cero). Vectores (RAG/Knowledge) igual: Qdrant centralizado
   # en vez de ChromaDB local — mismo Qdrant que "articles"/"transcripts".
   # Credenciales de ambos en Vaultwarden — ver docs/23-bifrost-gateway-llm.md.
+  #
+  # Migrado a Infisical (mejora 28, docs/22-mejoras-futuras.md): WEBUI_SECRET_KEY/
+  # OPENAI_API_KEYS/DATABASE_URL/QDRANT_API_KEY ya no vienen de ${...} (el .env
+  # real ya no los tiene) — los inyecta "infisical run" con esos mismos
+  # nombres. DATABASE_URL pasó a ser un secreto propio con la cadena de
+  # conexión completa (antes se componía en este fichero a partir de
+  # OPENWEBUI_DB_PASSWORD) — Open WebUI solo sabe leer DATABASE_URL entera, no
+  # una contraseña suelta. El wrapper de Infisical va DENTRO del entrypoint ya
+  # existente (combina certifi + CA interna) — hace falta el CA combinado
+  # antes de invocar al propio CLI de Infisical, no al revés.
   # ---------------------------------------------------------------------------
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
@@ -329,26 +390,23 @@ services:
       qdrant:
         condition: service_healthy
     environment:
-      WEBUI_SECRET_KEY: ${OPENWEBUI_SECRET_KEY}
       ENABLE_OLLAMA_API: "false"
       OPENAI_API_BASE_URLS: https://bifrost.home.arpa/v1
-      OPENAI_API_KEYS: ${BIFROST_VIRTUAL_KEY}
-      # Postgres centralizado en vez de SQLite (webui.db) — base aislada
-      # "openwebui", creada con create-postgres-db.sh, mismo patrón que
-      # n8n/sonarqube/apikeys. Por nombre de contenedor: mismo nodo, misma
-      # red retaco-net, no cross-host. Ver docs/23-bifrost-gateway-llm.md.
-      DATABASE_URL: postgresql://openwebui:${OPENWEBUI_DB_PASSWORD}@postgres-main:5432/openwebui
       # Qdrant centralizado en vez de ChromaDB local — mismo Qdrant que ya
       # usa el pipeline de contenido (colecciones "articles"/"transcripts").
       # Prefijo de colección por defecto de Open WebUI ("open-webui_...")
       # evita cualquier colisión de nombres, sin configurar nada aparte.
       VECTOR_DB: qdrant
       QDRANT_URI: http://qdrant:6333
-      QDRANT_API_KEY: ${QDRANT_API_KEY}
+      INFISICAL_UNIVERSAL_AUTH_CLIENT_ID: ${OPEN_WEBUI_INFISICAL_CLIENT_ID}
+      INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET: ${OPEN_WEBUI_INFISICAL_CLIENT_SECRET}
+      INFISICAL_PROJECT_ID: ${OPEN_WEBUI_INFISICAL_PROJECT_ID}
+      INFISICAL_DOMAIN: https://infisical.home.arpa/api
     volumes:
       - /srv/homelab/retaco/open-webui/data:/app/backend/data
       # CA interna del clúster (docs/15-ca-interna.md), de solo lectura.
       - /srv/homelab/retaco/open-webui/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
+      - /srv/homelab/retaco/infisical-cli/infisical:/usr/local/bin/infisical:ro
     # Open WebUI es Python (aiohttp) — no lee el almacén de certificados del
     # sistema por defecto, usa el bundle de "certifi" (solo CAs públicas).
     # Sin esto: SSLCertVerificationError contra CUALQUIER *.home.arpa por
@@ -359,13 +417,20 @@ services:
     # públicos reales (descarga del modelo de embeddings, búsqueda web...).
     # La ruta de certifi se resuelve en caliente (no se hardcodea la versión
     # de Python de la imagen) para no romperse en una actualización futura.
+    # El wrapper de Infisical va DESPUÉS del CA combinado (mejora 28) — así el
+    # propio CLI de Infisical también confía en infisical.home.arpa.
     entrypoint: ["sh", "-c"]
     command:
       - |
         CERTIFI_BUNDLE=$$(python3 -c "import certifi; print(certifi.where())") &&
         cat "$$CERTIFI_BUNDLE" /etc/ssl/certs/homelab-ca.crt > /tmp/combined-ca.pem &&
         export SSL_CERT_FILE=/tmp/combined-ca.pem &&
-        exec bash start.sh
+        TOKEN=$$(infisical login --method=universal-auth \
+          --client-id="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_ID" \
+          --client-secret="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET" \
+          --plain --silent) &&
+        exec infisical run --token="$$TOKEN" --projectId="$$INFISICAL_PROJECT_ID" --env=prod --path=/open-webui/ -- \
+          bash start.sh
     ports:
       - "8080:8080"
     networks:
@@ -402,16 +467,41 @@ services:
   # Sin montajes del host ni acceso a docker.sock a propósito — mismo criterio
   # de superficie de riesgo que Floci (mejora 14): el LLM solo ve el volumen
   # propio de este contenedor, nada más del clúster.
+  #
+  # Migrado a Infisical (mejora 28, docs/22-mejoras-futuras.md) — mismo patrón
+  # que el resto. Entrypoint real de la imagen "/usr/bin/tini -- /app/entrypoint-slim.sh"
+  # (confirmado con docker inspect) — al sobreescribir el entrypoint, el
+  # arranque real (tini + entrypoint-slim.sh + los argumentos "mcp ..." que
+  # antes iban en "command:") se junta entero al final del wrapper.
   # ---------------------------------------------------------------------------
   open-terminal-mcp:
     image: registry.home.arpa/open-terminal-mcp:latest
     container_name: open-terminal-mcp
     restart: unless-stopped
-    command: ["mcp", "--transport", "streamable-http", "--host", "0.0.0.0", "--port", "8000"]
     environment:
-      OPEN_TERMINAL_API_KEY: ${OPEN_TERMINAL_API_KEY}
+      INFISICAL_UNIVERSAL_AUTH_CLIENT_ID: ${OPEN_TERMINAL_MCP_INFISICAL_CLIENT_ID}
+      INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET: ${OPEN_TERMINAL_MCP_INFISICAL_CLIENT_SECRET}
+      INFISICAL_PROJECT_ID: ${OPEN_TERMINAL_MCP_INFISICAL_PROJECT_ID}
+      INFISICAL_DOMAIN: https://infisical.home.arpa/api
+      SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
     volumes:
       - /srv/homelab/retaco/open-terminal-mcp/home:/home/user
+      # CA interna del clúster, de solo lectura — necesaria para que el CLI de
+      # Infisical (Go) confíe en infisical.home.arpa. Descargar antes del
+      # primer arranque:
+      #   curl -s http://192.168.1.170/ca.crt -o /srv/homelab/retaco/open-terminal-mcp/ca/homelab-ca.crt
+      - /srv/homelab/retaco/open-terminal-mcp/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
+      - /srv/homelab/retaco/infisical-cli/infisical:/usr/local/bin/infisical:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        TOKEN=$$(infisical login --method=universal-auth \
+          --client-id="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_ID" \
+          --client-secret="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET" \
+          --plain --silent) &&
+        exec infisical run --token="$$TOKEN" --projectId="$$INFISICAL_PROJECT_ID" --env=prod --path=/open-terminal-mcp/ -- \
+          tini -- /app/entrypoint-slim.sh mcp --transport streamable-http --host 0.0.0.0 --port 8000
     ports:
       # Publicado a la LAN: nginx (pi-dns) le hace proxy cross-host, igual que
       # qdrant/n8n-main/registry — PERO sin auth_request delante (ver arriba)

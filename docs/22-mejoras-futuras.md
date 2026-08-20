@@ -332,11 +332,20 @@ Bajo — es un único contenedor Docker; la decisión real es dónde vive y cóm
 
 ---
 
-## 15. Panel de control para arrancar/parar servicios y estado en `index.home.arpa`
+## 15. ~~Panel de control para arrancar/parar servicios y estado en `index.home.arpa`~~ — hecho
 
-**Prioridad: media**
+**Prioridad: media** — **completado**
 
-### Qué hay hoy
+### Qué se implementó
+
+Capataz desplegado como panel de control real, sustituyendo la página estática de `index.home.arpa` — detalle completo en `docs/28-capataz-consola-automatizacion.md`. Resumen:
+
+- Backend (`capataz-api`) y `capataz-runner` en `pi-utils`, hablando con la API REST de Portainer para arrancar/parar/reiniciar contenedores por nombre — mismo criterio de "envoltorio ligero sobre algo que ya existe" apuntado en el punto 2 original, en vez de reimplementar esa lógica.
+- Frontend desplegado como build estático (patrón "Standalone Frontend Deployment" de Capataz) servido por el `nginx` de `pi-dns` en `index.home.arpa`, reemplazando la página HTML+CSS sin JavaScript que había antes — sí necesitó salir de "cien por cien estática" para mostrar estado en vivo, como anticipaba el punto 3 original.
+- Login real vía Authentik (OIDC, Authorization Code + PKCE) desde 2026-08-19, tras una fase piloto previa en `dev_mock` (identidad sintética con selector de rol viewer/operator/admin) — cierra la superficie de riesgo señalada en el punto 5 original ("candidato claro para ir detrás de auth" ahora que el panel sí puede apagar servicios): tres grupos RBAC en Authentik (`capataz-viewer`/`-operator`/`-admin`) en vez de `apikey-service`, por ser Capataz quien gestiona su propio login OIDC.
+- Pendiente de seguimiento (no bloquea el cierre de esta mejora): confirmar que el usuario/grupo Authentik usado durante el piloto tiene membresía real en uno de los tres grupos RBAC — ver nota en `docs/28-capataz-consola-automatizacion.md`.
+
+### Qué hay hoy (histórico, previo a la implementación)
 
 Arrancar o parar un servicio hoy es manual: por SSH y `docker compose up`/`down`, documentado en `docs/11-operacion-diaria.md`. Portainer ya permite hacer lo mismo desde su interfaz (start/stop/restart por contenedor), pero hay que entrar a Portainer y navegar hasta el nodo y el contenedor concretos — no hay un panel unificado. `index.home.arpa` (`docs/06-instalacion-pi1-dns.md`) es hoy una página HTML+CSS estática servida directamente por nginx, sin JavaScript: enlaza a cada servicio, pero no dice si está arriba o caído.
 
@@ -730,11 +739,23 @@ Medio-alto — no por la parte técnica de Postgres en sí (activar TLS es senci
 
 ---
 
-## 28. Migrar el resto de servicios del clúster a Infisical
+## 28. ~~Migrar el resto de servicios del clúster a Infisical~~ — hecho
 
-**Prioridad: media**
+**Prioridad: media** — **completado (parcial: 9 de los "candidatos limpios")**
 
-### Qué hay hoy
+### Qué se implementó (2026-08-19)
+
+Migrados y verificados en producción: `n8n-main`, `qdrant`, `open-webui`, `open-terminal-mcp` (retaco), `n8n-aux`, `rsshub`, `vaultwarden` (pi-utils), `sonarqube`, `bifrost` (pi-sonar) — detalle completo, incluidos tres hallazgos no anticipados por la mejora 16, en `docs/26-infisical-secretos.md` (sección "Estado actual — mejora 28 completada") y `docs/adr/0001-infisical-inyeccion-bind-mount-vs-imagen-derivada.md`:
+
+1. **El nombre de la clave en Infisical debe coincidir con el que la app consume de verdad**, no con el nombre de variable que usaba el `.env` de este repo — el volcado masivo de la mejora 16 importó los nombres "tal cual", que en 6 de los 9 servicios no coincidían (p. ej. `N8N_DB_PASSWORD` → en realidad hace falta `DB_POSTGRESDB_PASSWORD`). Hubo que renombrar claves en Infisical antes de conectar cada wrapper. `open-webui` fue el caso especial: `DATABASE_URL` pasó a ser un secreto con la cadena de conexión completa, no una contraseña suelta.
+2. **Un healthcheck que referencie un secreto migrado directamente deja de funcionar** — `docker exec` (así ejecuta Compose el healthcheck) no ve el entorno dinámico del proceso sustituido por `infisical run`, solo el estático del contenedor. Corregido en `rsshub` aceptando 200 o 403 como "sano" (mismo criterio que `registry`).
+3. **Un secreto migrado puede seguir haciendo falta en claro en el `.env`** si otro servicio sin migrar lo consume — `postgres-main` usa `N8N_DB_PASSWORD` en su propio script de init; se retiró por rutina al migrar `n8n-main` y hubo que restaurarlo.
+
+Quedó sin resolver la duda de si `BIFROST_ADMIN_USERNAME`/`_PASSWORD` se releen en cada arranque o solo la primera vez (como Grafana) — están migrados igualmente (mismo valor, sin romper nada), pero la comprobación en vivo quedó pendiente.
+
+Fuera de esta ronda a propósito: `registry` (bajo valor), `postgres-exporter`/`whisper-service`/`vllm` (sin secretos migrables hoy) y los cuatro bloqueados por "solo primer arranque" (`postgres-main`, `postgres-infisical`, `grafana`, `tailscale`) — ver inventario completo en `docs/26`.
+
+### Qué hay hoy (histórico, previo a la implementación)
 
 La mejora 16 dejó Infisical desplegado en producción y el mecanismo de inyección de secretos validado con un único servicio real, `apikey-service` — detalle completo en `docs/26-infisical-secretos.md`. El resto de servicios del clúster con secretos en su `.env` siguen exactamente igual que antes de la mejora 16: valores en claro, copiados a mano desde Vaultwarden, sin identidad de máquina propia ni rotación independiente.
 
@@ -917,6 +938,124 @@ Medio — la instalación en sí es un contenedor con almacenamiento NFS, y enca
 
 ---
 
+## 32. Dominio real con certificados Let's Encrypt, en vez de CA interna propia
+
+**Prioridad: media**
+
+### Qué hay hoy
+
+Todo el TLS del clúster cuelga de una CA interna autofirmada (`pi-dns/config/nginx/generate-ca.sh`/`generate-cert.sh`, validez 10 años, `docs/15-ca-interna.md`) — cada hostname es `*.home.arpa`, resoluble solo dentro de la LAN (Pi-hole/Unbound) o vía el Split DNS de Tailscale (`docs/18-tailscale.md`). Cualquier dispositivo cliente (navegador, `dockerd`, el propio `buildx`) necesita instalar esa CA a mano antes de confiar en el clúster — ya ha causado fricción real y documentada más de una vez (el gotcha del builder de `buildx` sin las CAs del host, sección "Build/push" de este mismo `CLAUDE.md`; los nodos que no tenían la CA a nivel de sistema para `docker pull` contra `registry.home.arpa`).
+
+### Qué haría falta
+
+1. Registrar (o reutilizar, si ya existe) un dominio real bajo control propio — necesario para que Let's Encrypt pueda emitir, ya que solo firma para nombres de dominio público, nunca para `.home.arpa` ni para IPs privadas.
+2. **Reto DNS-01, no HTTP-01** — el clúster no está expuesto a internet a propósito (solo accesible vía LAN o Tailscale, `docs/18`) y no tiene sentido abrir el puerto 80 al público solo para validar un certificado. DNS-01 exige que el proveedor DNS del dominio tenga API (Cloudflare, Route53, etc.) para que el cliente ACME pueda crear el registro TXT del reto de forma automática.
+3. Cliente ACME: `certbot`/`acme.sh` con el plugin del proveedor DNS elegido, corriendo en `pi-dns` junto al `nginx` actual — o, si se aborda junto con la mejora 35 (Traefik), su integración ACME nativa (`certificatesResolvers`), que evitaría montar un cliente ACME aparte.
+4. **Renovación automática obligatoria** — a diferencia de la CA interna (10 años, prácticamente "y olvídate"), los certificados de Let's Encrypt caducan a los 90 días. Sin cron/hook de renovación con recarga de nginx, el clúster completo quedaría con TLS caducado en menos de tres meses.
+5. Decidir el alcance: ¿sustituye del todo a la CA interna, o conviven? Los hostnames `*.home.arpa` seguirían resolviendo a IPs internas vía Pi-hole igual que hoy — lo que cambia es el certificado que sirve `nginx`, que pasaría a tener SAN del dominio real en vez de (o además de) `*.home.arpa`. Servicios pensados para quedarse siempre puramente internos podrían mantenerse en la CA propia si no compensa el cambio.
+6. Revisar el impacto en todo lo que hoy confía en la CA interna a nivel de sistema (`docs/15-ca-interna.md`, sección Linux/Docker) — con Let's Encrypt, un certificado válido públicamente ya no necesita que cada nodo/dispositivo instale nada a mano, lo cual elimina de raíz la clase de problema que motivó varios de los gotchas ya documentados en este repo.
+7. Confirmar que el Split DNS de Tailscale (`docs/18-tailscale.md`) sigue funcionando igual una vez el hostname resuelto por dentro del tailnet difiera del hostname real del certificado, si se elige no usar el dominio real también ahí.
+
+### Esfuerzo estimado
+Medio-alto — depende sobre todo del proveedor DNS elegido (facilidad de su API para el reto DNS-01) y de si se combina con la migración a Traefik (mejora 35), que simplificaría bastante el mecanismo de renovación.
+
+---
+
+## 33. Migrar el clúster a Docker Swarm, progresivamente
+
+**Prioridad: baja-media**
+
+### Qué hay hoy
+
+Este mismo `CLAUDE.md` fija como decisión de arquitectura explícita: *"Docker Engine + Docker Compose v2 only (explicitly no Kubernetes, no Docker Swarm)"*. Hoy son 6 stacks de Compose completamente independientes, cada uno con su propia red bridge (`<nodo>-net`), sin red Docker compartida entre nodos — el tráfico entre nodos va por la LAN real vía `*.home.arpa` (`docs/01-topologia.md`). Adoptar Swarm sería revertir esa decisión de forma consciente, no una continuación natural de lo que hay — conviene evaluarlo con calma antes de tocar nada, empezando por un piloto de bajo riesgo, no un cambio de golpe en los 6 nodos.
+
+### Qué haría falta
+
+1. **Decidir el alcance real primero**: ¿un único swarm con los 6 nodos, o empezar con un subconjunto? Swarm no exige arquitectura homogénea entre nodos (arm64 y amd64 conviven en el mismo clúster sin problema), pero cada *servicio* concreto sigue necesitando su propia imagen multi-arch si va a poder programarse en cualquier nodo — ya resuelto para `apikey-service`/`markitdown-service` (`docker buildx build --platform linux/amd64,linux/arm64`), no para `whisper-service` (amd64-only a propósito, necesita CUDA).
+2. **Quórum de managers**: Raft necesita mayoría de managers vivos para aceptar escrituras — con 6 nodos, un esquema típico serían 3 managers (impar, tolera 1 caída) y el resto workers. `ryzen`/`mole`, al ser el único nodo que se apaga habitualmente cuando no se usa (`docs/19-wake-on-lan.md`), es mal candidato a manager — como mínimo debería quedar como worker-only, o fuera del quórum por completo.
+3. **Red overlay**: Swarm sustituye las redes bridge por nodo por una red overlay cifrada entre nodos vía VXLAN — revisar qué puertos hace falta abrir en el firewall gestionado hoy por `shared/scripts/setup-firewall.sh`/`toggle-direct-access.sh` (`docs/17-firewall-acceso-directo.md`), y si el tráfico VXLAN puede ir sin fricción por la LAN interna ya existente.
+4. **Migración incremental sugerida**: empezar por un servicio sin estado y de bajo riesgo (un microservicio propio, p. ej.) desplegado como `docker stack deploy` en paralelo al `docker-compose.yml` actual, verificar equivalencia funcional, y solo entonces plantear servicios con estado. Éstos son el caso realmente delicado: Swarm no resuelve por sí solo la persistencia multi-nodo — sigue haciendo falta bind-mount local, y el scheduler podría reprogramar el contenedor en otro nodo perdiendo acceso a sus propios datos si no se fija explícitamente con `constraints` (`node.hostname==retaco`, por ejemplo, para `postgres-main`).
+5. **`docker-compose.yml` no se traduce 1:1 a `docker stack deploy`** — Swarm ignora `build:` (haría falta ya tener las imágenes publicadas en `registry.home.arpa`, lo cual este repo ya cumple para los servicios propios) y trata algunas claves de forma distinta. Revisar cada `docker-compose.yml` del repo antes de asumir que basta con `docker stack deploy -c docker-compose.yml <nombre>`.
+6. **Relación con la mejora 35 (Traefik)**: Traefik es el proxy natural de un clúster Swarm (descubre servicios vía labels, igual que ya hace hoy sobre Docker standalone) — decidir si Swarm se aborda junto con Traefik desde el principio, o antes, dejando `nginx` configurado a mano un tiempo más sobre el nuevo Swarm.
+7. **`watchtower`/`shared/scripts/update-stack.sh` actuales asumen Compose standalone** — revisar el equivalente nativo de Swarm (`docker service update --image ...`, con rolling update incorporado), que sería una mejora real sobre el `--force-recreate` que se usa hoy. Mantener actualizados los contenedores ya desplegados en Swarm (vigilancia + aplicación del rolling update) es justo la continuación natural del mecanismo ya existente hoy para Compose (`watchtower` + `check-image-updates.sh`, `docs/16-mantenimiento-actualizaciones.md`) — no es un problema nuevo que diseñar desde cero, ver mejora 36.
+8. **Justificar el cambio con honestidad, no solo "porque se puede"**: en un clúster de un solo operador, el argumento fuerte de Swarm no es alta disponibilidad real (nadie necesita failover automático 24/7 en un homelab) — es rolling updates nativos, red overlay gestionada y `docker secret`/`docker config` propios. Documentar explícitamente qué se gana frente al coste de complejidad añadida antes de comprometerse, mismo criterio que se aplicó a la comparativa Vault-vs-Infisical (mejora 16).
+
+### Esfuerzo estimado
+Alto — no por dificultad técnica puntual, sino por ser un cambio de paradigma que toca los 6 nodos y cada `docker-compose.yml` del repo; abordar por fases, nunca de golpe, empezando por un piloto sin estado.
+
+---
+
+## 34. GitOps para las aplicaciones del clúster (se buscan propuestas)
+
+**Prioridad: media**
+
+### Qué hay hoy
+
+El despliegue es enteramente manual: editar el `docker-compose.yml` en este repo, `rsync` a `/srv/homelab/<nodo>/`, `ssh` y `docker compose up -d` (ver "Connecting to cluster nodes" en este mismo `CLAUDE.md`). No hay reconciliación automática entre lo que dice el repo y lo que corre de verdad en cada nodo — de hecho este `CLAUDE.md` avisa explícitamente de que ambos pueden divergir en silencio (el gotcha de `pi-dns`, donde la ruta real de despliegue de `nginx` no coincide con la carpeta versionada en el repo, y ha causado 404 confusos más de una vez). Ese mismo hueco es justo el tipo de problema que GitOps resuelve por diseño: el estado deseado vive en git, y algo lo aplica y lo mantiene sincronizado sin depender de que nadie se acuerde de desplegar a mano.
+
+Este clúster **no usa Kubernetes** (decisión de arquitectura explícita de este repo) — las herramientas de GitOps más conocidas (ArgoCD, Flux) son nativas de Kubernetes y no aplican tal cual aquí. Cualquier propuesta tiene que partir de eso.
+
+### Propuestas a evaluar (sin decisión tomada todavía)
+
+1. **[Komodo](https://komo.do)** — proyecto open source pensado específicamente para gestionar múltiples nodos con Docker Compose (no Kubernetes): concepto de "stacks" enlazados a un repo git, sync automático al hacer push, UI propia de gestión multi-nodo. Encaja directamente con la forma real de este clúster (varios nodos, cada uno con su propio stack) sin forzar una migración a Kubernetes. Candidato más "producto ya hecho" de la lista.
+2. **Dockge** — UI de gestión de stacks Compose con stacks respaldados por git, más ligero que Komodo pero con menos automatización real de "sync en push" — más cercano a un Portainer con git integrado que a GitOps real con reconciliación continua.
+3. **Cron + `git pull` + `update-stack.sh`** — la opción más simple, sin producto nuevo que mantener: cada nodo, por cron, hace `git pull` sobre una copia del repo en el propio nodo y aplica los ficheros relevantes a sus rutas reales de despliegue. El coste está en el scripting propio, no en una pieza nueva — pero exige resolver primero la discrepancia de rutas ya conocida (el mismo gotcha de `pi-dns`: el repo no siempre mapea 1:1 con la ruta real desplegada), o el sync fallaría en silencio exactamente igual que hoy.
+4. **Si se combina con la mejora 33 (Swarm)**: `docker stack deploy` es idempotente y declarativo por diseño — GitOps encaja de forma más natural ahí (el propio Swarm ya reconcilia el estado declarado contra el real). Komodo también soporta Swarm nativamente, no solo Compose standalone.
+5. **`watchtower` ya cubre una parte, pero no todo**: hoy actualiza la imagen (`:latest` nuevo) automáticamente, pero no reacciona a cambios del propio `docker-compose.yml` (nuevas variables de entorno, nuevos bind mounts, nuevos servicios) — cualquier propuesta de GitOps real tiene que cubrir también eso, no solo la imagen.
+6. **Secretos**: los `.env` reales nunca están en git, a propósito (este `CLAUDE.md`, sección "Secrets are always `CHANGE_ME`..."). Cualquier propuesta tiene que seguir resolviendo secretos vía Infisical/Vaultwarden directamente en el nodo — nunca meterlos en el repo para que el sync los aplique, ni siquiera cifrados dentro del propio git.
+7. **Alcance del piloto**: decidir si se prueba primero sobre un único nodo de bajo riesgo (`pi-utils`, por ejemplo) antes de generalizar a los otros 5, mismo criterio de migración incremental ya seguido en el resto de mejoras grandes de este documento (Infisical, Authentik).
+
+### Esfuerzo estimado
+Medio-alto, muy dependiente de la propuesta elegida — desde "cron + `git pull`" (bajo, pero manual de verdad) hasta desplegar un producto nuevo como Komodo (medio) o acoplarlo a una migración completa a Swarm (alto, ver mejora 33).
+
+---
+
+## 35. Sustituir `nginx` por Traefik, integrado con Docker Swarm
+
+**Prioridad: media**
+
+### Qué hay hoy
+
+`nginx` en `pi-dns` es la puerta de entrada de todo el clúster (`pi-dns/config/nginx/`, desplegado en `/srv/homelab/pi-dns/nginx/conf/` — ver el gotcha de rutas ya documentado en este `CLAUDE.md`): un bloque `server` por hostname, escrito y desplegado a mano, TLS con la CA interna (`docs/15-ca-interna.md`), `apikey-auth.conf` como snippet de `auth_request` para proteger servicios sin auth propia. Ningún descubrimiento automático de servicios — cada hostname nuevo exige tocar `nginx.conf`, desplegarlo (con el cuidado ya conocido del bind-mount de fichero único) y recargar.
+
+### Qué haría falta
+
+1. Traefik en modo *Docker provider* (standalone) o *Docker Swarm provider* si se aborda junto con la mejora 33 — descubre servicios automáticamente vía labels declaradas en el propio `docker-compose.yml`/stack (`traefik.http.routers.<servicio>.rule=Host(...)`), sin tocar un fichero de configuración central por cada hostname nuevo. Resuelve directamente la fricción operativa que hoy tiene `nginx`.
+2. **Punto crítico de esta mejora**: Traefik solo aporta descubrimiento automático real si corre sobre el mismo Docker que orquesta los servicios a exponer. Hoy `pi-dns` es un nodo aparte de donde corre la mayoría de servicios del clúster (arquitectura de "un nodo, una IP, LAN real entre nodos, sin red Docker compartida", `docs/01-topologia.md`) — un Traefik en modo Docker standalone en `pi-dns` solo vería los contenedores de `pi-dns` mismo, no los de `retaco`/`pi-utils`/etc. Para descubrir servicios de otros nodos automáticamente hace falta el *provider* de Docker Swarm (mejora 33) o, si no, declarar cada servicio a mano vía el *provider* de fichero — perdiendo la ventaja principal frente a `nginx`. **Esta mejora depende en la práctica de la 33**: sin Swarm, Traefik en este clúster cambia la sintaxis de configuración manual, pero no elimina el trabajo manual en sí.
+3. Si se combina con la mejora 32 (Let's Encrypt): Traefik trae integración ACME nativa (`certificatesResolvers`, reto DNS-01 con el proveedor DNS elegido) — sería la pieza que más simplifica esa mejora si se abordan juntas, evitando montar `certbot`/`acme.sh` como proceso aparte.
+4. `auth_request` (`apikey-auth.conf`, protección de `ollama`/`epub2pdf`/etc.) tiene equivalente directo en Traefik vía el middleware `ForwardAuth` — mismo concepto (llamada a `apikey-service` antes de dejar pasar la petición), sintaxis distinta, hay que migrarlo servicio a servicio.
+5. Migración incremental: Traefik y `nginx` pueden convivir temporalmente en puertos distintos mientras se migra servicio a servicio — mismo criterio de evaluar en paralelo ya usado con Bifrost/LiteLLM (mejoras 20/21).
+6. Dashboard propio de Traefik: decidir si se expone (protegido con Authentik forward-auth, mejoras 25/29) o se deja solo accesible en local, mismo criterio ya aplicado a otros paneles de administración del clúster.
+7. Revisar los snippets especiales que `nginx` ya resuelve hoy (`proxy-common.conf`, `proxy_buffering off` + timeouts largos para el streaming SSE de `open-terminal-mcp`, mejora 17) — cada uno necesita su middleware equivalente en Traefik antes de dar por sustituible la configuración actual.
+
+### Esfuerzo estimado
+Alto — depende directamente de si se aborda junto con la migración a Swarm (mejora 33): por separado, la ganancia real es mucho menor (se cambia la sintaxis de configuración manual, pero no el trabajo manual en sí) y probablemente no compensa reescribir toda la configuración de `nginx` ya probada en producción.
+
+---
+
+## 36. Vigilancia y alertas del estado de parcheo de los nodos (SO) — y su continuación en Swarm
+
+**Prioridad: media**
+
+### Qué hay hoy
+
+**No es un hueco nuevo — es un punto ciego dentro de algo que ya funciona.** `docs/16-mantenimiento-actualizaciones.md` ya resuelve tanto la actualización del sistema operativo (`unattended-upgrades` para parches de seguridad automáticos en los seis nodos, `update-os.sh` para actualización completa bajo demanda) como la de las imágenes Docker (Watchtower para lo sin estado, `check-image-updates.sh` con panel en Grafana para el resto) — ver también la mejora 6, que **no es lo mismo**: esa mejora migra el *tooling* de mantenimiento a Ansible por idempotencia (evitar el bug de `chown -R` que rompió `postgres-main`, `docs/13-troubleshooting.md`), no añade vigilancia ni alertas nuevas — Ansible o bash seguiría teniendo el mismo punto ciego si no se aborda aparte.
+
+El punto ciego real: las actualizaciones de **imagen Docker** sí tienen visibilidad centralizada (métrica Prometheus vía *textfile collector*, panel `homelab-actualizaciones-pendientes` en Grafana, `docs/16` sección 2.2) — pero las actualizaciones de **sistema operativo** no tienen ningún equivalente. Hoy, saber si un nodo tiene parches de seguridad pendientes o si necesita reinicio tras uno (`/var/run/reboot-required`) exige entrar por SSH a cada nodo y mirar `unattended-upgrades.log` a mano — no hay métrica, no hay panel, no hay alerta. Es exactamente el mismo tipo de hueco que ya se cerró para espacio en disco (mejora 3) y para imágenes Docker (`docs/16`), pero sin cerrar todavía para parches del propio SO.
+
+### Qué haría falta
+
+1. **Métrica de estado de parcheo por nodo**, mismo patrón que `check-image-updates.sh` (`docs/16` sección 2.2): un script (o, si ya existe para entonces, un playbook de Ansible — mejora 6 — que reutilice sus propios *facts*) que escriba, vía *textfile collector* de `node-exporter`, dos cosas por nodo: número de paquetes con actualización de seguridad pendiente (`apt list --upgradable` filtrado a `-security`) y si `/var/run/reboot-required` existe (0/1). A diferencia de `check-image-updates.sh` (centralizado en `pi-obs`, vía SSH a los demás nodos), aquí probablemente sea más simple que cada nodo escriba su propio fichero `.prom` localmente por cron — confirmar que el *textfile collector* de `node-exporter` está montado en los seis nodos (hoy documentado explícitamente solo para `pi-obs`, `pi-obs/docker-compose.yml`) antes de asumir que ya está listo en el resto.
+2. **Panel en Grafana**, junto al ya existente de imágenes pendientes (`homelab-actualizaciones-pendientes`) o como panel nuevo en el mismo dashboard — mismo criterio de reutilizar infraestructura ya montada que el resto de mejoras de este documento.
+3. **Alerta**: reinicio pendiente durante más de X días, o número de actualizaciones de seguridad por encima de un umbral — mismo patrón que la alerta de undervoltage/disco (mejora 3), conectada al canal de notificación proactivo (ntfy, mejora 4) en cuanto exista.
+4. **Cuidado especial con `pi-dns`**: único punto de fallo del DNS de toda la LAN (`docs/16`, ya lo advierte para el reinicio manual) — cualquier alerta de reinicio pendiente en `pi-dns` merece más visibilidad que en el resto, pero **la alerta sigue siendo solo aviso, nunca dispara un reinicio automático** — mismo principio ya fijado en `docs/16` ("ningún nodo se reinicia solo").
+5. **Continuación en Swarm, si se llega a adoptar (mejora 33)**: mantener actualizados los contenedores desplegados como `docker stack deploy` no es un problema nuevo que diseñar desde cero — es la misma vigilancia de imagen (punto 1 de esta lista, ya resuelto para Compose) aplicada sobre `docker service ls`/`docker service update --image`, que además da rolling update nativo en vez del `--force-recreate` actual (ver mejora 33, punto 7). Confirmar si Watchtower en modo Swarm (existe, vigila servicios en vez de contenedores sueltos) sirve tal cual, o si conviene sustituirlo por el propio mecanismo de Swarm combinado con el aviso de `check-image-updates.sh` ya existente.
+
+### Esfuerzo estimado
+Bajo — reutiliza infraestructura ya montada (*textfile collector*, Grafana, el propio patrón de `check-image-updates.sh`); el trabajo real es escribir el script/playbook y decidir umbrales de alerta razonables. El punto 5 (continuación en Swarm) solo aplica si se adopta la mejora 33.
+
+---
+
 ## Resumen
 
 | # | Mejora | Prioridad | Esfuerzo | Depende de |
@@ -935,7 +1074,7 @@ Medio — la instalación en sí es un contenedor con almacenamiento NFS, y enca
 | 12 | RAG de libros en PDF desde Open WebUI | Media | Medio | `markitdown-service`, Qdrant y Ollama ya desplegados |
 | 13 | Copiar logs/métricas de pi-obs al NAS | Media | Medio | NFS del NAS ya montado (`docs/21`) |
 | 14 | Evaluar Floci como emulador local de AWS | Media | Bajo | — |
-| 15 | Panel de control de servicios + estado en `index.home.arpa` | Media | Medio | Portainer ya desplegado (`docs/10`) |
+| 15 | ~~Panel de control de servicios + estado en `index.home.arpa`~~ | Media | — | **Completado** — `docs/28-capataz-consola-automatizacion.md`; Capataz sustituye la página estática, login real vía Authentik |
 | 16 | ~~Sistema de secretos programático (Infisical)~~ | Media | — | **Completado** — `docs/26-infisical-secretos.md`; solo `apikey-service` migrado, resto en mejora 28 |
 | 17 | ~~Open Terminal en modo MCP (Open WebUI + n8n)~~ | Media | — | **Completado** — `docs/24-open-terminal-mcp.md` |
 | 18 | OpenClaw — asistente personal de IA autoalojado | Media | Medio | Ollama ya desplegado si se apunta a modelos locales |
@@ -948,9 +1087,14 @@ Medio — la instalación en sí es un contenedor con almacenamiento NFS, y enca
 | 25 | ~~Authentik — authn/authz centralizado, piloto en Prometheus~~ | Media | — | **Completado** — `docs/27-authentik-sso.md`; solo Prometheus protegido, resto en mejora 29 |
 | 26 | Investigar tool-calling fiable — modelos locales (Ollama) y Bedrock/Claude (Bifrost) | Media | Medio | Open Terminal MCP ya desplegado (mejora 17, `docs/24`); ningún modelo probado completa una llamada de herramienta hoy |
 | 27 | Activar TLS en `postgres-main` | Media | Medio-alto | CA interna ya desplegada (`docs/15`); patrón ya probado con Valkey (mejora 24, `docs/25`) |
-| 28 | Migrar el resto de servicios del clúster a Infisical | Media | Medio | Infisical ya desplegado y patrón validado (mejora 16, `docs/26`) |
+| 28 | ~~Migrar el resto de servicios del clúster a Infisical~~ | Media | — | **Completado (parcial)** — `docs/26-infisical-secretos.md`; 9 servicios migrados, `registry`/`postgres-exporter`/`whisper-service`/`vllm` quedan para más adelante |
 | 29 | Integrar Authentik en el resto de paneles (OIDC nativo: Grafana, Portainer...) | Media | Medio | Authentik ya desplegado y patrón forward-auth validado (mejora 25, `docs/27`) |
 | 30 | Entorno de notebooks en el clúster (code-server / JupyterLab) para estudios de datos | Baja-media | Bajo-medio | Postgres/Qdrant y NFS del NAS ya disponibles; Authentik (mejora 25) para protegerlo; solo compensa si hace falta ejecución que sobreviva a la sesión de escritorio |
 | 31 | Nexus (u alternativa) como repositorio centralizado de paquetes, integrado con Forgejo | Baja | Medio | Forgejo (mejora 7) para la integración de CI; NFS del NAS ya disponible; experimento deliberado, no cubre carencia operativa hoy |
+| 32 | Dominio real + certificados Let's Encrypt (sustituye CA interna) | Media | Medio-alto | CA interna ya desplegada (`docs/15`); sinergia con mejora 35 (ACME nativo de Traefik) |
+| 33 | Migrar el clúster a Docker Swarm, progresivamente | Baja-media | Alto | Reversión consciente de la decisión "no Swarm" fijada en este `CLAUDE.md`; imágenes multi-arch ya resueltas para `apikey-service`/`markitdown-service` |
+| 34 | GitOps para las aplicaciones del clúster (propuestas a evaluar) | Media | Medio-alto | Depende de la propuesta elegida; sinergia con mejora 33 si se adopta Swarm |
+| 35 | Sustituir `nginx` por Traefik, integrado con Docker Swarm | Media | Alto | Depende en la práctica de la mejora 33 (Swarm) para aportar valor real sobre `nginx` |
+| 36 | Vigilancia y alertas del estado de parcheo de los nodos (SO), y su continuación en Swarm | Media | Bajo | Distinto de la mejora 6 (Ansible = idempotencia del tooling, no vigilancia); reutiliza el patrón de `check-image-updates.sh` (`docs/16`) y la alerta de disco (mejora 3) |
 
 Ninguna de estas mejoras es urgente ni bloqueante — el clúster funciona correctamente sin ellas.
