@@ -570,7 +570,7 @@ Bajo-medio — el despliegue es aún más ligero que LiteLLM (un único contened
 
 ---
 
-## 22. Integrar las métricas de Bifrost en Grafana
+## 22. Integrar el coste de las llamadas LLM (Bifrost) en Grafana, con vigilancia y alarmas
 
 **Prioridad: media**
 
@@ -590,10 +590,16 @@ Hoy solo es visible entrando al panel de Bifrost — no aparece junto al resto d
 2. El endpoint `/metrics` exige las credenciales de admin de Bifrost (`governance.auth_config`, ver `docs/23`) — configurar `basic_auth` en el propio `scrape_config` de Prometheus con `BIFROST_ADMIN_USERNAME`/`BIFROST_ADMIN_PASSWORD`.
 3. Confirmar si Prometheus necesita alcanzar `bifrost.home.arpa` por DNS interno (Pi-hole, ya resuelto para el resto del clúster) o si hace falta la IP directa — probar ambas antes de decidir.
 4. Panel nuevo en Grafana: gasto acumulado por modelo/proveedor (`bifrost_cost_total`), y si el resto de métricas expuestas lo permiten, latencia y volumen de peticiones — buscar primero un dashboard oficial de Bifrost en Grafana.com antes de construir uno desde cero, mismo criterio que el resto de dashboards importados del clúster (`docs/08-instalacion-pi2-observabilidad.md`).
-5. Con esto en Grafana, se podría además dar de baja el presupuesto con aviso manual por n8n propuesto en `docs/23` (sección "Seguimiento de coste") en favor de una alerta nativa de Grafana sobre `bifrost_cost_total` — a evaluar cuál de los dos caminos conviene más una vez se pruebe este.
+
+**Vigilancia y alarmas sobre el coste** (antes solo apuntado como posibilidad en el punto 5, ahora parte explícita del alcance de esta mejora):
+
+5. Regla de alerta en Grafana sobre `bifrost_cost_total` (incremento acumulado en una ventana diaria/mensual, no el contador crudo desde el arranque) por encima de un umbral a decidir — mismo patrón ya usado para la alerta de disco (mejora 3) y la de parcheo de nodos (mejora 36).
+6. Conectar esa alerta al canal de notificación proactivo (ntfy, mejora 4) en cuanto exista; hasta entonces, un *contact point* de correo o quedarse solo con el aviso visual del panel como mínimo viable.
+7. **Evaluar también el mecanismo nativo de presupuestos de Bifrost** (`governance.budgets`, `docs/23-bifrost-gateway-llm.md`, sección "Seguimiento de coste") como alternativa o complemento a la alerta de Grafana — Bifrost ya soporta presupuestos con umbral por *virtual key* y puede avisar/bloquear directamente en el propio gateway, sin depender de que Prometheus/Grafana estén sanos en ese momento. Decidir la fuente de verdad: solo uno de los dos mecanismos, o ambos con roles distintos (Bifrost bloquea en el gateway antes de que la petición cueste dinero, Grafana avisa para visibilidad humana centralizada junto al resto de alertas del clúster). Esto sustituye la idea descartada de un aviso manual por n8n que se apuntaba en `docs/23`.
+8. **"U otros"**: hoy Bifrost es el único gateway de coste LLM del clúster — si en el futuro se añaden más proveedores/gateways o interesa una herramienta de FinOps dedicada, generalizar este mismo panel/alerta en vez de duplicar el mecanismo; no es necesario hoy, se deja anotado para no perder el contexto si surge.
 
 ### Esfuerzo estimado
-Bajo — reutiliza infraestructura ya montada (Prometheus, Grafana, patrón de `scrape_config` con auth), el trabajo real es decidir qué paneles importan y probar el `basic_auth` contra Bifrost.
+Bajo-medio — la parte de métricas reutiliza infraestructura ya montada (Prometheus, Grafana, patrón de `scrape_config` con auth); el trabajo real añadido es decidir umbrales de coste razonables y si la alerta vive en Grafana, en el propio Bifrost, o en ambos.
 
 ---
 
@@ -972,7 +978,7 @@ Este mismo `CLAUDE.md` fija como decisión de arquitectura explícita: *"Docker 
 ### Qué haría falta
 
 1. **Decidir el alcance real primero**: ¿un único swarm con los 6 nodos, o empezar con un subconjunto? Swarm no exige arquitectura homogénea entre nodos (arm64 y amd64 conviven en el mismo clúster sin problema), pero cada *servicio* concreto sigue necesitando su propia imagen multi-arch si va a poder programarse en cualquier nodo — ya resuelto para `apikey-service`/`markitdown-service` (`docker buildx build --platform linux/amd64,linux/arm64`), no para `whisper-service` (amd64-only a propósito, necesita CUDA).
-2. **Quórum de managers**: Raft necesita mayoría de managers vivos para aceptar escrituras — con 6 nodos, un esquema típico serían 3 managers (impar, tolera 1 caída) y el resto workers. `ryzen`/`mole`, al ser el único nodo que se apaga habitualmente cuando no se usa (`docs/19-wake-on-lan.md`), es mal candidato a manager — como mínimo debería quedar como worker-only, o fuera del quórum por completo.
+2. **Quórum de managers, y `ryzen` fuera del propio Swarm**: Raft necesita mayoría de managers vivos para aceptar escrituras — con los nodos restantes, un esquema típico serían 3 managers (impar, tolera 1 caída) y el resto workers. `ryzen`/`mole` queda **decidido fuera del clúster Swarm por completo, ni siquiera como worker** (no solo "mal candidato a manager") — se apaga habitualmente cuando no se usa (`docs/19-wake-on-lan.md`) y aloja servicios especializados con alternancia de GPU (`switch-llm-backend.sh`/`switch-gpu1-backend.sh`) que no encajan con que el scheduler de Swarm decida dónde correr algo. Sigue gestionado con Docker Compose puro, tal cual hoy — detalle de las implicaciones de esta exclusión en la mejora 37.
 3. **Red overlay**: Swarm sustituye las redes bridge por nodo por una red overlay cifrada entre nodos vía VXLAN — revisar qué puertos hace falta abrir en el firewall gestionado hoy por `shared/scripts/setup-firewall.sh`/`toggle-direct-access.sh` (`docs/17-firewall-acceso-directo.md`), y si el tráfico VXLAN puede ir sin fricción por la LAN interna ya existente.
 4. **Migración incremental sugerida**: empezar por un servicio sin estado y de bajo riesgo (un microservicio propio, p. ej.) desplegado como `docker stack deploy` en paralelo al `docker-compose.yml` actual, verificar equivalencia funcional, y solo entonces plantear servicios con estado. Éstos son el caso realmente delicado: Swarm no resuelve por sí solo la persistencia multi-nodo — sigue haciendo falta bind-mount local, y el scheduler podría reprogramar el contenedor en otro nodo perdiendo acceso a sus propios datos si no se fija explícitamente con `constraints` (`node.hostname==retaco`, por ejemplo, para `postgres-main`).
 5. **`docker-compose.yml` no se traduce 1:1 a `docker stack deploy`** — Swarm ignora `build:` (haría falta ya tener las imágenes publicadas en `registry.home.arpa`, lo cual este repo ya cumple para los servicios propios) y trata algunas claves de forma distinta. Revisar cada `docker-compose.yml` del repo antes de asumir que basta con `docker stack deploy -c docker-compose.yml <nombre>`.
@@ -1056,6 +1062,30 @@ Bajo — reutiliza infraestructura ya montada (*textfile collector*, Grafana, el
 
 ---
 
+## 37. `ryzen` (mole) fuera del clúster Swarm — operativa como nodo Compose independiente
+
+**Prioridad: baja-media**
+
+### Qué hay hoy
+
+Decidido explícitamente (ver mejora 33, punto 2): si el resto del clúster migra a Docker Swarm, **`ryzen`/`mole` se queda fuera por completo**, ni siquiera como worker — sigue gestionado con Docker Compose puro, tal cual hoy. Motivo doble: es el único nodo que se apaga habitualmente cuando no se usa (`docs/19-wake-on-lan.md`, GPU de escritorio, no infraestructura siempre encendida) y aloja servicios especializados con alternancia manual de GPU (`ryzen/switch-llm-backend.sh` para GPU 0 ollama/vllm, `ryzen/switch-gpu1-backend.sh` para GPU 1 whisper-service/comfyui, `docs/07-instalacion-ryzen.md`) que dependen de que el operador controle explícitamente qué corre y cuándo — justo lo contrario de dejar que un scheduler decida.
+
+`ryzen` ya tiene hoy dos stacks de Compose completamente independientes (`docker-compose.yml` para GPU/AI, `docker-compose.observability.yml` para node-exporter/cadvisor sin `.env`) — esta pieza **ya existe y no necesita rehacerse** por la migración a Swarm de los demás nodos. Lo que sí falta es dejar explícita la operativa de un clúster mixto Swarm+Compose, para no dar por hecho luego que "todo el clúster" se comporta igual.
+
+### Qué haría falta
+
+1. **Networking**: si los otros 5 nodos pasan a una red overlay VXLAN (mejora 33, punto 3), `ryzen` se queda fuera de esa red — sigue expuesto solo por la LAN real vía `*.home.arpa`, exactamente como hoy (`docs/01-topologia.md`). No requiere ningún cambio en `ryzen/docker-compose.yml` ni en `docker-compose.observability.yml` por este motivo.
+2. **Traefik/nginx (mejora 35) no puede autodescubrir `ryzen`**: si `pi-dns` pasa a Traefik con *provider* de Docker Swarm, ese autodescubrimiento por labels solo ve contenedores dentro del propio Swarm — los servicios de `ryzen` (`ollama`, `vllm`, `open-webui`, `whisper-service`, `comfyui`) seguirán necesitando declararse a mano (vía IP/hostname fijo, como hoy con nginx) en vez de vía labels. Documentar esto como excepción permanente cuando se aborde la mejora 35, no como un pendiente de migrar más adelante.
+3. **`apikey-service` sigue protegiendo `ryzen` igual que hoy**: al no depender de redes Docker compartidas entre nodos (el `auth_request` de nginx/Traefik llama por HTTP sobre la LAN), la protección de `ollama` y demás servicios de `ryzen` no cambia con la migración del resto a Swarm.
+4. **Mantenimiento del nodo se queda en el mecanismo Compose actual, sin excepción**: `watchtower`, `check-image-updates.sh`, `update-stack.sh`, y los propios `switch-llm-backend.sh`/`switch-gpu1-backend.sh` (`docs/16-mantenimiento-actualizaciones.md`) — `ryzen` **nunca** pasa a los equivalentes nativos de Swarm (`docker service update --image`, mejora 33 punto 7, ni la vigilancia de imagen en modo Swarm de la mejora 36 punto 5), porque nunca entra en el Swarm. Dejarlo dicho explícitamente para que nadie intente aplicarle tooling de Swarm por costumbre una vez el resto del clúster lo use.
+5. **Wake-on-LAN no debe convertirse en una dependencia implícita del resto del clúster**: hoy `ryzen` es estrictamente *opt-in* — se despierta a propósito con `shared/scripts/wake-mole.sh` cuando hace falta. Al introducir Swarm/Traefik en el resto, revisar que ningún healthcheck, *service discovery* o regla de proxy asuma que `ryzen` está siempre disponible (p. ej. un `ForwardAuth`/*health check* con timeout corto contra un nodo apagado no debería degradar nada del resto del clúster, que sigue siendo independiente por diseño desde el principio, `docs/01-topologia.md`).
+6. **Documentación**: cuando la migración a Swarm de los otros nodos sea real (no solo backlog), actualizar `docs/01-topologia.md` y el propio `CLAUDE.md` para dejar constancia explícita de que `ryzen` es una excepción permanente gestionada con Compose — no un nodo pendiente de migrar en una fase futura.
+
+### Esfuerzo estimado
+Bajo — es principalmente una decisión de alcance ya tomada más su documentación; ningún trabajo de infraestructura nuevo, el `docker-compose.yml`/`docker-compose.observability.yml` de `ryzen` ya existen y no cambian por esto. El esfuerzo real está condicionado a que la mejora 33 llegue a implementarse.
+
+---
+
 ## Resumen
 
 | # | Mejora | Prioridad | Esfuerzo | Depende de |
@@ -1081,7 +1111,7 @@ Bajo — reutiliza infraestructura ya montada (*textfile collector*, Grafana, el
 | 19 | Opencode — agente de código open source para terminal | Media | Bajo | Ollama ya desplegado si se apunta a modelos locales |
 | 20 | LiteLLM — proxy unificado hacia AWS Bedrock, conectado a Open WebUI | Media | Medio | Cuenta/IAM de AWS; Open WebUI ya desplegado; alternativa a mejora 21 |
 | 21 | ~~Bifrost — gateway hacia AWS Bedrock, conectado a Open WebUI~~ | Media | — | **Completado** — `docs/23-bifrost-gateway-llm.md` |
-| 22 | Integrar las métricas de Bifrost (`/metrics`) en Grafana | Media | Bajo | Bifrost ya desplegado (`docs/23`); Prometheus/Grafana ya desplegados (`docs/08`) |
+| 22 | Coste de llamadas LLM (Bifrost) en Grafana, con vigilancia y alarmas | Media | Bajo-medio | Bifrost ya desplegado (`docs/23`, expone `bifrost_cost_total`); Prometheus/Grafana ya desplegados (`docs/08`); alerta conectable a ntfy (mejora 4) en cuanto exista |
 | 23 | ~~Mover `logs.db`/`config.db` de Bifrost a Postgres centralizado~~ | Media | — | **Completado** — `docs/23-bifrost-gateway-llm.md` |
 | 24 | ~~Servidor Valkey (compatible Redis) securizado — key-value + pub/sub~~ | Media | — | **Completado** — `docs/25-valkey-cache.md` |
 | 25 | ~~Authentik — authn/authz centralizado, piloto en Prometheus~~ | Media | — | **Completado** — `docs/27-authentik-sso.md`; solo Prometheus protegido, resto en mejora 29 |
@@ -1096,5 +1126,6 @@ Bajo — reutiliza infraestructura ya montada (*textfile collector*, Grafana, el
 | 34 | GitOps para las aplicaciones del clúster (propuestas a evaluar) | Media | Medio-alto | Depende de la propuesta elegida; sinergia con mejora 33 si se adopta Swarm |
 | 35 | Sustituir `nginx` por Traefik, integrado con Docker Swarm | Media | Alto | Depende en la práctica de la mejora 33 (Swarm) para aportar valor real sobre `nginx` |
 | 36 | Vigilancia y alertas del estado de parcheo de los nodos (SO), y su continuación en Swarm | Media | Bajo | Distinto de la mejora 6 (Ansible = idempotencia del tooling, no vigilancia); reutiliza el patrón de `check-image-updates.sh` (`docs/16`) y la alerta de disco (mejora 3) |
+| 37 | `ryzen` (mole) fuera del clúster Swarm — operativa como nodo Compose independiente | Baja-media | Bajo | Decisión de alcance de la mejora 33 (`ryzen` excluido, ni siquiera worker); documentación de la mejora 35 (Traefik no puede autodescubrirlo) |
 
 Ninguna de estas mejoras es urgente ni bloqueante — el clúster funciona correctamente sin ellas.
