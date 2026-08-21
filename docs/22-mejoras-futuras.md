@@ -1160,6 +1160,29 @@ Medio-alto — no es tanto trabajo nuevo en sí como una condición de diseño a
 
 ---
 
+## 40. DNS secundario del clúster — resolución de `*.home.arpa` sin depender solo de `pi-dns`
+
+**Prioridad: media**
+
+### Qué hay hoy
+
+`pi-dns` (Unbound + Pi-hole) es el único resolutor interno del dominio `home.arpa` de todo el clúster (`docs/06-instalacion-pi1-dns.md`) — confirmado en producción que, de vez en cuando, algunos nodos pierden la conexión con él y caen al DNS secundario configurado (router/DNS público). Ese secundario resuelve internet con normalidad, pero **no tiene ningún conocimiento de `home.arpa`** — el resultado no es "sin DNS", es "sin resolución interna" hasta que el nodo vuelve a elegir a `pi-dns` como primario. El problema de fondo no es la ausencia de un secundario, es que el secundario que ya existe no sirve para lo único que aquí importa.
+
+### Qué haría falta
+
+1. **Segundo Unbound + Pi-hole en otro nodo siempre encendido** — nunca `ryzen` (se apaga habitualmente, mismo motivo por el que queda excluido del resto de roles críticos, mejoras 33/37/39); candidatos naturales: `pi-utils` o `pi-obs`, a decidir por carga disponible en el momento de implementarlo.
+2. **Decisión abierta, no resuelta todavía**: alcance de la sincronización entre ambas instancias.
+   - **Pi-hole completo** (bloqueo de anuncios + registros locales replicados) — más completo, pero Pi-hole no trae sincronización nativa entre instancias lista para usar sin más (según versión, `Teleporter`/exportación manual o un script propio contra su API); duplica en la práctica el mantenimiento manual que ya existe hoy para los registros de `home.arpa` (`shared/dns/dns-records.md` + alta manual en Pi-hole, según el propio `CLAUDE.md`).
+   - **Solo Unbound** (sin Pi-hole en el secundario, sin bloqueo de anuncios ahí) — bastaría con mantener sincronizado un único fichero de zona/registros locales entre los dos nodos (la config de Unbound ya vive versionada en el repo, se replica sin más); reduce la superficie de sincronización al mínimo imprescindible: que ambos resuelvan `*.home.arpa` igual, sacrificando el bloqueo de anuncios en el camino secundario.
+3. **DHCP del router**: añadir la IP del nuevo nodo como servidor DNS secundario en vez de (o antes que) el DNS del router/público — `docs/02-plan-ip-y-dns.md` es donde vive hoy la asignación de IP/DNS del clúster.
+4. **Split DNS de Tailscale** (`docs/18-tailscale.md`): hoy apunta a una única IP (`192.168.1.170`) para resolver `home.arpa` dentro del tailnet — añadir la IP del secundario ahí también, o los clientes remotos seguirían teniendo el mismo punto único de fallo aunque la LAN local ya no lo tuviera.
+5. **Mantener los registros sincronizados de cara al futuro**: si se combina con la mejora 34 (GitOps) o con Ansible (mejora 6), la sincronización de zona/registros entre ambas instancias es candidata natural a automatizarse ahí en vez de quedarse como proceso manual duplicado para siempre.
+
+### Esfuerzo estimado
+Bajo-medio — el despliegue en sí reutiliza la config de Unbound/Pi-hole ya existente y versionada; el trabajo real está en decidir el alcance de la sincronización (punto 2) y no es bloqueante, el clúster funciona hoy sin esto, solo con el punto ciego ya descrito cuando `pi-dns` tiene un problema puntual.
+
+---
+
 ## Resumen
 
 | # | Mejora | Prioridad | Esfuerzo | Depende de |
@@ -1203,5 +1226,6 @@ Medio-alto — no es tanto trabajo nuevo en sí como una condición de diseño a
 | 37 | `ryzen` (mole) fuera del clúster Swarm — operativa como nodo Compose independiente | Baja-media | Bajo | Decisión de alcance de la mejora 33 (`ryzen` excluido, ni siquiera worker); documentación de la mejora 35 (Traefik no puede autodescubrirlo) |
 | 38 | Capacity planning con datos reales — `mem_limit`/`cpus` a partir de picos en Prometheus | Media | Bajo-medio | cAdvisor/Prometheus ya desplegados (`docs/04`, `docs/08`); inventario de servicios ya hecho (`docs/01`); GPU de `ryzen` queda fuera |
 | 39 | `pi-dns` fuera del clúster Swarm — solo DNS/Tailscale; Traefik en modo `global` dentro del swarm | Media | Medio-alto | Depende de las mejoras 32, 33 y 35; destino de `apikey-service` queda como decisión abierta |
+| 40 | DNS secundario del clúster — resolución de `*.home.arpa` sin depender solo de `pi-dns` | Media | Bajo-medio | Config de Unbound/Pi-hole ya versionada; alcance de sincronización (Pi-hole completo vs. solo Unbound) queda como decisión abierta |
 
 Ninguna de estas mejoras es urgente ni bloqueante — el clúster funciona correctamente sin ellas.
