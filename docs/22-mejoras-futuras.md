@@ -1086,6 +1086,32 @@ Bajo — es principalmente una decisión de alcance ya tomada más su documentac
 
 ---
 
+## 38. Capacity planning basado en datos reales — fijar `mem_limit`/`cpus` por servicio a partir de picos observados en Prometheus
+
+**Prioridad: media**
+
+### Qué hay hoy
+
+El inventario completo de servicios (`docs/01-topologia.md`, sección "Inventario de servicios por nodo") confirma que, de los ~61 contenedores del clúster, solo tres tienen restricción de memoria/CPU fijada: `crawl4ai-scraper-service` (`mem_limit: 2g`), `capataz-api` (`768m`) y `capataz-runner` (`1024m`). El resto corre **sin ningún límite Compose** — cualquier contenedor puede, en teoría, consumir toda la memoria del nodo y provocar que el OOM killer del kernel elija una víctima cualquiera, no necesariamente el propio contenedor problemático. El riesgo no es teórico: la mejora 30 ya midió `retaco` con solo 8,3 GiB disponibles compartidos entre `postgres-main`, `qdrant`, `n8n-main`, `registry`, Infisical, Authentik, `open-terminal-mcp` y ahora `valkey`/`epub2pdf`/`pdf2chunks` — y las Raspberry Pi (`pi-utils`, `pi-obs`, `pi-sonar`, `pi-dns`) tienen 7,7 GiB o menos.
+
+El clúster ya recoge, sin usarlo para esto, exactamente el dato que hace falta: cAdvisor (`docs/04-servicios-comunes.md`, desplegado en los 6 nodos) expone `container_memory_usage_bytes` y `container_cpu_usage_seconds_total` por contenedor a Prometheus (`pi-obs`), con la retención actual de 14 días — suficiente para un primer corte, aunque no para capturar picos estacionales raros.
+
+### Qué haría falta
+
+1. **Consulta PromQL por servicio**, no una estimación teórica por tipo de carga: `max_over_time(container_memory_usage_bytes{name="<servicio>"}[30d])` para memoria, y percentil alto (`quantile_over_time(0.99, rate(container_cpu_usage_seconds_total{name="<servicio>"}[5m])[30d:])`) para CPU, evitando fijar el límite sobre el pico absoluto de CPU (más ruidoso, con picos cortos normales) igual que sobre el máximo bruto de memoria (más estable, sí tiene sentido usar el máximo ahí).
+2. **Ventana representativa antes de fijar nada**: la retención actual de Loki/Prometheus en `pi-obs` es de 14 días (`docs/08-instalacion-pi2-observabilidad.md`) — puede no cubrir picos reales poco frecuentes (una ingesta masiva en n8n, un despliegue de SonarQube analizando un repo grande). Documentar explícitamente qué servicios tienen histórico fiable y cuáles no todavía; para estos últimos, cota provisional generosa + revisar pasado un tiempo, no un número inventado sin más.
+3. **Margen de seguridad sobre el pico observado** — no fijar el límite exactamente en el máximo histórico (un pico ligeramente mayor mañana mataría el contenedor sin aviso); 1,3–1,5× como punto de partida razonable, a ajustar por servicio según cuán predecible sea su carga.
+4. **Aplicar `mem_limit`/`cpus`** (sintaxis Compose v2 — no `deploy.resources.limits`, que es de Swarm y `docker compose up` la ignora en silencio, ver el propio inventario en `docs/01`) al `docker-compose.yml` de cada nodo, sirviéndose del patrón que ya usan `crawl4ai-scraper-service`/`capataz-api`/`capataz-runner` como referencia de estilo (comentario inline explicando de dónde sale el número, mismo criterio de "decisión no obvia documentada junto al código" que ya sigue el resto del repo).
+5. **Priorizar por nodo, no por servicio suelto**: empezar por `retaco` (más servicios con estado compartiendo memoria ajustada) y las Raspberry Pi antes que por `ryzen` (RAM de sobra en comparación) — mismo criterio de riesgo real ya aplicado en la mejora 30.
+6. **GPU en `ryzen` queda fuera de esta mejora**: `mem_limit`/`cpus` de Compose no acotan VRAM — la contención de GPU ya tiene su propio mecanismo (alternancia manual con `switch-llm-backend.sh`/`switch-gpu1-backend.sh`, `docs/07-instalacion-ryzen.md`), no hace falta ni tiene sentido duplicarlo aquí.
+7. **No es un ejercicio de una sola vez**: en cuanto un servicio cambie de patrón de uso real (más tráfico, un flujo de n8n nuevo activado, etc.), el límite fijado puede quedarse corto — revisar periódicamente contra el histórico real, no fijar y olvidar. Candidato a automatizarse más adelante con un script/playbook que recalcule sugerencias (encajaría con la mejora 6, Ansible, si esa migración llega a cubrir esta parte del tooling), pero el primer corte puede y debe hacerse a mano.
+8. **Panel en Grafana** con los servicios que siguen "sin límite" frente a los que ya lo tienen, mismo criterio de visibilidad centralizada que el resto de paneles de mantenimiento (mejora 3, mejora 36) — ayuda a no perder de vista cuántos quedan por revisar según se vaya avanzando.
+
+### Esfuerzo estimado
+Bajo-medio — las consultas PromQL y aplicar los límites son mecánicos; el trabajo real es decidir el margen de seguridad razonable por servicio y no romper nada en producción al aplicar el primer límite a un contenedor que hoy corre sin ninguno (aplicar de uno en uno, verificando después, no todos de golpe).
+
+---
+
 ## Resumen
 
 | # | Mejora | Prioridad | Esfuerzo | Depende de |
@@ -1127,5 +1153,6 @@ Bajo — es principalmente una decisión de alcance ya tomada más su documentac
 | 35 | Sustituir `nginx` por Traefik, integrado con Docker Swarm | Media | Alto | Depende en la práctica de la mejora 33 (Swarm) para aportar valor real sobre `nginx` |
 | 36 | Vigilancia y alertas del estado de parcheo de los nodos (SO), y su continuación en Swarm | Media | Bajo | Distinto de la mejora 6 (Ansible = idempotencia del tooling, no vigilancia); reutiliza el patrón de `check-image-updates.sh` (`docs/16`) y la alerta de disco (mejora 3) |
 | 37 | `ryzen` (mole) fuera del clúster Swarm — operativa como nodo Compose independiente | Baja-media | Bajo | Decisión de alcance de la mejora 33 (`ryzen` excluido, ni siquiera worker); documentación de la mejora 35 (Traefik no puede autodescubrirlo) |
+| 38 | Capacity planning con datos reales — `mem_limit`/`cpus` a partir de picos en Prometheus | Media | Bajo-medio | cAdvisor/Prometheus ya desplegados (`docs/04`, `docs/08`); inventario de servicios ya hecho (`docs/01`); GPU de `ryzen` queda fuera |
 
 Ninguna de estas mejoras es urgente ni bloqueante — el clúster funciona correctamente sin ellas.
