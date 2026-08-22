@@ -101,7 +101,24 @@ mount.nfs4: mounting ketekasko.home.arpa:/volume1/nfs-data failed, reason given 
 
 Probado tanto con la ruta "bonita" (`/nfs-data`) como con la ruta real del export (`/volume1/nfs-data`, confirmada con `showmount -e ketekasko.home.arpa`) — ambas fallan igual. **Causa**: NFSv4 usa un "pseudo-filesystem root" (normalmente un export especial con `fsid=0`) al que los clientes montan de forma relativa; sin ese export raíz configurado en el servidor, cualquier ruta v4 da `No such file or directory` aunque el export exista y esté bien permisado — confirmado montando la misma ruta con NFSv3 (que no usa pseudo-root, monta rutas reales directamente): monta sin problema y la escritura como `root` funciona (sin squash, tal como se configuró). Es decir, el export en sí está bien — es un hueco específico de v4 en cómo UGOS Pro genera `/etc/exports` desde la GUI (pensado para v3), no algo que dependa de `nfs.conf`/`nfs.json`.
 
-**Decisión tomada**: usar NFSv3 para el uso real (funciona perfectamente para bind mounts de Docker/Forgejo en esta LAN de confianza) y dejar NFSv4 como pendiente — arreglarlo del todo requeriría añadir a mano un export `fsid=0` en `/etc/exports` del NAS por SSH, sin garantía de que UGOS Pro no lo sobrescriba igual que hace con `nfs.conf`/`nfs.json`. Ver `docs/22-mejoras-futuras.md` si se retoma más adelante.
+**Decisión tomada**: usar NFSv3 para el uso real (funciona perfectamente para bind mounts de Docker/Forgejo en esta LAN de confianza) y descartar NFSv4 definitivamente en este NAS — ver el intento real y su resultado justo abajo (mejora 10, ya cerrada como no viable).
+
+### Intento real de arreglarlo (2026-08-22) — descartado, `/etc/exports` se revierte solo
+
+Retomado como mejora 10 (`docs/22-mejoras-futuras.md`). Pasos realizados por SSH en `ketekasko` (cuenta `linus`, con sudo — requirió antes activar el servicio de directorio home de usuario y el rol de administrador para esa cuenta en el Panel de control, ninguno de los dos estaba activo):
+
+1. Backup de `/etc/exports`.
+2. Añadido un export raíz `fsid=0` con `crossmnt`, antepuesto al export real ya existente:
+   ```
+   /volume1 192.168.1.0/24(ro,fsid=0,no_subtree_check,crossmnt)
+   /volume1/nfs-data 192.168.1.0/24(rw,async,no_wdelay,insecure_locks,no_root_squash,anonuid=65534,anongid=65534,sec=sys)
+   ```
+3. `sudo exportfs -ra` — aplicado sin error, `exportfs -v` mostró el pseudo-root activo (`fsid=0`, `crossmnt`).
+4. Montaje v4 desde un cliente Linux (`ryzen`), con la ruta relativa al pseudo-root: `sudo mount -t nfs4 ketekasko.home.arpa:/nfs-data /mnt/nfs-data-v4-test` — **funcionó**, `mount` confirmó `type nfs4 (rw,...,vers=4.2,...)`. `ls` inicial también correcto (mismo contenido que por v3).
+5. Al escribir un fichero de prueba como `root` (para confirmar el mismo comportamiento sin squash que v3): el `echo` de escritura devolvió éxito, pero **cualquier acceso posterior al mismo punto de montaje** (`ls`, `cat`, `rm`, incluso a la raíz del propio montaje) falló con `Stale file handle` / "`handle` de fichero en desuso".
+6. Investigando la causa: `/etc/exports` en el NAS **ya no contenía la línea del export raíz** — había vuelto sola a su estado original (solo `/volume1/nfs-data`, sin `fsid=0`) en el tiempo transcurrido entre el paso 4 y el paso 5 (unos pocos minutos), **sin que se tocara la GUI de UGOS Pro en ningún momento**. `diff` contra el backup del paso 1 confirmó que coincidían exactamente.
+
+**Conclusión**: UGOS Pro no solo reescribe `/etc/exports` al tocar la pantalla "Permiso NFS" de una carpeta (riesgo ya conocido para `nfs.conf`/`nfs.json`) — lo revierte también **de forma espontánea, en segundo plano**, sin ninguna interacción del usuario. Esto es peor que un simple fallo de montaje limpio: el pseudo-root puede desaparecer con un cliente activo ya montado, dejando el punto de montaje entero inservible (`ESTALE`) en mitad de una sesión — inaceptable para cualquier uso real, no solo una molestia de configuración inicial. **NFSv4 se descarta definitivamente en este NAS** — v3 sigue siendo la única opción viable mientras se use UGOS Pro. Mejora 10 cerrada como "investigada y descartada", no pendiente.
 
 ## Montar desde un cliente Linux
 

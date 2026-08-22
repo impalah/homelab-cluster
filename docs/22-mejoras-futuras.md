@@ -228,24 +228,24 @@ Bajo-medio — configuración, no código; el esfuerzo real es decidir la polít
 
 ---
 
-## 10. NAS UGREEN — migrar `nfs-data` a NFSv4
+## 10. ~~NAS UGREEN — migrar `nfs-data` a NFSv4~~ — completada (investigada y descartada, no viable en este NAS)
 
-**Prioridad: baja**
+**Prioridad: baja** — **completada**
+
+### Qué se investigó (2026-08-22)
+
+Retomada e investigada a fondo por SSH contra `ketekasko` (cuenta `linus`, con sudo — hubo que activar antes el servicio de directorio home de usuario y el rol de administrador para esa cuenta en el Panel de control de UGOS Pro, ninguno de los dos estaba operativo). Confirmado el mecanismo de `/etc/exports`: no hay ningún fichero tipo `nfs.json` que lo regenere, la GUI lo reescribe directamente al tocar la pestaña "Permiso NFS" de una carpeta.
+
+Se añadió a mano un export raíz `fsid=0` con `crossmnt` (`/volume1 192.168.1.0/24(ro,fsid=0,no_subtree_check,crossmnt)`, antepuesto al export real de `nfs-data`), aplicado con `exportfs -ra` sin error. El montaje NFSv4.2 desde un cliente Linux **funcionó** (`ketekasko.home.arpa:/nfs-data`, ruta relativa al pseudo-root) y la lectura inicial fue correcta. Pero al cabo de pocos minutos, **sin tocar la GUI en ningún momento**, `/etc/exports` en el NAS volvió solo a su estado original (sin el export raíz) — confirmado con `diff` contra un backup. El cliente, con el montaje ya activo, empezó a devolver `Stale file handle` en cualquier operación, incluida la raíz del propio punto de montaje.
+
+**Conclusión**: UGOS Pro revierte `/etc/exports` de forma espontánea en segundo plano, no solo al interactuar con su GUI — peor que un simple fallo de montaje, porque puede tumbar un montaje ya activo en mitad de una sesión. Inviable para cualquier uso real. Detalle completo del intento en `docs/21-configuracion-nas-ugreen.md`.
 
 ### Qué hay hoy
 
-NFSv3 funciona perfectamente para `nfs-data` (root sin squash, confirmado en uso real con bind mounts de Docker) — ver `docs/21-configuracion-nas-ugreen.md`. NFSv4 se negocia a nivel de kernel (`/proc/fs/nfsd/versions` muestra `+4`), pero los montajes v4 fallan con `No such file or directory` porque UGOS Pro no expone un pseudo-root de NFSv4 (`fsid=0`) en el `/etc/exports` que genera desde la GUI. Sin urgencia — v3 cubre el uso actual sin problema, se retoma cuando apetezca.
-
-### Qué haría falta
-
-1. Confirmar el mecanismo real que usa UGOS Pro para generar `/etc/exports` (¿desde `nfs.json`, igual que `nfs.conf`, o desde otro sitio?) antes de tocarlo a mano — mismo riesgo ya conocido de que la GUI lo sobrescriba en cuanto se vuelva a tocar esa pantalla.
-2. Añadir a mano, por SSH, un export raíz con `fsid=0` (p. ej. algo del estilo `/volume1 192.168.1.0/24(ro,fsid=0,no_subtree_check)`, o el ajuste equivalente si UGOS Pro expone alguna opción para esto en la GUI que no se haya encontrado todavía).
-3. Probar montaje v4 desde un cliente Linux con la ruta relativa a esa raíz (no la ruta real `/volume1/nfs-data` usada hoy con v3).
-4. Si funciona: actualizar `docs/21-configuracion-nas-ugreen.md` y el `/etc/fstab` de los clientes que usen `nfs-data`.
-5. Si UGOS Pro no lo permite de forma estable (revierte el export raíz al tocar la GUI): documentar como limitación permanente del NAS y descartar el punto, quedándose en v3 definitivamente.
+NFSv3 sigue siendo la única opción viable en este NAS mientras se use UGOS Pro (root sin squash, confirmado en uso real con bind mounts de Docker) — ver `docs/21-configuracion-nas-ugreen.md`. No hay plan de reintentar NFSv4 salvo que UGOS Pro cambie su comportamiento en una actualización futura de firmware.
 
 ### Esfuerzo estimado
-Bajo-medio — la parte técnica es sencilla si UGOS Pro lo permite; la incertidumbre real es si la GUI lo revierte.
+Ya invertido — bajo-medio, como se estimaba. El resultado fue negativo, no un problema de esfuerzo.
 
 ---
 
@@ -1210,7 +1210,7 @@ Bajo-medio — el despliegue en sí reutiliza la config de Unbound/Pi-hole ya ex
 | 7 | Forgejo (repos + CI + artefactos), con GitHub como espejo | Media | Alto | Punto 2 (ya cumplido) |
 | 8 | ~~Registry: limpieza y garbage collection~~ | Media | Bajo | **Implementado (uso manual)** — `docs/29-registry-mantenimiento.md`; alerta de disco diferida a la mejora 3 |
 | 9 | Tailscale: política de ACL | Baja | Bajo-medio | Tailscale ya desplegado (`docs/18`) |
-| 10 | NAS UGREEN: migrar `nfs-data` a NFSv4 | Baja | Bajo-medio | NAS ya configurado en NFSv3 (`docs/21`) |
+| 10 | ~~NAS UGREEN: migrar `nfs-data` a NFSv4~~ — completada | Baja | — | Investigado en real: UGOS Pro revierte `/etc/exports` solo, sin tocar la GUI — inviable. NFSv3 definitivo (`docs/21`) |
 | 11 | k6 para pruebas de carga automatizadas | Media | Bajo-medio | Prometheus/Grafana ya desplegados (`docs/08`) |
 | 12 | RAG de libros en PDF desde Open WebUI | Media | Medio | `markitdown-service`, Qdrant y Ollama ya desplegados |
 | 13 | Copiar logs/métricas de pi-obs al NAS | Media | Medio | NFS del NAS ya montado (`docs/21`) |
