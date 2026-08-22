@@ -1,6 +1,6 @@
 # homelab-cluster
 
-Infraestructura doméstica distribuida en 6 nodos: dos PCs (Ryzen 9 y MiniPC Ryzen 5) y 4 Raspberry Pi 5. Orquestación con Docker Engine + Docker Compose v2. Sin Kubernetes. Sin Docker Swarm. Además del clúster, la misma LAN aloja un NAS UGREEN (`ketekasko`) que no está gestionado por Docker — ver la sección "NAS UGREEN" más abajo.
+Infraestructura doméstica distribuida en 7 nodos: tres PCs (Ryzen 9, MiniPC Ryzen 5 y GMKtec NucBox G10 Pro) y 4 Raspberry Pi 5. Orquestación con Docker Engine + Docker Compose v2. Sin Kubernetes. Docker Swarm todavía no desplegado (mejora 33, `docs/22-mejoras-futuras.md`, en backlog). Además del clúster, la misma LAN aloja un NAS UGREEN (`ketekasko`) que no está gestionado por Docker — ver la sección "NAS UGREEN" más abajo.
 
 ---
 
@@ -14,6 +14,7 @@ Infraestructura doméstica distribuida en 6 nodos: dos PCs (Ryzen 9 y MiniPC Ryz
 | pi-obs.home.arpa  | 192.168.1.171   | Observabilidad (OTel, Prometheus, Grafana, Loki, Tempo)|
 | pi-sonar.home.arpa| 192.168.1.172   | SonarQube (base de datos en retaco)                  |
 | pi-utils.home.arpa| 192.168.1.173   | Utilidades: RSSHub, markitdown-service, crawl4ai-scraper-service, n8n-aux |
+| pinchi.home.arpa  | 192.168.1.175   | Nodo nuevo (2026-08-22) — solo sistema base, servicios sin decidir todavía (`docs/30-instalacion-pinchi.md`) |
 
 ---
 

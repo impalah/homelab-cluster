@@ -11,6 +11,7 @@
 | pi-obs.home.arpa | 192.168.1.171 |
 | pi-sonar.home.arpa | 192.168.1.172 |
 | pi-utils.home.arpa | 192.168.1.173 |
+| pinchi.home.arpa | 192.168.1.175 |
 | ketekasko.home.arpa (NAS UGREEN, fuera del clúster Docker) | 192.168.1.180 |
 
 > La IP del NAS se configura directamente en el propio dispositivo (panel de UGOS Pro), no mediante Netplan ni reserva DHCP del router — ver `docs/21-configuracion-nas-ugreen.md`.
@@ -68,6 +69,7 @@ Si Pi-hole no está disponible durante el arranque inicial, se puede añadir man
 192.168.1.171  pi-obs.home.arpa
 192.168.1.172  pi-sonar.home.arpa
 192.168.1.173  pi-utils.home.arpa
+192.168.1.175  pinchi.home.arpa
 192.168.1.180  ketekasko.home.arpa
 ```
 

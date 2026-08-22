@@ -2,7 +2,7 @@
 
 ## Qué es este clúster
 
-Se trata de seis nodos conectados a la misma red local doméstica, sin Kubernetes ni Docker Swarm: cada nodo tiene su propio fichero `docker-compose.yml` independiente, y se gestiona a mano (o mediante los scripts de `shared/scripts/`) por SSH. El nodo `pi-dns` actúa como única "puerta de entrada", mediante nginx y un sistema propio de claves de API (`apikey-service`); el resto de los nodos no son directamente accesibles por su nombre de host sin pasar antes por ese punto.
+Se trata de siete nodos conectados a la misma red local doméstica. Docker Swarm todavía no está desplegado (mejora 33, `docs/22-mejoras-futuras.md`, en backlog) — hoy cada nodo tiene su propio fichero `docker-compose.yml` independiente, y se gestiona a mano (o mediante los scripts de `shared/scripts/`) por SSH. El nodo `pi-dns` actúa como única "puerta de entrada", mediante nginx y un sistema propio de claves de API (`apikey-service`); el resto de los nodos no son directamente accesibles por su nombre de host sin pasar antes por ese punto.
 
 | Nodo | IP | Función en una frase |
 |---|---|---|
@@ -12,8 +12,9 @@ Se trata de seis nodos conectados a la misma red local doméstica, sin Kubernete
 | `pi-obs` | 192.168.1.171 | Observabilidad: métricas, registros, trazas, paneles |
 | `pi-sonar` | 192.168.1.172 | Análisis estático de código (SonarQube) + gateway LLM hacia AWS Bedrock y Ollama (Bifrost) |
 | `pi-utils` | 192.168.1.173 | Utilidades: RSS, conversión/scraping de documentos, gestión de Docker, contraseñas, consola de automatización del clúster (Capataz) |
+| `pinchi` | 192.168.1.175 | Nodo nuevo (2026-08-22) — solo sistema base provisionado, servicios todavía sin decidir. Ver `docs/30-instalacion-pinchi.md` |
 
-> La misma red local aloja además un séptimo dispositivo, el NAS UGREEN NASync `ketekasko` (192.168.1.180) — no es un nodo del clúster Docker (no tiene `docker-compose.yml` ni directorio propio en este repo), pero sí resuelve por DNS interno y aparece como tarjeta en el panel `index.home.arpa`. Detalle completo en `docs/21-configuracion-nas-ugreen.md`.
+> La misma red local aloja además un octavo dispositivo, el NAS UGREEN NASync `ketekasko` (192.168.1.180) — no es un nodo del clúster Docker (no tiene `docker-compose.yml` ni directorio propio en este repo), pero sí resuelve por DNS interno y aparece como tarjeta en el panel `index.home.arpa`. Detalle completo en `docs/21-configuracion-nas-ugreen.md`.
 
 ## Diagrama físico
 
@@ -31,6 +32,7 @@ flowchart TB
     Switch --- piobs["pi-obs\n192.168.1.171\nRaspberry Pi 5"]
     Switch --- pisonar["pi-sonar\n192.168.1.172\nRaspberry Pi 5"]
     Switch --- piutils["pi-utils\n192.168.1.173\nRaspberry Pi 5"]
+    Switch --- pinchi["pinchi\n192.168.1.175\nPC GMKtec NucBox G10 Pro\n(solo sistema base)"]
     Switch --- nas["ketekasko (NAS UGREEN)\n192.168.1.180\nfuera del clúster Docker"]
 ```
 
@@ -262,6 +264,7 @@ Cada nodo (salvo `ryzen`) tiene su propio usuario de administración dedicado, d
 | `pi-obs` | `u-obs` | `ssh u-obs@192.168.1.171` | `sudo`, `docker` |
 | `pi-sonar` | `u-sonar` | `ssh u-sonar@192.168.1.172` | `sudo`, `docker` |
 | `pi-utils` | `u-utils` | `ssh u-utils@192.168.1.173` | `sudo`, `docker` |
+| `pinchi` | `u-forge` | `ssh u-forge@192.168.1.175` | `sudo`, `docker` |
 
 `ryzen` (alias `mole`) es también el puesto de trabajo físico del usuario — los comandos que en el resto de nodos requieren `ssh <usuario>@<ip>` se ejecutan ahí directamente en local, sin salto de red. Todos los usuarios de las Raspberry Pi/`retaco` están en el grupo `sudo` (tareas de sistema: `apt`, `systemctl`, edición de `/etc/fstab`...) y en el grupo `docker` (gestionar contenedores sin anteponer `sudo` a cada `docker compose`).
 
@@ -339,3 +342,6 @@ Los documentos de `docs/` están numerados siguiendo el orden real en que hay qu
 | 25 | `docs/25-valkey-cache.md` | Valkey (`retaco`): caché clave-valor compartido, sin persistencia, ACL sin usuario por defecto |
 | 26 | `docs/26-infisical-secretos.md` | Infisical (`retaco`): gestor de secretos para consumo entre máquinas — Postgres dedicado, Valkey reutilizado, `apikey-service` migrado como piloto. Decisiones formales en `docs/adr/` (0001: mecanismo de inyección; 0002: Postgres dedicado) |
 | 27 | `docs/27-authentik-sso.md` | Authentik (`retaco`): SSO/authn para personas — Postgres compartido con `postgres-main`, sin Redis, secretos vía Infisical desde el arranque. `prometheus.home.arpa` protegido con forward-auth como piloto |
+| 28 | `docs/28-capataz-consola-automatizacion.md` | Capataz (`pi-utils`): consola de estado y automatización del clúster, sustituye al panel estático de `index.home.arpa`. Login real con Authentik, frontend en contenedor propio |
+| 29 | `docs/29-registry-mantenimiento.md` | Mantenimiento de `registry.home.arpa`: limpieza y garbage collection de imágenes |
+| 30 | `docs/30-instalacion-pinchi.md` | Instalación de `pinchi` (nodo nuevo, 192.168.1.175): sistema base, usuario `u-forge`, Docker listo para Swarm sin inicializar todavía |

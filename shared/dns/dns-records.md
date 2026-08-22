@@ -12,6 +12,7 @@ Estos registros deben añadirse en la interfaz de Pi-hole: **Local DNS → DNS R
 | `pi-obs.home.arpa` | `192.168.1.171` | Raspberry Pi 5 #2 (observabilidad) |
 | `pi-sonar.home.arpa` | `192.168.1.172` | Raspberry Pi 5 #3 (SonarQube) |
 | `pi-utils.home.arpa` | `192.168.1.173` | Raspberry Pi 5 #4 (utilidades) |
+| `pinchi.home.arpa` | `192.168.1.175` | PC GMKtec NucBox G10 Pro — sistema base provisionado, sin servicios decididos todavía (`docs/30-instalacion-pinchi.md`) |
 
 ## Servicios (apuntan a pi-dns — nginx hace el proxy)
 

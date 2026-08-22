@@ -22,7 +22,7 @@ NODE="${1:-}"
 
 if [ -z "${NODE}" ]; then
   echo "[ERROR] Debes indicar el nodo. Uso: prepare-host.sh <nodo>"
-  echo "        Nodos válidos: ryzen | retaco | pi-dns | pi-obs | pi-sonar | pi-utils"
+  echo "        Nodos válidos: ryzen | retaco | pi-dns | pi-obs | pi-sonar | pi-utils | pinchi"
   exit 1
 fi
 
@@ -132,9 +132,21 @@ case "${NODE}" in
     chown -R 1000:1000 "${BASE}/pi-utils/n8n-aux/"
     ;;
 
+  pinchi)
+    # Nodo nuevo (192.168.1.175, docs/30-instalacion-pinchi.md) — solo sistema
+    # base provisionado por ahora, sin servicios decididos todavía. Sin
+    # subdirectorios propios que crear aún; cuando se decida qué corre aquí,
+    # añadir su caso completo como el resto de nodos (ver retaco/pi-utils más
+    # arriba para el patrón: create_dir + chown específico si el UID del
+    # contenedor no coincide con el del usuario que despliega).
+    create_dir "${BASE}/pinchi"
+    create_dir "${BASE}/backups/pinchi"
+    chown -R "${DEPLOY_USER}:${DEPLOY_USER}" "${BASE}/pinchi" "${BASE}/backups/pinchi"
+    ;;
+
   *)
     echo "[ERROR] Nodo desconocido: '${NODE}'"
-    echo "        Nodos válidos: ryzen | retaco | pi-dns | pi-obs | pi-sonar | pi-utils"
+    echo "        Nodos válidos: ryzen | retaco | pi-dns | pi-obs | pi-sonar | pi-utils | pinchi"
     exit 1
     ;;
 esac

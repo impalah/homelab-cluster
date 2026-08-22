@@ -34,6 +34,7 @@ HOSTS='[
   "192.168.1.171 pi-obs.home.arpa",
   "192.168.1.172 pi-sonar.home.arpa",
   "192.168.1.173 pi-utils.home.arpa",
+  "192.168.1.175 pinchi.home.arpa",
   "192.168.1.170 pihole.home.arpa",
   "192.168.1.170 index.home.arpa",
   "192.168.1.170 capataz-api.home.arpa",
