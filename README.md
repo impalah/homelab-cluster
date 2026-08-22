@@ -39,10 +39,28 @@ Infraestructura doméstica distribuida en 6 nodos: dos PCs (Ryzen 9 y MiniPC Ryz
 | vaultwarden.home.arpa       | pi-utils.home.arpa  | 8222            |
 | apikey.home.arpa            | pi-dns.home.arpa    | 8090            |
 | registry.home.arpa          | retaco.home.arpa    | 5000            |
-| index.home.arpa             | pi-dns.home.arpa    | — (estático, sin proxy; `/api/` → pi-utils.home.arpa:8000) |
+| index.home.arpa             | pi-utils.home.arpa  | 8090 (capataz-frontend) |
+| capataz-api.home.arpa       | pi-utils.home.arpa  | 8000            |
 | old.index.home.arpa         | pi-dns.home.arpa    | — (estático, sin proxy) |
 
-`index.home.arpa` sirve ahora el frontend de **Capataz** (consola de estado y automatización del clúster) — build estático desplegado a mano, `api`/`runner` en `pi-utils`. El antiguo panel HTML de tarjetas se movió a `old.index.home.arpa`. Ver `docs/28-capataz-consola-automatizacion.md`.
+`index.home.arpa` sirve ahora el frontend de **Capataz** (consola de estado y automatización del clúster) — contenedor propio (`capataz-frontend`) en `pi-utils`, junto a `capataz-api`/`capataz-runner`. `capataz-api` tiene también su propio hostname (`capataz-api.home.arpa`) en vez de exponerse solo por IP:puerto — lo usa el propio `capataz-frontend` para reenviar `/api/`. El antiguo panel HTML de tarjetas se movió a `old.index.home.arpa`. Ver `docs/28-capataz-consola-automatizacion.md`.
+
+---
+
+## Dominio real (piloto en curso — mejora 32)
+
+Todo el TLS del clúster usa hoy una CA interna autofirmada (`*.home.arpa`, `docs/15-ca-interna.md`), que exige instalarla a mano en cada dispositivo cliente. Piloto en marcha para sustituirla por un dominio real propio (`404labo.net`) con certificados Let's Encrypt de verdad — validado, de momento, en un único hostname antes de decidir migrar el resto:
+
+| Hostname                    | Nodo destino        | Puerto upstream |
+|-----------------------------|---------------------|-----------------|
+| home.404labo.net            | pi-utils.home.arpa  | 8090 (capataz-frontend) |
+| capataz-api.404labo.net     | pi-utils.home.arpa  | 8000            |
+
+Mismos servicios que `index.home.arpa`/`capataz-api.home.arpa` (SNI selecciona el certificado correcto según el hostname pedido) — certificado wildcard real (`*.404labo.net` + apex `404labo.net`), emitido con `acme.sh` vía reto DNS-01. Login OIDC contra Authentik ya funciona también desde este dominio (Redirect URI propio registrado en el provider `Capataz`).
+
+Estos hostnames **resuelven solo en la LAN interna** (Pi-hole) — no hay ningún registro A público para `404labo.net`, así que no hay superficie expuesta a internet por este piloto.
+
+Pendiente antes de generalizar a más hostnames: la renovación automática (cada 90 días) requiere que el proveedor DNS tenga API — el registrador actual (Dinahosting) no la tiene, así que el piloto se validó con el reto DNS-01 aplicado a mano. Decisión tomada: migrar la gestión DNS de `404labo.net` a una hosted zone completa en AWS Route53, provisionada con Terraform, para automatizar la renovación con el plugin `dns_aws` de `acme.sh`. Detalle completo en `docs/22-mejoras-futuras.md`, mejora 32.
 
 ---
 

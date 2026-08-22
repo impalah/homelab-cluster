@@ -36,6 +36,7 @@ HOSTS='[
   "192.168.1.173 pi-utils.home.arpa",
   "192.168.1.170 pihole.home.arpa",
   "192.168.1.170 index.home.arpa",
+  "192.168.1.170 capataz-api.home.arpa",
   "192.168.1.170 old.index.home.arpa",
   "192.168.1.170 openwebui.home.arpa",
   "192.168.1.170 n8n.home.arpa",
@@ -60,7 +61,9 @@ HOSTS='[
   "192.168.1.170 pdf2chunks.home.arpa",
   "192.168.1.170 open-terminal.home.arpa",
   "192.168.1.170 infisical.home.arpa",
-  "192.168.1.170 authentik.home.arpa"
+  "192.168.1.170 authentik.home.arpa",
+  "192.168.1.170 home.404labo.net",
+  "192.168.1.170 capataz-api.404labo.net"
 ]'
 
 echo "[INFO] Autenticando en ${PIHOLE_URL}..."

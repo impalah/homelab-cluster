@@ -18,7 +18,8 @@ Estos registros deben añadirse en la interfaz de Pi-hole: **Local DNS → DNS R
 | Nombre de host | IP | Servicio real | Puerto real |
 |---|---|---|---|
 | `pihole.home.arpa` | `192.168.1.170` | Panel admin de Pi-hole (contenedor `pihole`) | 80 |
-| `index.home.arpa` | `192.168.1.170` | Frontend de Capataz (consola de estado/automatización del clúster) — build estático servido directo por nginx, `/api/` proxifica a `pi-utils.home.arpa:8000` | — / 8000 (api) |
+| `index.home.arpa` | `192.168.1.170` | Frontend de Capataz (consola de estado/automatización del clúster) — proxy puro hacia el contenedor `capataz-frontend` en `pi-utils.home.arpa:8090` (su propio nginx reenvía `/api/` a `capataz-api.home.arpa`) | 8090 |
+| `capataz-api.home.arpa` | `192.168.1.170` | capataz-api en `pi-utils` — auth propia (OIDC/Authentik), no protegido con apikey-service. Referenciado por `capataz-frontend` (en vez de un alias de red Docker) para sobrevivir a Swarm sin cambios — ver `docs/28-capataz-consola-automatizacion.md` | 8000 |
 | `old.index.home.arpa` | `192.168.1.170` | Panel estático original de acceso a los servicios del clúster (HTML servido directo por nginx, sin proxy) — movido aquí al desplegar Capataz en `index.home.arpa` | — |
 | `openwebui.home.arpa` | `192.168.1.170` | Open-WebUI en retaco (migrado desde ryzen, ver `docs/23-bifrost-gateway-llm.md`) | 8080 |
 | `n8n.home.arpa` | `192.168.1.170` | n8n-main en retaco | 5678 |
@@ -44,6 +45,15 @@ Estos registros deben añadirse en la interfaz de Pi-hole: **Local DNS → DNS R
 | `open-terminal.home.arpa` | `192.168.1.170` | open-terminal-mcp (servidor MCP) en retaco — protegido con apikey-service, obligatorio (el transporte MCP no tiene auth propia, ver `docs/24-open-terminal-mcp.md`) | 8005 |
 | `infisical.home.arpa` | `192.168.1.170` | Infisical (gestor de secretos) en retaco — auth propia, no protegido con apikey-service. Ver `docs/26-infisical-secretos.md` | 8006 |
 | `authentik.home.arpa` | `192.168.1.170` | Authentik (SSO/authn para personas) en retaco — auth propia, no protegido con apikey-service. Ver `docs/27-authentik-sso.md` | 9000 |
+
+## Piloto de dominio real (mejora 32, `docs/22-mejoras-futuras.md`)
+
+| Nombre de host | IP | Servicio real | Puerto real |
+|---|---|---|---|
+| `home.404labo.net` | `192.168.1.170` | Mismo frontend de Capataz que `index.home.arpa`, servido con certificado Let's Encrypt real (wildcard `*.404labo.net` + `404labo.net`, DNS-01) en vez de la CA interna — piloto para validar el mecanismo antes de migrar el resto de hostnames | 8090 |
+| `capataz-api.404labo.net` | `192.168.1.170` | Mismo capataz-api que `capataz-api.home.arpa`, con el mismo certificado Let's Encrypt real que `home.404labo.net` — paridad de dominio, no referenciado hoy por ningún servicio (`capataz-frontend` usa `capataz-api.home.arpa`) | 8000 |
+
+Este registro resuelve **solo en la LAN interna** (vía Pi-hole) — no existe ningún registro A público para `home.404labo.net` ni para el resto de `404labo.net`; la validación DNS-01 del certificado usa únicamente el registro TXT temporal `_acme-challenge.404labo.net`, sin necesidad de exponer la topología del clúster a internet.
 
 ## Alias directos (sin proxy — no son HTTP)
 

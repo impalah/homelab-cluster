@@ -3,7 +3,7 @@ name: homelab-pi-utils
 # =============================================================================
 # Stack del nodo pi-utils (192.168.1.173)
 # Servicios: rsshub, markitdown-service (build local), n8n-aux, capataz-api,
-# capataz-runner
+# capataz-runner, capataz-frontend
 # =============================================================================
 
 # ---------------------------------------------------------------------------
@@ -408,6 +408,78 @@ services:
       timeout: 10s
       retries: 3
       start_period: 45s
+
+  # ---------------------------------------------------------------------------
+  # capataz-frontend — Frontend de Capataz (SPA), servido por el contenedor
+  # nginx propio del repo de Capataz (frontend/Dockerfile), en vez del build
+  # estático desplegado a mano en pi-dns hasta ahora (ver docs/28). A partir
+  # de este cambio, pi-dns pasa a ser proxy puro para index.home.arpa/
+  # home.404labo.net — ver pi-dns/config/nginx/nginx.conf y docs/28.
+  #
+  # Config en tiempo de ejecución (CAPATAZ_FRONTEND_*) renderizada por el
+  # propio /docker-entrypoint.d/40-render-runtime-config.sh de la imagen en
+  # cada arranque (envsubst) — ya no hace falta re-renderizar config.js a
+  # mano tras cada cambio, a diferencia del despliegue estático anterior.
+  # Mismos valores que ya estaban en vivo en /srv/homelab/pi-dns/nginx/
+  # capataz-html/config.js (login real vía Authentik, ver docs/28 "Estado
+  # actual — login real con Authentik").
+  #
+  # frontend/nginx/default.conf (horneado en la imagen) trae un
+  # "proxy_pass http://api:8000;" fijo para /api/ — sobreescrito con un
+  # bind-mount propio (pi-utils/config/capataz-frontend/default.conf) que
+  # reenvía a "https://capataz-api.home.arpa" en vez de un alias de red
+  # Docker: mismo patrón que ya usa el propio capataz-api para referenciar
+  # otros servicios del clúster (CAPATAZ_PORTAINER_URL, CAPATAZ_GRAFANA_URL...),
+  # y robusto de cara a Swarm (routing mesh) si capataz-api/capataz-frontend
+  # acaban en nodos distintos — ver comentario completo en ese fichero.
+  # ---------------------------------------------------------------------------
+  capataz-frontend:
+    # Imagen del registry privado del clúster (registry.home.arpa), NO se
+    # construye aquí — build/push multi-arch (linux/amd64,linux/arm64,
+    # necesario: este nodo es arm64) vive en frontend/Makefile del propio
+    # repo de Capataz ("make docker-build"), igual que capataz-api/capataz-runner.
+    image: registry.home.arpa/capataz-frontend:latest
+    container_name: capataz-frontend
+    restart: unless-stopped
+    environment:
+      CAPATAZ_FRONTEND_API_BASE_URL: /api/v1
+      CAPATAZ_FRONTEND_USE_MSW: "false"
+      CAPATAZ_FRONTEND_DEV_USER: ""
+      CAPATAZ_FRONTEND_OIDC_ISSUER: https://authentik.home.arpa/application/o/capataz/
+      CAPATAZ_FRONTEND_OIDC_CLIENT_ID: capataz
+      CAPATAZ_FRONTEND_OIDC_SCOPE: openid profile email groups
+    volumes:
+      - ./config/capataz-frontend/default.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "8090:80"
+    networks:
+      - pi-utils-net
+    depends_on:
+      capataz-api:
+        condition: service_healthy
+    # Mismo endurecimiento que trae el docker-compose.yml standalone del
+    # propio repo de Capataz (frontend/docker-compose.yml) — filesystem
+    # de solo lectura salvo el tmpfs que necesita el propio nginx y el
+    # config.js renderizado en tiempo de arranque.
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+      - /var/cache/nginx:rw,noexec,nosuid,size=32m
+      - /var/run:rw,noexec,nosuid,size=8m
+      - /config-runtime:rw,noexec,nosuid,size=1m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:80/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   # ---------------------------------------------------------------------------
   # node-exporter — Métricas del sistema host, scrapeadas por Prometheus en pi-obs
