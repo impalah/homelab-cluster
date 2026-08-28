@@ -1,0 +1,98 @@
+# Fase 4 (docs/31-docker-swarm.md): cuarto servicio con estado migrado al
+# swarm. `constraints: node.hostname==pi-utils` -- los datos (SQLite propio
+# en /home/node/.n8n) siguen en el mismo bind-mount de siempre. Reutiliza
+# directamente las rutas ya preparadas en pi-utils (infisical-cli, CA,
+# datos). A diferencia de n8n-main, SIN dependencias cruzadas por alias de
+# red Docker -- SQLite local, sin Postgres, confirmado por grep antes de
+# migrar (docs/31-docker-swarm.md).
+#
+# ⚠️ N8N_ENCRYPTION_KEY es irreversible una vez fijada (CLAUDE.md) -- NO
+# vive aquí, se inyecta vía Infisical (path /n8n-aux/) exactamente igual que
+# en el Compose clásico que sustituye.
+version: "3.8"
+
+services:
+  n8n-aux:
+    image: n8nio/n8n:latest
+    environment:
+      DB_TYPE: sqlite
+      DB_SQLITE_VACUUM_ON_STARTUP: "true"
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      # Mejora 41 (2026-08-28): sin workflows con nodo webhook en absoluto
+      # (auditado el SQLite antes de este cambio) -- sin riesgo de llamador
+      # externo roto.
+      N8N_HOST: n8n-aux.404labo.net
+      N8N_PORT: 5679
+      N8N_PROTOCOL: https
+      N8N_WEBHOOK_URL: https://n8n-aux.404labo.net/
+      GENERIC_TIMEZONE: Europe/Madrid
+      N8N_LOG_LEVEL: info
+      N8N_RUNNERS_BROKER_PORT: "5680"
+      N8N_PROXY_HOPS: "1"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
+      N8N_UNVERIFIED_PACKAGES_ENABLED: "true"
+      N8N_RUNNERS_TASK_TIMEOUT: "300"
+      N8N_COMPRESSION_NODE_MAX_DECOMPRESSED_SIZE_BYTES: "2147483648"
+      N8N_COMPRESSION_NODE_MAX_ZIP_ENTRIES: "5000"
+      # NODE_EXTRA_CA_CERTS/SSL_CERT_FILE hacen falta -- Node no trae un
+      # almacén de CAs del sistema en esta imagen (hallazgo real, ver
+      # apikey-service). homelab-ca.crt es un bundle combinado (CA interna +
+      # almacén público estándar).
+      NODE_EXTRA_CA_CERTS: /etc/ssl/certs/homelab-ca.crt
+      SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
+      INFISICAL_DOMAIN: https://infisical.404labo.net/api
+    volumes:
+      - /srv/homelab/pi-utils/n8n-aux/data:/home/node/.n8n
+      - /srv/homelab/pi-utils/n8n-aux/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
+      - /srv/homelab/pi-utils/infisical-cli/infisical:/usr/local/bin/infisical:ro
+    secrets:
+      - source: n8n-aux-infisical-client-id-v1
+        target: n8n-aux-infisical-client-id
+      - source: n8n-aux-infisical-client-secret-v1
+        target: n8n-aux-infisical-client-secret
+      - source: n8n-aux-infisical-project-id-v1
+        target: n8n-aux-infisical-project-id
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        CLIENT_ID=$$(cat /run/secrets/n8n-aux-infisical-client-id) &&
+        CLIENT_SECRET=$$(cat /run/secrets/n8n-aux-infisical-client-secret) &&
+        PROJECT_ID=$$(cat /run/secrets/n8n-aux-infisical-project-id) &&
+        TOKEN=$$(infisical login --method=universal-auth \
+          --client-id="$$CLIENT_ID" \
+          --client-secret="$$CLIENT_SECRET" \
+          --plain --silent) &&
+        exec infisical run --token="$$TOKEN" --projectId="$$PROJECT_ID" --env=prod --path=/n8n-aux/ -- \
+          tini -- /docker-entrypoint.sh
+    ports:
+      - "5679:5679"
+    networks:
+      - n8n-aux-net
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        mode: non-blocking
+        max-buffer-size: 4m
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname==pi-utils
+      restart_policy:
+        condition: on-failure
+
+networks:
+  n8n-aux-net:
+    driver: overlay
+    attachable: true
+
+secrets:
+  n8n-aux-infisical-client-id-v1:
+    external: true
+  n8n-aux-infisical-client-secret-v1:
+    external: true
+  n8n-aux-infisical-project-id-v1:
+    external: true

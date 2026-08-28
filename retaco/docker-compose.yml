@@ -37,568 +37,123 @@ name: homelab-retaco
 # en docs/26-infisical-secretos.md y docs/adr/0001-infisical-inyeccion-bind-mount-vs-imagen-derivada.md.
 # =============================================================================
 
+# Logs -> driver `loki` nativo de Docker en vez de Promtail (docs/31-docker-swarm.md,
+# Fase 1) -- retaco es x86_64, el plugin sí funciona aquí (a diferencia de las
+# Raspberry Pi, arm64, sin build del plugin).
+x-logging: &loki-logging
+  driver: loki
+  options:
+    loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+    loki-external-labels: "node=retaco"
+    mode: non-blocking
+    max-buffer-size: 4m
+
 services:
 
   # ---------------------------------------------------------------------------
-  # postgres-main — Servidor PostgreSQL compartido, no solo para n8n-main.
-  # POSTGRES_ADMIN_USER es el administrador (superusuario) del servidor, no
-  # una credencial de aplicación. Cada proyecto tiene su propia base de datos
-  # y usuario, aislados entre sí (ver config/postgres/init/ y
-  # shared/scripts/create-postgres-db.sh para añadir proyectos nuevos).
-  # Publicado en la LAN (5432): postgres-exporter (en pi-obs) y sonarqube (en
-  # pi-sonar) necesitan alcanzarlo cross-node — protegido por contraseña, no
-  # por aislamiento de red. n8n-main, en cambio, está en este mismo nodo y le
-  # llega por nombre de contenedor (red retaco-net), sin pasar por la LAN.
+  # postgres-main — MIGRADO al swarm (Fase 4, docs/31-docker-swarm.md,
+  # 2026-08-27, el último de la fase). Fuente de verdad ahora:
+  # docker-swarm/stacks/postgres-main/docker-compose.yml, pinnado con
+  # `node.hostname==retaco` -- mismos datos, sin mover. Backup físico
+  # completo ejecutado antes de migrar (data/ entero, no solo pg_dump por
+  # base -- ver docs/31-docker-swarm.md). Todos los consumidores cross-nodo
+  # (postgres-exporter en pi-obs, sonarqube en pi-sonar) ya usaban IP real o
+  # el alias DNS postgresql.home.arpa, no un alias Docker -- sin cambios
+  # ahí. Los consumidores locales de este mismo nodo (open-webui, n8n-main,
+  # authentik) ya se migraron antes a IP real, ver sus propios comentarios.
+  # Bloque retirado a propósito (no solo el contenedor parado), mismo
+  # motivo que el resto de servicios migrados en esta fase.
   # ---------------------------------------------------------------------------
-  postgres-main:
-    image: postgres:16-alpine
-    container_name: postgres-main
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_ADMIN_USER:-dbadmin}
-      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD}
-      POSTGRES_DB: postgres
-      PGDATA: /var/lib/postgresql/data/pgdata
-      # Solo las usa el script de init (config/postgres/init/01-init-n8n.sh)
-      # para crear la base y el usuario propios de n8n en el primer arranque.
-      N8N_DB_NAME: ${N8N_DB_NAME:-n8n}
-      N8N_DB_USER: ${N8N_DB_USER:-n8n}
-      N8N_DB_PASSWORD: ${N8N_DB_PASSWORD}
-    volumes:
-      - /srv/homelab/retaco/postgres/data:/var/lib/postgresql/data
-      - /srv/homelab/retaco/postgres/init:/docker-entrypoint-initdb.d:ro
-    ports:
-      # Publicado a la LAN a propósito: postgres-exporter (pi-obs) y
-      # sonarqube (pi-sonar) necesitan alcanzarlo cross-node. n8n-main está
-      # en este mismo nodo, no necesita el puerto publicado. Protegido por
-      # contraseña fuerte, no por aislamiento de red — ver docs/13-troubleshooting.md.
-      - "5432:5432"
-    networks:
-      - retaco-net
-    healthcheck:
-      # "-d postgres" a propósito: sin él, pg_isready por defecto usa como
-      # nombre de base el propio usuario (-U), y como no existe una base
-      # llamada "dbadmin" (solo la base "postgres", de la que es dueño),
-      # cada chequeo deja un "FATAL: database dbadmin does not exist" en
-      # el log — inofensivo (pg_isready igualmente reporta el servidor como
-      # sano), pero ruido constante cada 10s.
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_ADMIN_USER:-dbadmin} -d postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
 
   # ---------------------------------------------------------------------------
-  # n8n-main — Automatización de flujos de trabajo. Migrado desde ryzen para
-  # que cron/webhooks sigan funcionando aunque el stack de IA (GPU) esté
-  # parado — ver docs/05-instalacion-retaco.md.
-  #
-  # Migrado a Infisical (mejora 28, docs/22-mejoras-futuras.md) — mismo patrón
-  # de dos pasos que apikey-service/authentik (docs/26-infisical-secretos.md):
-  # bind-mount del CLI + entrypoint/command sobreescritos. DB_POSTGRESDB_PASSWORD/
-  # N8N_ENCRYPTION_KEY/N8N_BASIC_AUTH_USER/N8N_BASIC_AUTH_PASSWORD ya no vienen
-  # de ${...} (el .env real ya no los tiene) — los inyecta "infisical run" con
-  # esos mismos nombres, tras renombrar en Infisical las claves importadas en
-  # bloque el 2026-08-10 (N8N_DB_PASSWORD -> DB_POSTGRESDB_PASSWORD, el resto ya
-  # coincidía) para que coincidan con lo que n8n espera de verdad.
+  # n8n-main — MIGRADO al swarm (Fase 4, docs/31-docker-swarm.md, 2026-08-27).
+  # Fuente de verdad ahora: docker-swarm/stacks/n8n-main/docker-compose.yml,
+  # pinnado con `node.hostname==retaco` -- mismos datos (workflows/
+  # credenciales cifradas), sin mover. N8N_ENCRYPTION_KEY sigue viniendo de
+  # Infisical exactamente igual, la migración de orquestador no la toca.
+  # DB_POSTGRESDB_HOST pasó del alias de red Docker "postgres-main" a la IP
+  # real (192.168.1.174) -- postgres-main sigue en Compose clásico (es el
+  # último de la Fase 4), n8n-main ya no comparte red de proyecto con él.
+  # Bloque retirado a propósito (no solo el contenedor parado), mismo motivo
+  # que registry/qdrant.
   # ---------------------------------------------------------------------------
-  n8n-main:
-    image: n8nio/n8n:latest
-    container_name: n8n-main
-    restart: unless-stopped
-    depends_on:
-      postgres-main:
-        condition: service_healthy
-    environment:
-      DB_TYPE: postgresdb
-      DB_POSTGRESDB_HOST: postgres-main
-      DB_POSTGRESDB_PORT: 5432
-      DB_POSTGRESDB_DATABASE: ${N8N_DB_NAME:-n8n}
-      DB_POSTGRESDB_USER: ${N8N_DB_USER:-n8n}
-      N8N_BASIC_AUTH_ACTIVE: ${N8N_BASIC_AUTH_ACTIVE:-true}
-      N8N_HOST: ${N8N_HOST}
-      N8N_PORT: ${N8N_PORT:-5678}
-      N8N_PROTOCOL: ${N8N_PROTOCOL:-https}
-      N8N_WEBHOOK_URL: ${WEBHOOK_URL}
-      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-Europe/Madrid}
-      N8N_LOG_LEVEL: info
-      # nginx (pi-dns) hace de proxy inverso delante de n8n — un único salto.
-      # Sin esto, Express rechaza la cabecera X-Forwarded-For que añade nginx
-      # ("ValidationError: ... trust proxy setting is false") y express-rate-limit
-      # no puede identificar bien a los clientes.
-      N8N_PROXY_HOPS: "1"
-      # No hay servicio propio de n8n corriendo detrás que necesite avisos de
-      # nuevas versiones ni analítica externa (PostHog) — desactivarlo evita
-      # además los "Host not found" en el log cuando esas peticiones salientes
-      # no resuelven (p. ej. por el bloqueo de dominios de tracking en Pi-hole).
-      N8N_DIAGNOSTICS_ENABLED: "false"
-      N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
-      # Deprecaciones de n8n 2.31 — fijadas explícitamente al valor por
-      # defecto ACTUAL de cada una, para que el comportamiento no cambie el
-      # día que n8n reduzca el default, y para silenciar los avisos de
-      # arranque. Ver "There are deprecations related to your n8n setup" en
-      # el log si una versión futura añade alguna más.
-      N8N_UNVERIFIED_PACKAGES_ENABLED: "true"
-      N8N_RUNNERS_TASK_TIMEOUT: "300"
-      N8N_COMPRESSION_NODE_MAX_DECOMPRESSED_SIZE_BYTES: "2147483648"
-      N8N_COMPRESSION_NODE_MAX_ZIP_ENTRIES: "5000"
-      # n8n (Node.js/axios) no usa el almacén de certificados del sistema para
-      # sus propias peticiones HTTP salientes (a markitdown.home.arpa, etc.) —
-      # mismo problema que pysonar con REQUESTS_CA_BUNDLE (docs/09, sección 8.1).
-      # Sin esto: "unable to verify the first certificate" al llamar a
-      # cualquier *.home.arpa protegido con el certificado de la CA interna.
-      NODE_EXTRA_CA_CERTS: /etc/ssl/certs/homelab-ca.crt
-      INFISICAL_UNIVERSAL_AUTH_CLIENT_ID: ${N8N_MAIN_INFISICAL_CLIENT_ID}
-      INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET: ${N8N_MAIN_INFISICAL_CLIENT_SECRET}
-      INFISICAL_PROJECT_ID: ${N8N_MAIN_INFISICAL_PROJECT_ID}
-      INFISICAL_DOMAIN: https://infisical.home.arpa/api
-      # Reutiliza el mismo CA que ya montaba NODE_EXTRA_CA_CERTS — el CLI de
-      # Infisical (Go) respeta SSL_CERT_FILE de forma nativa, sin instalar nada.
-      SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
-    volumes:
-      - /srv/homelab/retaco/n8n/data:/home/node/.n8n
-      # CA interna del clúster, de solo lectura — ver docs/15-ca-interna.md.
-      # Descargar antes del primer arranque con NODE_EXTRA_CA_CERTS:
-      #   curl -s http://192.168.1.170/ca.crt -o /srv/homelab/retaco/n8n/ca/homelab-ca.crt
-      - /srv/homelab/retaco/n8n/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
-      - /srv/homelab/retaco/infisical-cli/infisical:/usr/local/bin/infisical:ro
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        set -e
-        TOKEN=$$(infisical login --method=universal-auth \
-          --client-id="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_ID" \
-          --client-secret="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET" \
-          --plain --silent) &&
-        exec infisical run --token="$$TOKEN" --projectId="$$INFISICAL_PROJECT_ID" --env=prod --path=/n8n-main/ -- \
-          tini -- /docker-entrypoint.sh
-    ports:
-      - "5678:5678"
-    networks:
-      - retaco-net
-    healthcheck:
-      # n8nio/n8n no trae curl, solo wget (mismo caso que n8n-aux en pi-utils)
-      test: ["CMD-SHELL", "wget -qO- http://localhost:5678/healthz || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
 
   # ---------------------------------------------------------------------------
-  # qdrant — Motor de búsqueda vectorial
-  #
-  # Migrado a Infisical (mejora 28, docs/22-mejoras-futuras.md) — mismo patrón
-  # que n8n-main/apikey-service. Entrypoint real de la imagen vacío (solo Cmd
-  # "./entrypoint.sh", confirmado con docker inspect) — el wrapper reemplaza
-  # el entrypoint entero, así que el arranque real tras "infisical run --" es
-  # directamente "./entrypoint.sh", sin Entrypoint previo que reconstruir.
-  # Nombres de secreto en Infisical renombrados para coincidir con lo que
-  # Qdrant espera de verdad (QDRANT_API_KEY -> QDRANT__SERVICE__API_KEY,
-  # QDRANT_READONLY_KEY -> QDRANT__SERVICE__READ_ONLY_API_KEY).
+  # qdrant — MIGRADO al swarm (Fase 4, docs/31-docker-swarm.md, 2026-08-27).
+  # Fuente de verdad ahora: docker-swarm/stacks/qdrant/docker-compose.yml,
+  # pinnado con `node.hostname==retaco` -- mismos datos, sin mover. Bloque
+  # retirado a propósito (no solo el contenedor parado) -- mismo motivo que
+  # `registry`: la routing mesh de Swarm ya tiene el 6333 reservado en todos
+  # los nodos del swarm, este incluido, y un `docker compose up -d` a secas
+  # aquí (ya visto en vivo, al recrear open-webui) intenta resucitarlo y
+  # choca. `open-webui` (más abajo) ya no lo referencia por el alias de red
+  # Docker "qdrant" -- habla por IP:puerto real (192.168.1.174:6333).
   # ---------------------------------------------------------------------------
-  qdrant:
-    image: qdrant/qdrant:latest
-    container_name: qdrant
-    restart: unless-stopped
-    environment:
-      INFISICAL_UNIVERSAL_AUTH_CLIENT_ID: ${QDRANT_INFISICAL_CLIENT_ID}
-      INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET: ${QDRANT_INFISICAL_CLIENT_SECRET}
-      INFISICAL_PROJECT_ID: ${QDRANT_INFISICAL_PROJECT_ID}
-      INFISICAL_DOMAIN: https://infisical.home.arpa/api
-      SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
-    volumes:
-      - /srv/homelab/retaco/qdrant/storage:/qdrant/storage
-      - /srv/homelab/retaco/qdrant/snapshots:/qdrant/snapshots
-      # CA interna del clúster, de solo lectura — necesaria para que el CLI de
-      # Infisical (Go) confíe en infisical.home.arpa. Descargar antes del
-      # primer arranque:
-      #   curl -s http://192.168.1.170/ca.crt -o /srv/homelab/retaco/qdrant/ca/homelab-ca.crt
-      - /srv/homelab/retaco/qdrant/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
-      - /srv/homelab/retaco/infisical-cli/infisical:/usr/local/bin/infisical:ro
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        set -e
-        TOKEN=$$(infisical login --method=universal-auth \
-          --client-id="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_ID" \
-          --client-secret="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET" \
-          --plain --silent) &&
-        exec infisical run --token="$$TOKEN" --projectId="$$INFISICAL_PROJECT_ID" --env=prod --path=/qdrant/ -- \
-          ./entrypoint.sh
-    ports:
-      - "6333:6333"
-      - "127.0.0.1:6334:6334"
-    networks:
-      - retaco-net
-    healthcheck:
-      # qdrant/qdrant no trae curl ni wget; comprobamos solo que el puerto
-      # responda, con el /dev/tcp propio de bash (sí está disponible aquí).
-      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/6333' || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
 
   # ---------------------------------------------------------------------------
-  # registry — Registry Docker privado (imágenes locales del clúster:
-  # apikey-service, markitdown-service, whisper-service). Auth propia con
-  # htpasswd (bcrypt) — un único usuario compartido para pull y push por
-  # ahora (ver docs/22-mejoras-futuras.md para separar lectura/escritura más
-  # adelante, que necesitaría un servicio de auth por tokens aparte). NO va
-  # protegido con apikey-service: los clientes Docker (docker login/push/pull)
-  # hablan Basic Auth nativo contra el propio registry, no mandan X-Api-Key.
-  # REGISTRY_STORAGE_DELETE_ENABLED=true habilita la API DELETE que hará
-  # falta el día que se implemente garbage collection (docs/17) — no borra
-  # nada por sí solo.
+  # registry — MIGRADO al swarm (Fase 4, docs/31-docker-swarm.md, 2026-08-27).
+  # Fuente de verdad ahora: docker-swarm/stacks/registry/docker-compose.yml,
+  # pinnado con `node.hostname==retaco` -- mismos datos
+  # (/srv/homelab/retaco/registry/{data,auth}), mismo puerto 5000. Bloque
+  # retirado a propósito (no solo el contenedor parado): dejarlo aquí sin más
+  # sería resucitar el mismo choque de puerto que ya se vio en vivo con
+  # Traefik/capataz-frontend si alguien lanza un `docker compose up -d` a
+  # secas en este nodo -- la routing mesh de Swarm ya tiene el 5000 reservado
+  # en todos los nodos del swarm, este incluido.
   # ---------------------------------------------------------------------------
-  registry:
-    image: registry:2.8.3
-    container_name: registry
-    restart: unless-stopped
-    environment:
-      REGISTRY_AUTH: htpasswd
-      REGISTRY_AUTH_HTPASSWD_REALM: "Homelab Cluster Registry"
-      REGISTRY_AUTH_HTPASSWD_PATH: /auth/htpasswd
-      REGISTRY_STORAGE_DELETE_ENABLED: "true"
-      # Sin esto, cada arranque genera un secreto aleatorio distinto — sin
-      # consecuencia real con una sola instancia (solo importa para
-      # coordinar réplicas detrás de un balanceador, que no tenemos), pero
-      # evita el warning en el log y es gratis fijarlo.
-      REGISTRY_HTTP_SECRET: ${REGISTRY_HTTP_SECRET}
-    volumes:
-      - /srv/homelab/retaco/registry/data:/var/lib/registry
-      - /srv/homelab/retaco/registry/auth:/auth:ro
-    ports:
-      # Publicado a la LAN: nginx (pi-dns) le hace proxy cross-host, igual
-      # que qdrant/n8n-main. Gestionable con toggle-direct-access.sh (docs/18).
-      - "5000:5000"
-    networks:
-      - retaco-net
-    healthcheck:
-      # registry:2 no trae bash (solo /bin/sh de busybox, el truco
-      # "</dev/tcp/..." de qdrant no vale aquí) — sí trae wget de busybox.
-      # 401 es la respuesta esperada sin credenciales, cuenta como "vivo".
-      test: ["CMD-SHELL", "wget -q -O /dev/null --server-response http://localhost:5000/v2/ 2>&1 | grep -q '401\\|200' || exit 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
 
   # ---------------------------------------------------------------------------
-  # epub2pdf-service — Conversión de EPUB a PDF (Calibre). Imagen publicada en
-  # registry.home.arpa (código en services/epub2pdf-service/, raíz del repo —
-  # no se construye en este nodo, solo amd64, ver Makefile del servicio).
-  # Protegido con apikey-service (docs/06-instalacion-pi1-dns.md), expuesto
-  # como epub2pdf.home.arpa. /data/input y /data/output son subcarpetas del
-  # montaje NFS del NAS (ketekasko:/volume1/nfs-data), no disco local — ver
-  # docs/05-instalacion-retaco.md sección 5.4 y docs/21-configuracion-nas-ugreen.md.
+  # epub2pdf-service / pdf2chunks-service — MIGRADOS al swarm (Fase 4,
+  # docs/31-docker-swarm.md, 2026-08-27). Fuente de verdad ahora:
+  # docker-swarm/stacks/epub2pdf-service/ y docker-swarm/stacks/
+  # pdf2chunks-service/, ambos pinnados con `node.hostname==retaco`
+  # -- OBLIGATORIO, no opcional: sus volúmenes son subcarpetas del montaje
+  # NFS del NAS (ketekasko), que SOLO existe en retaco entre los 5 nodos del
+  # swarm (confirmado antes de migrar). Bloque retirado a propósito, mismo
+  # motivo que el resto de servicios migrados en esta fase.
   # ---------------------------------------------------------------------------
-  epub2pdf-service:
-    image: registry.home.arpa/epub2pdf-service:latest
-    container_name: epub2pdf-service
-    restart: unless-stopped
-    environment:
-      EPUB2PDF_LOG_LEVEL: ${EPUB2PDF_LOG_LEVEL:-INFO}
-      EPUB2PDF_LOG_FORMAT: ${EPUB2PDF_LOG_FORMAT:-json}
-      EPUB2PDF_CONVERSION_TIMEOUT_SECONDS: ${EPUB2PDF_CONVERSION_TIMEOUT_SECONDS:-300}
-    volumes:
-      - /mnt/nfs-data/epub2pdf/input:/data/input:ro
-      - /mnt/nfs-data/epub2pdf/output:/data/output
-    ports:
-      # Publicado a la LAN: nginx (pi-dns) le hace proxy cross-host, igual
-      # que qdrant/n8n-main/registry. Gestionable con toggle-direct-access.sh (docs/17).
-      - "8003:8003"
-    networks:
-      - retaco-net
 
   # ---------------------------------------------------------------------------
-  # pdf2chunks-service — Troceado (chunking) de PDF a fragmentos indexables
-  # para el pipeline RAG. Imagen publicada en registry.home.arpa (código en
-  # services/pdf2chunks-service/, raíz del repo — no se construye en este
-  # nodo, solo amd64, ver Makefile del servicio). Protegido con
-  # apikey-service, expuesto como pdf2chunks.home.arpa. Mismo montaje NFS que
-  # epub2pdf-service, subcarpeta propia — ver docs/05-instalacion-retaco.md
-  # sección 5.4 y docs/21-configuracion-nas-ugreen.md.
+  # open-webui — MIGRADO al swarm (Fase 4, docs/31-docker-swarm.md,
+  # 2026-08-27). Fuente de verdad ahora: docker-swarm/stacks/open-webui/
+  # docker-compose.yml, pinnado con `node.hostname==retaco` -- mismos datos
+  # (uploads/caché, 890M), sin mover. Backup previo ejecutado (805M
+  # comprimido). Bloque retirado a propósito, mismo motivo que el resto de
+  # servicios migrados en esta fase.
   # ---------------------------------------------------------------------------
-  pdf2chunks-service:
-    image: registry.home.arpa/pdf2chunks-service:latest
-    container_name: pdf2chunks-service
-    restart: unless-stopped
-    environment:
-      PDF2CHUNKS_LOG_LEVEL: ${PDF2CHUNKS_LOG_LEVEL:-INFO}
-      PDF2CHUNKS_LOG_FORMAT: ${PDF2CHUNKS_LOG_FORMAT:-json}
-      PDF2CHUNKS_OCR_CHAR_THRESHOLD: ${PDF2CHUNKS_OCR_CHAR_THRESHOLD:-20}
-      PDF2CHUNKS_OCR_LANGUAGE: ${PDF2CHUNKS_OCR_LANGUAGE:-eng}
-      PDF2CHUNKS_CHUNK_SIZE_TOKENS: ${PDF2CHUNKS_CHUNK_SIZE_TOKENS:-400}
-      PDF2CHUNKS_CHUNK_OVERLAP_RATIO: ${PDF2CHUNKS_CHUNK_OVERLAP_RATIO:-0.15}
-      PDF2CHUNKS_CHUNKING_STRATEGY: ${PDF2CHUNKS_CHUNKING_STRATEGY:-fixed_size}
-      PDF2CHUNKS_OUTPUT_FORMAT: ${PDF2CHUNKS_OUTPUT_FORMAT:-json}
-    volumes:
-      - /mnt/nfs-data/pdf2chunks/input:/data/input:ro
-      - /mnt/nfs-data/pdf2chunks/output:/data/output
-    ports:
-      - "8004:8004"
-    networks:
-      - retaco-net
 
   # ---------------------------------------------------------------------------
-  # open-webui — Interfaz web de chat. Migrado desde ryzen (docs/23-bifrost-gateway-llm.md,
-  # sección de migración) para que siga accesible aunque ryzen esté apagado —
-  # retaco está siempre encendido, ryzen no.
-  #
-  # Backend LLM: SOLO Bifrost (pi-sonar), no Ollama directo. Antes, en ryzen,
-  # Open WebUI llegaba a Ollama por red Docker interna (http://ollama:11434,
-  # sin auth) — eso ya no es posible desde otro host. La alternativa hubiera
-  # sido hablar con https://ollama.home.arpa (nginx + apikey-service, exige
-  # X-Api-Key), pero no hay confirmación de que el tipo de conexión "Ollama"
-  # de Open WebUI sepa mandar esa cabecera custom — sí sabemos que la
-  # conexión "OpenAI API" manda Bearer correctamente (ya probado con
-  # Bedrock). Se optó por añadir Ollama como provider más dentro de Bifrost
-  # (bifrost/config.json en pi-sonar, provider "ollama" apuntando a
-  # 192.168.1.150:11434 directo) — así Open WebUI solo necesita UNA conexión
-  # (Bifrost), con el mismo virtual key para Bedrock y para Ollama.
-  # ENABLE_OLLAMA_API=false porque no se usa la conexión nativa en absoluto.
-  #
-  # WEBUI_SECRET_KEY: MISMO valor que tenía ryzen/.env (OPENWEBUI_SECRET_KEY)
-  # — cambiarlo invalida las sesiones existentes de los usuarios ya creados.
-  #
-  # Base de datos: Postgres centralizado (base "openwebui" en postgres-main,
-  # este mismo nodo), no el SQLite (webui.db) por defecto — decisión tomada
-  # tras la migración inicial desde ryzen, con muy poco todavía configurado,
-  # así que se pudo cambiar de backend sin migrar datos reales (usuarios se
-  # recrean desde cero). Vectores (RAG/Knowledge) igual: Qdrant centralizado
-  # en vez de ChromaDB local — mismo Qdrant que "articles"/"transcripts".
-  # Credenciales de ambos en Vaultwarden — ver docs/23-bifrost-gateway-llm.md.
-  #
-  # Migrado a Infisical (mejora 28, docs/22-mejoras-futuras.md): WEBUI_SECRET_KEY/
-  # OPENAI_API_KEYS/DATABASE_URL/QDRANT_API_KEY ya no vienen de ${...} (el .env
-  # real ya no los tiene) — los inyecta "infisical run" con esos mismos
-  # nombres. DATABASE_URL pasó a ser un secreto propio con la cadena de
-  # conexión completa (antes se componía en este fichero a partir de
-  # OPENWEBUI_DB_PASSWORD) — Open WebUI solo sabe leer DATABASE_URL entera, no
-  # una contraseña suelta. El wrapper de Infisical va DENTRO del entrypoint ya
-  # existente (combina certifi + CA interna) — hace falta el CA combinado
-  # antes de invocar al propio CLI de Infisical, no al revés.
+  # open-terminal-mcp — MIGRADO al swarm (Fase 4, docs/31-docker-swarm.md,
+  # 2026-08-27). Fuente de verdad ahora: docker-swarm/stacks/open-terminal-mcp/
+  # docker-compose.yml, pinnado con `node.hostname==retaco` -- mismos datos
+  # (/home/user), sin mover. Bloque retirado a propósito, mismo motivo que
+  # el resto de servicios migrados en esta fase.
   # ---------------------------------------------------------------------------
-  open-webui:
-    image: ghcr.io/open-webui/open-webui:main
-    container_name: open-webui
-    restart: unless-stopped
-    depends_on:
-      postgres-main:
-        condition: service_healthy
-      qdrant:
-        condition: service_healthy
-    environment:
-      ENABLE_OLLAMA_API: "false"
-      OPENAI_API_BASE_URLS: https://bifrost.home.arpa/v1
-      # Qdrant centralizado en vez de ChromaDB local — mismo Qdrant que ya
-      # usa el pipeline de contenido (colecciones "articles"/"transcripts").
-      # Prefijo de colección por defecto de Open WebUI ("open-webui_...")
-      # evita cualquier colisión de nombres, sin configurar nada aparte.
-      VECTOR_DB: qdrant
-      QDRANT_URI: http://qdrant:6333
-      INFISICAL_UNIVERSAL_AUTH_CLIENT_ID: ${OPEN_WEBUI_INFISICAL_CLIENT_ID}
-      INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET: ${OPEN_WEBUI_INFISICAL_CLIENT_SECRET}
-      INFISICAL_PROJECT_ID: ${OPEN_WEBUI_INFISICAL_PROJECT_ID}
-      INFISICAL_DOMAIN: https://infisical.home.arpa/api
-    volumes:
-      - /srv/homelab/retaco/open-webui/data:/app/backend/data
-      # CA interna del clúster (docs/15-ca-interna.md), de solo lectura.
-      - /srv/homelab/retaco/open-webui/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
-      - /srv/homelab/retaco/infisical-cli/infisical:/usr/local/bin/infisical:ro
-    # Open WebUI es Python (aiohttp) — no lee el almacén de certificados del
-    # sistema por defecto, usa el bundle de "certifi" (solo CAs públicas).
-    # Sin esto: SSLCertVerificationError contra CUALQUIER *.home.arpa por
-    # HTTPS (bifrost.home.arpa incluido) — visto en el despliegue real, el
-    # selector de modelos se quedaba vacío sin ningún error visible en la UI.
-    # Se combina certifi + la CA interna en un fichero nuevo en vez de
-    # sustituir certifi entero, para no romper la verificación de servicios
-    # públicos reales (descarga del modelo de embeddings, búsqueda web...).
-    # La ruta de certifi se resuelve en caliente (no se hardcodea la versión
-    # de Python de la imagen) para no romperse en una actualización futura.
-    # El wrapper de Infisical va DESPUÉS del CA combinado (mejora 28) — así el
-    # propio CLI de Infisical también confía en infisical.home.arpa.
-    entrypoint: ["sh", "-c"]
-    command:
-      - |
-        CERTIFI_BUNDLE=$$(python3 -c "import certifi; print(certifi.where())") &&
-        cat "$$CERTIFI_BUNDLE" /etc/ssl/certs/homelab-ca.crt > /tmp/combined-ca.pem &&
-        export SSL_CERT_FILE=/tmp/combined-ca.pem &&
-        TOKEN=$$(infisical login --method=universal-auth \
-          --client-id="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_ID" \
-          --client-secret="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET" \
-          --plain --silent) &&
-        exec infisical run --token="$$TOKEN" --projectId="$$INFISICAL_PROJECT_ID" --env=prod --path=/open-webui/ -- \
-          bash start.sh
-    ports:
-      - "8080:8080"
-    networks:
-      - retaco-net
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8080 || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
 
   # ---------------------------------------------------------------------------
-  # open-terminal-mcp — Terminal/shell y sistema de ficheros de Open Terminal
-  # (https://github.com/open-webui/open-terminal) expuestos como servidor MCP
-  # (transporte streamable-http) para que Open WebUI y n8n-main den a un LLM
-  # acceso a ejecutar comandos. Mejora 17 (docs/22-mejoras-futuras.md), detalle
-  # completo en docs/24-open-terminal-mcp.md.
-  #
-  # Imagen propia (services/open-terminal-mcp/), NO la oficial directamente:
-  # ninguna variante publicada de ghcr.io/open-webui/open-terminal trae el
-  # extra opcional [mcp] (fastmcp) instalado — se añade encima del tag "slim".
-  #
-  # OPEN_TERMINAL_API_KEY protege SOLO la API REST propia (open-terminal run,
-  # que aquí ni se usa) — confirmado leyendo open_terminal/mcp_server.py que
-  # el subcomando "mcp" arranca el FastMCP SIN ningún proveedor de auth, así
-  # que el propio transporte MCP (streamable-http) no exige ninguna credencial
-  # a quien se conecte. Probado en vivo: initialize sin cabecera alguna → 200.
-  # Por eso va SIEMPRE detrás de apikey-service en nginx (pi-dns), nunca con
-  # el puerto expuesto a la LAN sin esa capa delante — OPEN_TERMINAL_API_KEY
-  # sigue haciendo falta igualmente (lo usa el propio proceso MCP internamente
-  # para llamar a su FastAPI interna), pero ningún cliente externo lo conoce
-  # ni lo necesita.
-  #
-  # Sin montajes del host ni acceso a docker.sock a propósito — mismo criterio
-  # de superficie de riesgo que Floci (mejora 14): el LLM solo ve el volumen
-  # propio de este contenedor, nada más del clúster.
-  #
-  # Migrado a Infisical (mejora 28, docs/22-mejoras-futuras.md) — mismo patrón
-  # que el resto. Entrypoint real de la imagen "/usr/bin/tini -- /app/entrypoint-slim.sh"
-  # (confirmado con docker inspect) — al sobreescribir el entrypoint, el
-  # arranque real (tini + entrypoint-slim.sh + los argumentos "mcp ..." que
-  # antes iban en "command:") se junta entero al final del wrapper.
+  # node-exporter / cadvisor — migrados a Docker Swarm (mode: global),
+  # docker-swarm/stacks/common/docker-compose.yml — ver docs/31-docker-swarm.md.
+  # Ya no se despliegan aquí; Prometheus (pi-obs) los sigue scrapeando por la
+  # misma IP:puerto que antes, sin cambios en su configuración.
   # ---------------------------------------------------------------------------
-  open-terminal-mcp:
-    image: registry.home.arpa/open-terminal-mcp:latest
-    container_name: open-terminal-mcp
-    restart: unless-stopped
-    environment:
-      INFISICAL_UNIVERSAL_AUTH_CLIENT_ID: ${OPEN_TERMINAL_MCP_INFISICAL_CLIENT_ID}
-      INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET: ${OPEN_TERMINAL_MCP_INFISICAL_CLIENT_SECRET}
-      INFISICAL_PROJECT_ID: ${OPEN_TERMINAL_MCP_INFISICAL_PROJECT_ID}
-      INFISICAL_DOMAIN: https://infisical.home.arpa/api
-      SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
-    volumes:
-      - /srv/homelab/retaco/open-terminal-mcp/home:/home/user
-      # CA interna del clúster, de solo lectura — necesaria para que el CLI de
-      # Infisical (Go) confíe en infisical.home.arpa. Descargar antes del
-      # primer arranque:
-      #   curl -s http://192.168.1.170/ca.crt -o /srv/homelab/retaco/open-terminal-mcp/ca/homelab-ca.crt
-      - /srv/homelab/retaco/open-terminal-mcp/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
-      - /srv/homelab/retaco/infisical-cli/infisical:/usr/local/bin/infisical:ro
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        set -e
-        TOKEN=$$(infisical login --method=universal-auth \
-          --client-id="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_ID" \
-          --client-secret="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET" \
-          --plain --silent) &&
-        exec infisical run --token="$$TOKEN" --projectId="$$INFISICAL_PROJECT_ID" --env=prod --path=/open-terminal-mcp/ -- \
-          tini -- /app/entrypoint-slim.sh mcp --transport streamable-http --host 0.0.0.0 --port 8000
-    ports:
-      # Publicado a la LAN: nginx (pi-dns) le hace proxy cross-host, igual que
-      # qdrant/n8n-main/registry — PERO sin auth_request delante (ver arriba)
-      # esto sería shell sin credencial para cualquiera en la LAN. No tocar
-      # sin la capa de apikey-service ya configurada en pi-dns.
-      - "8005:8000"
-    networks:
-      - retaco-net
-    healthcheck:
-      # Sin bash "</dev/tcp/...": la imagen slim de open-terminal sí trae
-      # bash (Debian), pero un POST JSON-RPC real es más fiel que un TCP
-      # connect — probado en local, "initialize" responde 200 sin autenticar.
-      test: ["CMD-SHELL", "curl -sf -o /dev/null -X POST http://localhost:8000/mcp -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2026-06-18\",\"capabilities\":{},\"clientInfo\":{\"name\":\"healthcheck\",\"version\":\"0\"}}}' || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 15s
 
   # ---------------------------------------------------------------------------
-  # node-exporter — Métricas del sistema host, scrapeadas por Prometheus en pi-obs
+  # portainer-agent — migrado a Docker Swarm (mode: global, patrón oficial
+  # agent-stack.yml), docker-swarm/stacks/portainer/ — ver docs/31-docker-swarm.md.
+  # Ya no se despliega aquí.
   # ---------------------------------------------------------------------------
-  node-exporter:
-    image: prom/node-exporter:v1.8.0
-    container_name: node-exporter
-    restart: unless-stopped
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true"
-    command:
-      - "--path.procfs=/host/proc"
-      - "--path.rootfs=/rootfs"
-      - "--path.sysfs=/host/sys"
-      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
-    volumes:
-      - /proc:/host/proc:ro
-      - /sys:/host/sys:ro
-      - /:/rootfs:ro
-    ports:
-      - "9100:9100"
-    networks:
-      - retaco-net
-    pid: host
-
-  # ---------------------------------------------------------------------------
-  # cadvisor — Métricas de contenedores Docker, scrapeadas por Prometheus en pi-obs
-  # ---------------------------------------------------------------------------
-  cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.55.1
-    container_name: cadvisor
-    restart: unless-stopped
-    command:
-      - "-disable_metrics=advtcp,cpu_topology,cpuset,hugetlb,memory_numa,process,referenced_memory,resctrl,sched,tcp,udp,disk,diskIO"
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true"
-    volumes:
-      - /:/rootfs:ro
-      - /var/run:/var/run:ro
-      - /sys:/sys:ro
-      - /var/lib/docker/:/var/lib/docker:ro
-      - /dev/disk/:/dev/disk:ro
-    ports:
-      - "8081:8080"
-    networks:
-      - retaco-net
-    privileged: true
-    cgroup: host
-    devices:
-      - /dev/kmsg
-
-  # ---------------------------------------------------------------------------
-  # portainer-agent — Expone el Docker de este nodo a Portainer (servidor en
-  # pi-utils). Ver docs/10-instalacion-pi4-utils.md.
-  # ---------------------------------------------------------------------------
-  portainer-agent:
-    image: portainer/agent:2.42.0
-    container_name: portainer-agent
-    restart: unless-stopped
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true"
-    environment:
-      AGENT_CLUSTER_ADDR: ""
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /var/lib/docker/volumes:/var/lib/docker/volumes
-    ports:
-      - "9001:9001"
-    networks:
-      - retaco-net
 
   # ---------------------------------------------------------------------------
   # watchtower — Auto-actualiza SOLO los contenedores con la label
-  # com.centurylinklabs.watchtower.enable=true (node-exporter, cadvisor,
-  # portainer-agent) — servicios sin estado. postgres-main, n8n-main y qdrant
-  # NUNCA se auto-actualizan — ver docs/16-mantenimiento-actualizaciones.md.
+  # com.centurylinklabs.watchtower.enable=true (promtail) — servicios sin
+  # estado. node-exporter/cadvisor/portainer-agent ya no están aquí (migrados
+  # a Swarm, ver arriba); postgres-main, n8n-main y qdrant NUNCA se
+  # auto-actualizan — ver docs/16-mantenimiento-actualizaciones.md.
   # ---------------------------------------------------------------------------
   watchtower:
     image: nickfedor/watchtower:latest
     container_name: watchtower
+    logging: *loki-logging
     restart: unless-stopped
     environment:
       WATCHTOWER_LABEL_ENABLE: "true"
@@ -611,336 +166,44 @@ services:
       - retaco-net
 
   # ---------------------------------------------------------------------------
-  # promtail — Envía los logs de todos los contenedores de este nodo a Loki
-  # (pi-obs), para verlos desde Grafana. Ver docs/04-servicios-comunes.md.
+  # promtail — migrado al driver de logging `loki` nativo de Docker (ver
+  # x-logging arriba) — docs/31-docker-swarm.md. Ya no se despliega aquí.
   # ---------------------------------------------------------------------------
-  promtail:
-    image: grafana/promtail:3.0.0
-    container_name: promtail
-    restart: unless-stopped
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true"
-    volumes:
-      - /srv/homelab/retaco/promtail/promtail-config.yaml:/etc/promtail/config.yaml:ro
-      - /srv/homelab/retaco/promtail/data:/data
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
-    command: -config.file=/etc/promtail/config.yaml
-    networks:
-      - retaco-net
 
   # ---------------------------------------------------------------------------
-  # valkey — Almacén clave-valor y pub/sub compartido del clúster (mejora 24,
-  # docs/25-valkey-cache.md). Fork de Redis con licencia BSD-3 real (Linux
-  # Foundation) — mismo protocolo/comandos que Redis, elegido en vez de Redis
-  # OSS por el mismo criterio FOSS ya aplicado a Infisical/Forgejo en
-  # docs/22-mejoras-futuras.md.
-  #
-  # Sin persistencia a propósito (--save ""/--appendonly no): uso previsto
-  # hoy es solo caché, sin ningún consumidor real todavía. El contenido se
-  # pierde en cada reinicio — comportamiento correcto para lo que se
-  # despliega ahora mismo, no un descuido. Si en el futuro algún consumidor
-  # necesita persistir datos, activarla entonces (docs/22, mejora 24, punto 3).
-  #
-  # Seguridad vía ACL, no requirepass a secas: usuario "default" desactivado
-  # en retaco/config/valkey/users.acl (NO versionado, mismo criterio que
-  # .env — plantilla en users.acl.example), un único usuario de
-  # administración por ahora.
-  #
-  # Puerto publicado a la LAN a propósito, como qdrant/postgres-main —
-  # expuesto como valkey.home.arpa (alias DNS directo, sin nginx por medio:
-  # el protocolo RESP no es HTTP, ver shared/dns/dns-records.md). Protegido
-  # por la ACL (usuario "default" desactivado) y por TLS (certificado propio
-  # firmado por la CA interna del clúster, docs/15-ca-interna.md — generado
-  # con pi-dns/config/nginx/generate-valkey-cert.sh, clave nunca compartida
-  # con la de nginx). --port 0 desactiva el puerto en claro por completo:
-  # solo se acepta TLS en 6379, no ambos a la vez. --tls-auth-clients no
-  # porque la autenticación ya la hace la ACL (usuario/contraseña) — TLS
-  # aquí es solo para cifrar el transporte, no pide certificado al cliente.
+  # valkey — MIGRADO al swarm (Fase 4, docs/31-docker-swarm.md, 2026-08-27).
+  # Fuente de verdad ahora: docker-swarm/stacks/valkey/docker-compose.yml,
+  # pinnado con `node.hostname==retaco` -- preserva valkey.home.arpa sin
+  # tocar el registro DNS. Sin persistencia (solo caché), sin backup que
+  # hacer. Bloque retirado a propósito, mismo motivo que el resto de
+  # servicios migrados en esta fase.
   # ---------------------------------------------------------------------------
-  valkey:
-    image: valkey/valkey:9.1.1-alpine
-    container_name: valkey
-    restart: unless-stopped
-    command: >
-      valkey-server
-      --aclfile /etc/valkey/users.acl
-      --save ""
-      --appendonly no
-      --maxmemory 256mb
-      --maxmemory-policy allkeys-lru
-      --port 0
-      --tls-port 6379
-      --tls-cert-file /etc/valkey/tls/valkey.crt
-      --tls-key-file /etc/valkey/tls/valkey.key
-      --tls-ca-cert-file /etc/valkey/tls/ca.crt
-      --tls-auth-clients no
-    volumes:
-      - /srv/homelab/retaco/valkey/users.acl:/etc/valkey/users.acl:ro
-      - /srv/homelab/retaco/valkey/tls:/etc/valkey/tls:ro
-    ports:
-      - "6379:6379"
-    networks:
-      - retaco-net
-    healthcheck:
-      # Sin contraseña a propósito: con el usuario "default" desactivado, un
-      # PING sin autenticar responde "NOAUTH" en vez de fallar la conexión —
-      # suficiente para confirmar que el servidor está vivo, sin tener que
-      # meter la contraseña de administración en el healthcheck. --tls con
-      # el mismo CA montado, ya que --port 0 deja solo el puerto TLS vivo.
-      test: ["CMD-SHELL", "valkey-cli --tls --cacert /etc/valkey/tls/ca.crt PING 2>&1 | grep -qE 'PONG|NOAUTH'"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
 
   # ---------------------------------------------------------------------------
-  # postgres-infisical — Postgres DEDICADO, solo para Infisical — separado a
-  # propósito de postgres-main (decisión: docs/adr/0002-infisical-postgres-dedicado.md).
-  # Motivo: postgres-main es multi-tenant (n8n, openwebui, sonarqube, apikeys)
-  # — si Infisical dependiera de él, cualquier mantenimiento/incidente de
-  # postgres-main por un motivo AJENO a Infisical tumbaría también al gestor
-  # de secretos, y con él a cualquier servicio migrado que necesite
-  # `infisical run` para arrancar (efecto cascada). Aislar a Infisical en su
-  # propia instancia reduce ese radio de fallo, al coste de un contenedor más
-  # que respaldar por separado (backup-postgres.sh retaco postgres-infisical
-  # infisical — ya soportado, mismo script que postgres-main).
-  #
-  # NO multi-tenant a propósito (a diferencia de postgres-main): un único
-  # rol/base "infisical", creados automáticamente por la propia imagen
-  # oficial de postgres al arrancar (POSTGRES_USER/POSTGRES_DB) — no hace
-  # falta create-postgres-db.sh aquí, no hay nada más que aislar dentro de
-  # esta instancia.
-  #
-  # Sin "ports:" publicado — solo lo consume el contenedor "infisical", en
-  # este mismo nodo y red Docker; ningún otro nodo necesita alcanzarlo.
+  # postgres-infisical / infisical — MIGRADOS al swarm, JUNTOS en un solo
+  # stack (Fase 4, docs/31-docker-swarm.md, 2026-08-27, el último de retaco).
+  # Fuente de verdad ahora: docker-swarm/stacks/infisical/docker-compose.yml,
+  # ambos pinnados con `node.hostname==retaco` -- mismos datos, sin mover.
+  # Comparten red overlay para que el alias Docker "postgres-infisical"
+  # (DB_CONNECTION_URI) siga resolviendo sin tocar el secreto -- mismo
+  # criterio que authentik-server/worker o el stack de pi-obs. Backup físico
+  # completo ejecutado antes de migrar (153M, 20M comprimido). Bloque
+  # retirado a propósito, mismo motivo que el resto de servicios migrados en
+  # esta fase.
   # ---------------------------------------------------------------------------
-  postgres-infisical:
-    image: postgres:16-alpine
-    container_name: postgres-infisical
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: infisical
-      POSTGRES_PASSWORD: ${INFISICAL_POSTGRES_PASSWORD}
-      POSTGRES_DB: infisical
-      PGDATA: /var/lib/postgresql/data/pgdata
-    volumes:
-      - /srv/homelab/retaco/postgres-infisical/data:/var/lib/postgresql/data
-    networks:
-      - retaco-net
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U infisical -d infisical"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
 
   # ---------------------------------------------------------------------------
-  # infisical — Gestor de secretos para consumo entre máquinas (mejora 16,
-  # docs/22-mejoras-futuras.md). Despliegue completo, procedimiento de
-  # migración de un servicio y estado actual: docs/26-infisical-secretos.md.
-  # Decisión de CÓMO se inyectan los secretos en cada servicio migrado
-  # (binario CLI por bind-mount + entrypoint: en Compose, no horneado en
-  # ninguna imagen): docs/adr/0001-infisical-inyeccion-bind-mount-vs-imagen-derivada.md.
-  # Decisión de POR QUÉ tiene Postgres dedicado en vez de compartir
-  # postgres-main: docs/adr/0002-infisical-postgres-dedicado.md.
-  #
-  # Imagen standalone oficial (backend Postgres+Redis EXTERNOS, no los
-  # bundled del docker-compose.prod.yml oficial) — versión fijada, no
-  # "latest", mismo criterio que registry:2.8.3/valkey:9.1.1-alpine.
-  #
-  # Backend: postgres-infisical (arriba), instancia DEDICADA, no postgres-main
-  # — ver ADR 0002. Redis: NO se despliega uno dedicado — reutiliza el Valkey
-  # ya desplegado (mejora 24,
-  # docs/25-valkey-cache.md, que ya anticipaba a Infisical como primer
-  # consumidor real), con un usuario ACL propio (retaco/config/valkey/users.acl)
-  # SIN restricción de prefijo de clave/canal (~* &*, no ~infisical:* como
-  # sugería el ejemplo de docs/25) — confirmado en vivo: BullMQ (cola interna
-  # de Infisical) usa nombres de clave propios con hash-tags ({cron}:slot:0),
-  # no un prefijo "infisical:", y también necesita el comando INFO (bajo
-  # @dangerous en Valkey) — de ahí "+@all -@admin -@dangerous +info" en vez
-  # del "+@read +@write -@dangerous" del ejemplo original. Ver docs/26.
-  # rediss:// obligatorio (Valkey no acepta puerto en claro) contra el
-  # hostname valkey.home.arpa,
-  # NO el nombre de contenedor "valkey" — el certificado TLS de Valkey solo
-  # lleva ese CN/SAN. NODE_EXTRA_CA_CERTS: Infisical (Node/NestJS) no confía
-  # en la CA interna del clúster por defecto — mismo problema ya resuelto
-  # para n8n-main en este mismo fichero — sin esto, la conexión a Valkey por
-  # TLS falla con verificación de certificado.
-  #
-  # TRUSTED_PROXY_CIDRS: solo nginx (pi-dns, 192.168.1.170) le hace proxy —
-  # evita que un cliente falsifique X-Forwarded-For. TELEMETRY_ENABLED=false
-  # y DISABLE_UPDATE_CHECK=true: mismo criterio ya aplicado a n8n-main
-  # (N8N_DIAGNOSTICS_ENABLED/N8N_VERSION_NOTIFICATIONS_ENABLED) — sin
-  # servicio propio detrás que necesite avisos de versión ni telemetría
-  # saliendo del clúster.
-  #
-  # Publicado a la LAN (8006, siguiente libre tras epub2pdf/pdf2chunks/
-  # open-terminal-mcp): nginx (pi-dns) le hace proxy cross-host, igual que
-  # qdrant/n8n-main/registry — sin puerto publicado, pi-dns no puede
-  # alcanzarlo (viven en nodos distintos, no comparten red Docker).
-  # Gestionable con toggle-direct-access.sh (docs/17).
+  # authentik-server / authentik-worker — MIGRADOS al swarm (Fase 4,
+  # docs/31-docker-swarm.md, 2026-08-27). Fuente de verdad ahora:
+  # docker-swarm/stacks/authentik/docker-compose.yml, ambos pinnados con
+  # `node.hostname==retaco` -- mismos datos, sin mover. La BD "authentik" en
+  # postgres-main tampoco se toca -- solo cambia cómo se alcanza (IP real en
+  # vez del alias de red Docker "postgres-main", mismo criterio que
+  # qdrant/n8n-main). Traefik ya apuntaba a 192.168.1.174:9000 de antes
+  # (passthrough + forward-auth de prometheus.home.arpa) -- sin cambios ahí.
+  # Bloque retirado a propósito (no solo los contenedores parados), mismo
+  # motivo que el resto de servicios migrados en esta fase.
   # ---------------------------------------------------------------------------
-  infisical:
-    image: infisical/infisical:v0.162.18
-    container_name: infisical
-    restart: unless-stopped
-    depends_on:
-      postgres-infisical:
-        condition: service_healthy
-      valkey:
-        condition: service_healthy
-    environment:
-      HOST: "0.0.0.0"
-      PORT: "8080"
-      SITE_URL: https://infisical.home.arpa
-      DB_CONNECTION_URI: ${INFISICAL_DB_CONNECTION_URI}
-      REDIS_URL: ${INFISICAL_REDIS_URL}
-      ENCRYPTION_KEY: ${INFISICAL_ENCRYPTION_KEY}
-      AUTH_SECRET: ${INFISICAL_AUTH_SECRET}
-      TRUSTED_PROXY_CIDRS: ${INFISICAL_TRUSTED_PROXY_CIDRS:-192.168.1.170/32}
-      NODE_EXTRA_CA_CERTS: /etc/ssl/certs/homelab-ca.crt
-      TELEMETRY_ENABLED: "false"
-      DISABLE_UPDATE_CHECK: "true"
-    volumes:
-      # CA interna del clúster, de solo lectura — necesaria para que el
-      # cliente Redis de Infisical confíe en el certificado TLS de Valkey.
-      # Descargar antes del primer arranque:
-      #   curl -s http://192.168.1.170/ca.crt -o /srv/homelab/retaco/infisical/ca/homelab-ca.crt
-      - /srv/homelab/retaco/infisical/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
-    ports:
-      - "8006:8080"
-    networks:
-      - retaco-net
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8080/api/status || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-
-  # ---------------------------------------------------------------------------
-  # authentik-server / authentik-worker — Authentik (mejora 25,
-  # docs/22-mejoras-futuras.md): SSO/authn para PERSONAS con sesión de
-  # navegador — distinto de apikey-service, que resuelve auth máquina a
-  # máquina. Piloto: protege prometheus.home.arpa (hoy sin ninguna auth).
-  # Detalle completo, incluido cómo se protegió Prometheus:
-  # docs/27-authentik-sso.md.
-  #
-  # Postgres: base "authentik" COMPARTIDA en postgres-main (a diferencia de
-  # Infisical/ADR 0002) — decisión consciente: Authentik solo gatea login
-  # de personas, no el arranque de ningún servicio máquina, así que un
-  # incidente de postgres-main aquí solo deja sin SSO temporalmente, no
-  # tumba nada en cascada. Radio de fallo mucho menor que el de Infisical,
-  # compartir es defendible. Sin Redis/Valkey — confirmado contra la
-  # documentación oficial vigente (versión 2026.5.6): el docker-compose de
-  # referencia y la lista completa de variables AUTHENTIK_* ya no incluyen
-  # nada de Redis, versiones recientes lo quitaron como dependencia dura.
-  #
-  # Secretos (contraseña de Postgres, AUTHENTIK_SECRET_KEY) vía Infisical
-  # desde el primer despliegue, mismo wrapper de dos pasos que
-  # apikey-service (ADR 0001) — bind-mount del CLI + entrypoint/command
-  # sobreescritos. Entrypoint real de la imagen oficial: "dumb-init -- ak"
-  # (confirmado con docker inspect) — el wrapper re-invoca dumb-init
-  # explícitamente al final, no solo "ak", para conservar el mismo manejo
-  # de señales/zombies que trae la imagen de fábrica.
-  #
-  # AUTHENTIK_OUTPOSTS__DISCOVER=false — desactiva el descubrimiento
-  # automático de Docker para autodesplegar outposts, así el worker NO
-  # necesita montar /var/run/docker.sock (el ejemplo oficial lo monta por
-  # defecto para esa función). Se usa en su lugar el outpost EMBEBIDO que
-  # trae el propio "server" — confirmado en la documentación oficial que
-  # el modo forward-auth "domain-level" apunta /outpost.goauthentik.io
-  # directo al propio Authentik, sin outpost aparte. Mismo criterio de
-  # superficie de riesgo ya aplicado a Floci/open-terminal-mcp/
-  # portainer-agent: nada de acceso al Docker del host salvo que sea
-  # imprescindible, y aquí no lo es.
-  #
-  # Sin puerto 9443 (HTTPS propio) publicado — TLS lo termina nginx en
-  # pi-dns, mismo patrón que el resto del clúster, nunca doble TLS.
-  # ---------------------------------------------------------------------------
-  authentik-server:
-    image: ghcr.io/goauthentik/server:2026.5.6
-    container_name: authentik-server
-    restart: unless-stopped
-    depends_on:
-      postgres-main:
-        condition: service_healthy
-    environment:
-      INFISICAL_UNIVERSAL_AUTH_CLIENT_ID: ${AUTHENTIK_INFISICAL_CLIENT_ID}
-      INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET: ${AUTHENTIK_INFISICAL_CLIENT_SECRET}
-      INFISICAL_PROJECT_ID: ${AUTHENTIK_INFISICAL_PROJECT_ID}
-      INFISICAL_DOMAIN: https://infisical.home.arpa/api
-      SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
-      AUTHENTIK_POSTGRESQL__HOST: postgres-main
-      AUTHENTIK_POSTGRESQL__NAME: authentik
-      AUTHENTIK_POSTGRESQL__USER: authentik
-      AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
-      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
-      AUTHENTIK_OUTPOSTS__DISCOVER: "false"
-    volumes:
-      - /srv/homelab/retaco/infisical-cli/infisical:/usr/local/bin/infisical:ro
-      - /srv/homelab/retaco/authentik/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
-      - /srv/homelab/retaco/authentik/data:/data
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        set -e
-        TOKEN=$$(infisical login --method=universal-auth \
-          --client-id="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_ID" \
-          --client-secret="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET" \
-          --plain --silent) &&
-        exec infisical run --token="$$TOKEN" --projectId="$$INFISICAL_PROJECT_ID" --env=prod --path=/authentik/ -- \
-          dumb-init -- ak server
-    shm_size: 512mb
-    ports:
-      - "9000:9000"
-    networks:
-      - retaco-net
-    healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:9000/-/health/live/')\" || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-
-  authentik-worker:
-    image: ghcr.io/goauthentik/server:2026.5.6
-    container_name: authentik-worker
-    restart: unless-stopped
-    depends_on:
-      postgres-main:
-        condition: service_healthy
-    environment:
-      INFISICAL_UNIVERSAL_AUTH_CLIENT_ID: ${AUTHENTIK_INFISICAL_CLIENT_ID}
-      INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET: ${AUTHENTIK_INFISICAL_CLIENT_SECRET}
-      INFISICAL_PROJECT_ID: ${AUTHENTIK_INFISICAL_PROJECT_ID}
-      INFISICAL_DOMAIN: https://infisical.home.arpa/api
-      SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
-      AUTHENTIK_POSTGRESQL__HOST: postgres-main
-      AUTHENTIK_POSTGRESQL__NAME: authentik
-      AUTHENTIK_POSTGRESQL__USER: authentik
-      AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
-      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
-      AUTHENTIK_OUTPOSTS__DISCOVER: "false"
-    volumes:
-      - /srv/homelab/retaco/infisical-cli/infisical:/usr/local/bin/infisical:ro
-      - /srv/homelab/retaco/authentik/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
-      - /srv/homelab/retaco/authentik/data:/data
-      - /srv/homelab/retaco/authentik/certs:/certs
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        set -e
-        TOKEN=$$(infisical login --method=universal-auth \
-          --client-id="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_ID" \
-          --client-secret="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET" \
-          --plain --silent) &&
-        exec infisical run --token="$$TOKEN" --projectId="$$INFISICAL_PROJECT_ID" --env=prod --path=/authentik/ -- \
-          dumb-init -- ak worker
-    shm_size: 512mb
-    networks:
-      - retaco-net
 
 networks:
   retaco-net:

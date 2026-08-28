@@ -70,7 +70,7 @@
         "id": "vk-homelab-cluster",
         "name": "homelab-cluster",
         "value": "env.BIFROST_VIRTUAL_KEY",
-        "description": "Open WebUI y n8n del clúster homelab-cluster, vía bifrost.home.arpa",
+        "description": "Open WebUI y n8n del clúster homelab-cluster, vía bifrost.404labo.net",
         "is_active": true,
         "provider_configs": [
           {
@@ -102,7 +102,7 @@
     "enabled": true,
     "type": "postgres",
     "config": {
-      "host": "postgresql.home.arpa",
+      "host": "postgresql.404labo.net",
       "port": 5432,
       "user": "bifrost",
       "password": "env.BIFROST_DB_PASSWORD",
@@ -115,7 +115,7 @@
     "enabled": true,
     "type": "postgres",
     "config": {
-      "host": "postgresql.home.arpa",
+      "host": "postgresql.404labo.net",
       "port": 5432,
       "user": "bifrost",
       "password": "env.BIFROST_DB_PASSWORD",

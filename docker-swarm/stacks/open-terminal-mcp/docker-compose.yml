@@ -1,0 +1,70 @@
+# Fase 4 (docs/31-docker-swarm.md): open-terminal-mcp migrado al swarm.
+# `constraints: node.hostname==retaco` -- los datos (/home/user, workspace
+# de las sesiones de shell del LLM) siguen en el mismo bind-mount, sin
+# mover. Sin dependencias cruzadas por alias.
+version: "3.8"
+
+services:
+  open-terminal-mcp:
+    image: registry.404labo.net/open-terminal-mcp:latest
+    environment:
+      # Mejora 41 (2026-08-28): cert real de Let's Encrypt, pero SSL_CERT_FILE
+      # SIGUE haciendo falta -- esta imagen no trae ningún almacén de CAs del
+      # sistema (hallazgo real, ver apikey-service). homelab-ca.crt pasa a
+      # ser un bundle combinado (CA interna + almacén público estándar).
+      INFISICAL_DOMAIN: https://infisical.404labo.net/api
+      SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
+    volumes:
+      - /srv/homelab/retaco/open-terminal-mcp/home:/home/user
+      - /srv/homelab/retaco/open-terminal-mcp/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
+      - /srv/homelab/retaco/infisical-cli/infisical:/usr/local/bin/infisical:ro
+    secrets:
+      - source: open-terminal-mcp-infisical-client-id-v1
+        target: open-terminal-mcp-infisical-client-id
+      - source: open-terminal-mcp-infisical-client-secret-v1
+        target: open-terminal-mcp-infisical-client-secret
+      - source: open-terminal-mcp-infisical-project-id-v1
+        target: open-terminal-mcp-infisical-project-id
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        CLIENT_ID=$$(cat /run/secrets/open-terminal-mcp-infisical-client-id) &&
+        CLIENT_SECRET=$$(cat /run/secrets/open-terminal-mcp-infisical-client-secret) &&
+        PROJECT_ID=$$(cat /run/secrets/open-terminal-mcp-infisical-project-id) &&
+        TOKEN=$$(infisical login --method=universal-auth \
+          --client-id="$$CLIENT_ID" \
+          --client-secret="$$CLIENT_SECRET" \
+          --plain --silent) &&
+        exec infisical run --token="$$TOKEN" --projectId="$$PROJECT_ID" --env=prod --path=/open-terminal-mcp/ -- \
+          tini -- /app/entrypoint-slim.sh mcp --transport streamable-http --host 0.0.0.0 --port 8000
+    ports:
+      - "8005:8000"
+    networks:
+      - open-terminal-mcp-net
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        mode: non-blocking
+        max-buffer-size: 4m
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname==retaco
+      restart_policy:
+        condition: on-failure
+
+networks:
+  open-terminal-mcp-net:
+    driver: overlay
+    attachable: true
+
+secrets:
+  open-terminal-mcp-infisical-client-id-v1:
+    external: true
+  open-terminal-mcp-infisical-client-secret-v1:
+    external: true
+  open-terminal-mcp-infisical-project-id-v1:
+    external: true

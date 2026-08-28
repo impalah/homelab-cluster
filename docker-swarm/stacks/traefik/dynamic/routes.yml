@@ -1,0 +1,337 @@
+# Fase 3b (docs/31-docker-swarm.md): configuración dinámica de Traefik vía
+# `providers.file` -- necesaria porque la mayoría de backends reales
+# (retaco/ryzen/pi-obs/pi-sonar/pi-utils, servicios con IP:puerto fija) NO
+# son todavía servicios de Swarm y por tanto no los descubre el proveedor
+# `swarm` por labels (ese mecanismo solo aplica a markitdown-service por
+# ahora, fase 2). Aquí se replica, servicio a servicio, cada bloque server{}
+# de pi-dns/config/nginx/nginx.conf que NO exige auth_request/forward-auth --
+# ver docs/31-docker-swarm.md fase 3b para la lista de hostnames pendientes
+# (apikey-service y Authentik forward-auth) y el motivo de dejarlos fuera de
+# este primer incremento.
+#
+# Deliberadamente fuera de este fichero (ver docs/31-docker-swarm.md):
+#   - old.index.home.arpa (sirve estático directamente, Traefik no tiene un
+#     backend de fichero-servidor propio -- necesitaría un contenedor nginx
+#     aparte solo para esto, no vale la pena todavía)
+#   - apikey.home.arpa / pihole.home.arpa (apikey-service y pihole solo
+#     escuchan en la red Docker interna de pi-dns, sin puerto publicado al
+#     LAN -- no alcanzables desde Traefik en ningún otro nodo tal cual hoy)
+#   - markitdown.home.arpa (hostname real) -- se añade como label en el
+#     propio stack de markitdown-service (proveedor `swarm`, no `file`),
+#     igual que markitdown-test.local en la fase 3a, para no declarar el
+#     mismo servicio en dos proveedores a la vez.
+#
+# Segundo incremento de 3b (2026-08-25): los 8 hostnames protegidos con
+# apikey-service + prometheus.home.arpa (Authentik) -- decisión del usuario:
+# adelantar la migración de apikey-service al swarm (docker-swarm/stacks/
+# apikey-service/) para que sea alcanzable desde Traefik en cualquier nodo,
+# y resolver el forward-auth de Authentik en el mismo incremento. Traefik no
+# tiene `auth_request` -- el equivalente nativo es el middleware
+# `forwardAuth`, que llama a una URL externa por cada petición y deniega si
+# no responde 2xx.
+#
+# Tercer incremento de 3b (2026-08-26): home.404labo.net/capataz-api.
+# 404labo.net -- certificado real de Let's Encrypt (dominio público, no la
+# CA interna), emitido y renovado por shared/scripts/renew-letsencrypt.sh
+# (cron en pi-dns, reto DNS-01 vía plugin dns_aws de acme.sh contra la
+# hosted zone Route53 de 404labo.net -- mejora 32 de docs/22-mejoras-
+# futuras.md). Mismos backends ya declarados para index/capataz-api
+# (home.arpa) -- se reutiliza el mismo `service:`, solo cambia el router
+# (Host + certificado). El renovador NO actualiza este secret de Swarm
+# automáticamente todavía (es inmutable, hace falta versión nueva +
+# redeploy) -- ver docs/31-docker-swarm.md para el procedimiento manual
+# pendiente de automatizar.
+#
+# Fase A de la mejora 41 (2026-08-28, docs/22-mejoras-futuras.md): se añade
+# un router gemelo bajo *.404labo.net para CADA hostname que aún vive solo
+# en *.home.arpa -- mismo patrón mecánico que el tercer incremento de 3b de
+# arriba (mismo `service:`, `tls: {}` deja que Traefik elija el certificado
+# wildcard ya cargado por SNI, sin config adicional). Paso puramente
+# aditivo: ambos dominios responden en paralelo, nada se retira todavía.
+# `index`/`capataz-api` ya tenían su gemelo (`home-404labo-net`/
+# `capataz-api-404labo-net`, arriba) -- no se duplica. El router
+# `prometheus-404labo-net` queda añadido pero el login de Authentik no
+# funcionará de punta a punta hasta que se actualice el "External Host" del
+# Proxy Provider en la UI de Authentik (Fase C) -- añadir el router no es
+# lo mismo que completar el corte de ese hostname.
+#
+# Cierre de la mejora 41 (2026-08-28): retirados todos los routers
+# `Host(*.home.arpa)` (~24, listados arriba en los incrementos previos) y el
+# certificado de *.home.arpa -- verificados sanos todos sus gemelos
+# *.404labo.net primero (incluida la Fase C de Authentik), aplicado el corte
+# de DNS en Pi-hole (shared/dns/dns-records.md) y decomisionado nginx en
+# pi-dns en el mismo cierre. Los routers `-404labo-net` que quedan abajo son
+# ahora los únicos que existen para cada hostname -- se conserva el sufijo
+# en su nombre (cosmético, sin efecto funcional) para no tocar 24 bloques
+# solo por estética.
+
+tls:
+  certificates:
+    - certFile: /run/secrets/404labo-net.crt
+      keyFile: /run/secrets/404labo-net.key
+
+http:
+  middlewares:
+    # apikey-service ahora vive también en el swarm (docker-swarm/stacks/
+    # apikey-service/), en la misma red overlay `traefik-public` que
+    # Traefik -- se le llama por nombre de servicio de Swarm
+    # (`apikey-service`, puerto interno 8090), sin pasar por el puerto
+    # publicado 8091 ni por IP fija. Verificado en vivo: `docker exec` en un
+    # contenedor de Traefik resuelve y alcanza `http://apikey-service:8090/
+    # health` correctamente.
+    #
+    # `authRequestHeaders` limita lo que se reenvía al backend de auth a
+    # solo X-Api-Key -- mismo criterio de mínima exposición que el
+    # `proxy_set_header` explícito de apikey-auth.conf en nginx (que
+    # también limpia Content-Length y desactiva el body).
+    apikey-auth:
+      forwardAuth:
+        address: "http://apikey-service:8090/validate"
+        trustForwardHeader: true
+        authRequestHeaders:
+          - X-Api-Key
+    # Authentik: mismo Proxy Provider (modo "Forward auth, single
+    # application") ya usado por nginx para prometheus.home.arpa -- el
+    # outpost embebido expone varios sub-endpoints por tipo de proxy
+    # (/auth/nginx, /auth/traefik...) sobre el MISMO provider, no hace
+    # falta crear uno nuevo en Authentik. Por IP directa a authentik-server
+    # (retaco), igual que hace nginx en authentik-auth.conf.
+    authentik-auth:
+      forwardAuth:
+        address: "http://192.168.1.174:9000/outpost.goauthentik.io/auth/traefik"
+        trustForwardHeader: true
+        authResponseHeaders:
+          - Set-Cookie
+          - X-authentik-username
+          - X-authentik-groups
+          - X-authentik-email
+          - X-authentik-name
+          - X-authentik-uid
+
+  routers:
+    home-404labo-net:
+      rule: "Host(`home.404labo.net`)"
+      entryPoints: ["websecure"]
+      tls: {}
+      service: index
+    capataz-api-404labo-net:
+      rule: "Host(`capataz-api.404labo.net`)"
+      entryPoints: ["websecure"]
+      tls: {}
+      service: capataz-api
+    ollama-404labo-net:
+      rule: "Host(`ollama.404labo.net`)"
+      entryPoints: ["websecure"]
+      tls: {}
+      middlewares: ["apikey-auth"]
+      service: ollama
+    vllm-404labo-net:
+      rule: "Host(`vllm.404labo.net`)"
+      entryPoints: ["websecure"]
+      tls: {}
+      middlewares: ["apikey-auth"]
+      service: vllm
+    comfyui-404labo-net:
+      rule: "Host(`comfyui.404labo.net`)"
+      entryPoints: ["websecure"]
+      tls: {}
+      middlewares: ["apikey-auth"]
+      service: comfyui
+    epub2pdf-404labo-net:
+      rule: "Host(`epub2pdf.404labo.net`)"
+      entryPoints: ["websecure"]
+      tls: {}
+      middlewares: ["apikey-auth"]
+      service: epub2pdf
+    pdf2chunks-404labo-net:
+      rule: "Host(`pdf2chunks.404labo.net`)"
+      entryPoints: ["websecure"]
+      tls: {}
+      middlewares: ["apikey-auth"]
+      service: pdf2chunks
+    open-terminal-404labo-net:
+      rule: "Host(`open-terminal.404labo.net`)"
+      entryPoints: ["websecure"]
+      tls: {}
+      middlewares: ["apikey-auth"]
+      service: open-terminal
+    crawl4ai-scraper-404labo-net:
+      rule: "Host(`crawl4ai.scraper.404labo.net`)"
+      entryPoints: ["websecure"]
+      tls: {}
+      middlewares: ["apikey-auth"]
+      service: crawl4ai-scraper
+    prometheus-404labo-net:
+      rule: "Host(`prometheus.404labo.net`)"
+      entryPoints: ["websecure"]
+      tls: {}
+      middlewares: ["authentik-auth"]
+      service: prometheus
+    openwebui-404labo-net:
+      rule: "Host(`openwebui.404labo.net`)"
+      entryPoints: ["websecure"]
+      tls: {}
+      service: openwebui
+    n8n-404labo-net:
+      rule: "Host(`n8n.404labo.net`)"
+      entryPoints: ["websecure"]
+      tls: {}
+      service: n8n
+    qdrant-404labo-net:
+      rule: "Host(`qdrant.404labo.net`)"
+      entryPoints: ["websecure"]
+      tls: {}
+      service: qdrant
+    infisical-404labo-net:
+      rule: "Host(`infisical.404labo.net`)"
+      entryPoints: ["websecure"]
+      tls: {}
+      service: infisical
+    authentik-404labo-net:
+      rule: "Host(`authentik.404labo.net`)"
+      entryPoints: ["websecure"]
+      tls: {}
+      service: authentik
+    registry-404labo-net:
+      rule: "Host(`registry.404labo.net`)"
+      entryPoints: ["websecure"]
+      tls: {}
+      service: registry
+    whisper-404labo-net:
+      rule: "Host(`whisper.404labo.net`)"
+      entryPoints: ["websecure"]
+      tls: {}
+      service: whisper
+    grafana-404labo-net:
+      rule: "Host(`grafana.404labo.net`)"
+      entryPoints: ["websecure"]
+      tls: {}
+      service: grafana
+    sonarqube-404labo-net:
+      rule: "Host(`sonarqube.404labo.net`)"
+      entryPoints: ["websecure"]
+      tls: {}
+      service: sonarqube
+    bifrost-404labo-net:
+      rule: "Host(`bifrost.404labo.net`)"
+      entryPoints: ["websecure"]
+      tls: {}
+      service: bifrost
+    rsshub-404labo-net:
+      rule: "Host(`rsshub.404labo.net`)"
+      entryPoints: ["websecure"]
+      tls: {}
+      service: rsshub
+    n8n-aux-404labo-net:
+      rule: "Host(`n8n-aux.404labo.net`)"
+      entryPoints: ["websecure"]
+      tls: {}
+      service: n8n-aux
+    portainer-404labo-net:
+      rule: "Host(`portainer.404labo.net`)"
+      entryPoints: ["websecure"]
+      tls: {}
+      service: portainer
+    vaultwarden-404labo-net:
+      rule: "Host(`vaultwarden.404labo.net`)"
+      entryPoints: ["websecure"]
+      tls: {}
+      service: vaultwarden
+
+  services:
+    index:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.1.173:8090"
+    capataz-api:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.1.173:8000"
+    openwebui:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.1.174:8080"
+    n8n:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.1.174:5678"
+    qdrant:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.1.174:6333"
+    infisical:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.1.174:8006"
+    authentik:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.1.174:9000"
+    registry:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.1.174:5000"
+    whisper:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.1.150:9800"
+    grafana:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.1.171:3000"
+    sonarqube:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.1.172:9000"
+    bifrost:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.1.172:8080"
+    rsshub:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.1.173:1200"
+    n8n-aux:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.1.173:5679"
+    portainer:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.1.173:9000"
+    vaultwarden:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.1.173:8222"
+    ollama:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.1.150:11434"
+    vllm:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.1.150:8010"
+    comfyui:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.1.150:8188"
+    epub2pdf:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.1.174:8003"
+    pdf2chunks:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.1.174:8004"
+    open-terminal:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.1.174:8005"
+    crawl4ai-scraper:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.1.173:8002"
+    prometheus:
+      loadBalancer:
+        servers:
+          - url: "http://192.168.1.171:9090"

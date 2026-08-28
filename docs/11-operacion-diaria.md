@@ -1,6 +1,6 @@
 # 11 — Operación diaria del clúster
 
-> Para logs, reinicios, consola dentro de un contenedor o ver uso de CPU/RAM sin usar la terminal, **Portainer** (`https://portainer.home.arpa`) cubre gran parte de lo que hay en esta página desde una interfaz, para los seis nodos — ver `docs/10-instalacion-pi4-utils.md`. Los comandos de abajo siguen siendo la referencia para todo lo que no cubre la interfaz (copias de seguridad, cron, rotación de credenciales, etc.).
+> Para logs, reinicios, consola dentro de un contenedor o ver uso de CPU/RAM sin usar la terminal, **Portainer** (`https://portainer.404labo.net`) cubre gran parte de lo que hay en esta página desde una interfaz, para los seis nodos — ver `docs/10-instalacion-pi4-utils.md`. Los comandos de abajo siguen siendo la referencia para todo lo que no cubre la interfaz (copias de seguridad, cron, rotación de credenciales, etc.).
 
 ## Comandos habituales por nodo
 
@@ -130,12 +130,21 @@ El script: `docker compose pull` → `docker compose up -d` → `docker image pr
 
 ### Actualizar todos los nodos (secuencial, requiere SSH)
 
+Cada nodo tiene su propio usuario SSH dedicado (`docs/01-topologia.md`, sin usuario genérico
+compartido) — no hay un único bucle de una línea, ejecutar por nodo:
+
 ```bash
-for node in pi-dns ryzen retaco pi-obs pi-sonar pi-utils; do
-  echo "Actualizando $node..."
-  ssh homelab@$node.home.arpa "bash /srv/homelab/shared/scripts/update-stack.sh $node"
-done
+ssh u-dns@192.168.1.170   "bash /srv/homelab/shared/scripts/update-stack.sh pi-dns"
+ssh u-data@192.168.1.174  "bash /srv/homelab/shared/scripts/update-stack.sh retaco"
+ssh u-obs@192.168.1.171   "bash /srv/homelab/shared/scripts/update-stack.sh pi-obs"
+ssh u-sonar@192.168.1.172 "bash /srv/homelab/shared/scripts/update-stack.sh pi-sonar"
+ssh u-utils@192.168.1.173 "bash /srv/homelab/shared/scripts/update-stack.sh pi-utils"
+# ryzen: ejecutar localmente si esta terminal ya está en ryzen (ver CLAUDE.md), si no:
+ssh linus@192.168.1.150   "bash /srv/homelab/shared/scripts/update-stack.sh ryzen"
 ```
+
+Servicios en el Swarm (la mayoría) no se actualizan así — ver `docs/16-mantenimiento-actualizaciones.md`
+y `docker-swarm/README.md`.
 
 > Actualizar `pi-dns` primero para garantizar resolución DNS durante el resto del proceso.
 
@@ -179,9 +188,9 @@ docker exec ollama ollama show <modelo>
 
 ---
 
-## Acceso por hostname (`*.home.arpa`) desde el PC de gestión
+## Acceso por hostname (`*.404labo.net`) desde el PC de gestión
 
-Para que `https://grafana.home.arpa` etc. resuelvan sin depender de que el router ya reparta pi-dns por DHCP — ver `docs/06-instalacion-pi1-dns.md` sección 8.1 (instrucciones `nmcli` para Ubuntu Desktop).
+Para que `https://grafana.404labo.net` etc. resuelvan sin depender de que el router ya reparta pi-dns por DHCP — ver `docs/06-instalacion-pi1-dns.md` sección 8.1 (instrucciones `nmcli` para Ubuntu Desktop).
 
 ---
 
@@ -229,7 +238,7 @@ ssh ryzen "docker compose -f /srv/homelab/ryzen/docker-compose.yml ps"
 
 ## Cortafuegos — cerrar el acceso directo por IP y puerto
 
-Servicios como `ollama.home.arpa` también son alcanzables directamente por IP y puerto, saltándose `apikey-service`:
+Servicios como `ollama.404labo.net` también son alcanzables directamente por IP y puerto, saltándose `apikey-service`:
 
 ```bash
 bash shared/scripts/toggle-direct-access.sh <nodo|all> off      # cerrar

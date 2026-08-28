@@ -1,0 +1,177 @@
+# Fase 4 (docs/31-docker-swarm.md): observabilidad de pi-obs migrada al
+# swarm como UN SOLO stack -- Grafana/otel-collector referencian a
+# Loki/Tempo/Prometheus por ALIAS de red Docker (http://prometheus:9090,
+# http://loki:3100, http://tempo:3200/4317) y necesitan seguir compartiendo
+# red para que esos alias resuelvan, igual que pasaba con authentik-server/
+# worker. Los 6 servicios `constraints: node.hostname==pi-obs` -- los datos
+# (Loki/Tempo/Prometheus/Grafana) siguen en el mismo bind-mount de siempre,
+# sin mover. Ningún consumidor EXTERNO (otros nodos) cambia -- todos usan ya
+# IP real (192.168.1.171), nunca alias Docker.
+#
+# Sin backup dedicado para Loki/Tempo/Prometheus (telemetría regenerable,
+# la propia operación no toca los datos -- mismo criterio de riesgo ya usado
+# 7 veces en esta fase sin pérdida). Grafana sí (dashboards/config reales,
+# pequeño). postgres-exporter incluido aquí también -- Prometheus lo scrapea
+# por alias "postgres-exporter:9187", necesita la misma red; de paso corrige
+# un DNS de contenedor obsoleto (up=0 desde el 24-08, ver docs/31) que se
+# resuelve solo al recrear ambos contenedores en la red nueva.
+#
+# GF_ADMIN_PASSWORD / POSTGRES_EXPORTER_DSN como Docker secrets -- ninguno
+# de los dos está en Infisical todavía (mejora 28, pendiente), mismo
+# criterio que postgres-main/registry.
+version: "3.8"
+
+services:
+  loki:
+    image: grafana/loki:3.0.0
+    command: -config.file=/etc/loki/loki.yaml
+    volumes:
+      - /srv/homelab/pi-obs/loki/loki.yaml:/etc/loki/loki.yaml:ro
+      - /srv/homelab/pi-obs/loki/data:/loki
+    ports:
+      - "3100:3100"
+    networks:
+      - pi-obs-net
+    logging: &loki-logging
+      driver: loki
+      options:
+        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        loki-external-labels: "node=pi-obs"
+        mode: non-blocking
+        max-buffer-size: 4m
+    deploy: &pi-obs-deploy
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname==pi-obs
+      restart_policy:
+        condition: on-failure
+
+  tempo:
+    image: grafana/tempo:2.4.2
+    command: -config.file=/etc/tempo/tempo.yaml
+    volumes:
+      - /srv/homelab/pi-obs/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - /srv/homelab/pi-obs/tempo/data:/var/tempo
+    # Sin "ports:" a propósito -- ver nota grande al final del fichero sobre
+    # "127.0.0.1:" y el modo `ingress` de Swarm. Nada consume el 3200 por
+    # puerto publicado (Grafana lo alcanza por alias "http://tempo:3200" en
+    # la misma red overlay) -- no publicarlo en absoluto es más restrictivo
+    # que el loopback original, no menos.
+    networks:
+      - pi-obs-net
+    logging: *loki-logging
+    deploy: *pi-obs-deploy
+
+  prometheus:
+    image: prom/prometheus:v2.51.2
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-remote-write-receiver"
+      - "--web.enable-lifecycle"
+    volumes:
+      - /srv/homelab/pi-obs/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - /srv/homelab/pi-obs/prometheus/data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - pi-obs-net
+    logging: *loki-logging
+    deploy: *pi-obs-deploy
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.100.0
+    command: ["--config=/etc/otel/otel-collector.yaml"]
+    volumes:
+      - /srv/homelab/pi-obs/otel/config/otel-collector.yaml:/etc/otel/otel-collector.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      # Sin publicar el 8889 (métricas propias del collector) -- Prometheus
+      # lo scrapea por alias "otel-collector:8889", nada más lo consume.
+    networks:
+      - pi-obs-net
+    logging: *loki-logging
+    deploy: *pi-obs-deploy
+
+  grafana:
+    image: grafana/grafana:10.4.2
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD_FILE: /run/secrets/grafana-admin-password
+      GF_SERVER_ROOT_URL: https://grafana.404labo.net
+      GF_SERVER_DOMAIN: grafana.404labo.net
+      GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+      GF_LOG_LEVEL: info
+    volumes:
+      - /srv/homelab/pi-obs/grafana/data:/var/lib/grafana
+      - /srv/homelab/pi-obs/config/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - /srv/homelab/pi-obs/config/grafana/alerting/undervoltage.yml:/etc/grafana/provisioning/alerting/undervoltage.yml:ro
+      - /srv/homelab/pi-obs/config/grafana/dashboards/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - /srv/homelab/pi-obs/config/grafana/dashboards/json:/etc/grafana/provisioning/dashboards/json:ro
+    secrets:
+      - source: grafana-admin-password-v1
+        target: grafana-admin-password
+    ports:
+      - "3000:3000"
+    networks:
+      - pi-obs-net
+    user: "472"
+    logging: *loki-logging
+    deploy: *pi-obs-deploy
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    # postgres_exporter NO soporta el sufijo `_FILE` (a diferencia de la
+    # imagen oficial `postgres`) -- entrypoint propio para leer el secreto
+    # de fichero y exportarlo como variable de entorno normal antes de
+    # arrancar el binario real.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        export DATA_SOURCE_NAME=$$(cat /run/secrets/postgres-exporter-dsn)
+        exec /bin/postgres_exporter
+    secrets:
+      - source: postgres-exporter-dsn-v1
+        target: postgres-exporter-dsn
+    # Sin "ports:" a propósito -- Prometheus lo alcanza por alias
+    # "postgres-exporter:9187" en la misma red overlay, nada más lo consume.
+    networks:
+      - pi-obs-net
+    logging: *loki-logging
+    deploy: *pi-obs-deploy
+
+# Nota sobre "127.0.0.1:" en publicación de puertos bajo Swarm: el modo
+# `ingress` (el que se usa por defecto, sin decir `mode:` explícito) NUNCA
+# respeta una IP de host concreta -- publica en TODAS las interfaces de
+# TODOS los nodos del swarm por diseño (la routing mesh necesita eso para
+# funcionar), aunque la sintaxis corta "127.0.0.1:puerto:puerto" no dé
+# ningún error al desplegar. Confirmado en vivo (2026-08-27): tempo/
+# otel-collector/postgres-exporter, restringidos a loopback en la copia
+# Compose clásica, quedaron alcanzables desde toda la LAN tras el primer
+# despliegue con la sintaxis corta -- sin error, sin aviso, solo el
+# comportamiento real distinto del esperado. La sintaxis larga con
+# `host_ip:`/`mode: host` tampoco vale -- `docker stack deploy` usa un
+# esquema más limitado que el Compose Specification completo y rechaza
+# `host_ip` directamente ("Additional property host_ip is not allowed").
+# Solución real aplicada: NO publicar estos tres puertos en absoluto --
+# ninguno lo necesitaba, todo el consumo real ya iba por alias de red
+# Docker dentro de la misma red overlay (confirmado contra
+# prometheus.yml/datasources.yml antes de quitarlos) — más restrictivo que
+# el loopback original, no menos. Si algún día hace falta publicar un
+# puerto restringido a un nodo bajo Swarm de verdad, no hay equivalente
+# directo a "127.0.0.1:" — la alternativa real es el firewall del propio
+# nodo (DOCKER-USER/INPUT), no la sintaxis de `ports:`.
+networks:
+  pi-obs-net:
+    driver: overlay
+    attachable: true
+
+secrets:
+  grafana-admin-password-v1:
+    external: true
+  postgres-exporter-dsn-v1:
+    external: true

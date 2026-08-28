@@ -1,0 +1,64 @@
+# Fase 4 (docs/31-docker-swarm.md): crawl4ai-scraper-service migrado al
+# swarm. Sin `constraints` -- servicio totalmente sin estado (sin
+# volúmenes, ningún bind-mount), puede aterrizar en cualquiera de los 5
+# nodos, igual que markitdown-service. Sin secretos/Infisical -- todas sus
+# variables son configuración simple, no credenciales (PROXY_* van vacías
+# por defecto, sin proxy configurado hoy).
+#
+# `mem_limit: 2g` (Compose clásico, red de seguridad ante fugas de memoria
+# del navegador compartido de Crawl4AI, ver comentario original en
+# pi-utils/docker-compose.yml) convertido a `deploy.resources.limits.memory`
+# -- `mem_limit` es ignorado en silencio por `docker stack deploy`.
+version: "3.8"
+
+services:
+  crawl4ai-scraper-service:
+    image: registry.404labo.net/crawl4ai-scraper-service:latest
+    environment:
+      APP_NAME: "Crawl4AI Scraper Service"
+      APP_ENV: production
+      DEBUG: "false"
+      LOG_LEVEL: INFO
+      LOG_FORMAT: json
+      MAX_CONCURRENT_SCRAPES: "12"
+      MAX_CONCURRENT_DEDICATED_BROWSERS: "2"
+      SCRAPE_TIMEOUT_SECONDS: "60"
+      # Por debajo del proxy_read_timeout de nginx para crawl4ai.scraper.home.arpa
+      # (90s) a propósito -- ver comentario original en pi-utils/docker-compose.yml.
+      SEMAPHORE_ACQUIRE_TIMEOUT_SECONDS: "75"
+      CRAWLER_HEADLESS: "true"
+      CRAWLER_VERBOSE: "false"
+      CRAWLER_PAGE_TIMEOUT_MS: "60000"
+      CRAWLER_WAIT_UNTIL: domcontentloaded
+      MAX_PAGES_BEFORE_RECYCLE: "15"
+      ENABLE_STEALTH_MODE: "true"
+      ENABLE_UNDETECTED_BROWSER: "true"
+      ENABLE_MAGIC_MODE: "true"
+      ENABLE_PROXY: "false"
+      PROXY_SERVER: ""
+      PROXY_USERNAME: ""
+      PROXY_PASSWORD: ""
+      MAX_RETRIES: "2"
+      MARKDOWN_WORD_COUNT_THRESHOLD: "10"
+    ports:
+      - "8002:8000"
+    networks:
+      - crawl4ai-net
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        mode: non-blocking
+        max-buffer-size: 4m
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      resources:
+        limits:
+          memory: 2g
+
+networks:
+  crawl4ai-net:
+    driver: overlay
+    attachable: true

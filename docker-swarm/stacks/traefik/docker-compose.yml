@@ -1,0 +1,145 @@
+# Fase 3 (docs/31-docker-swarm.md), sub-fase 3a: Traefik en PARALELO al nginx
+# real de pi-dns -- puertos de prueba (8080/8443, no 80/443), sin tocar DNS
+# ni el nginx real. Objetivo único de este paso: validar el descubrimiento
+# de servicios vía el proveedor `swarm` (no `docker` -- en Traefik v3 el
+# soporte de Swarm se separó a un proveedor propio, `providers.docker.
+# swarmMode` de v2 ya no existe, confirmado antes de escribir esto).
+#
+# `mode: global` + publicación `ingress` (mejora 39 ya decidido) -- una
+# réplica por nodo, la routing mesh de Swarm da HA real sin necesitar
+# `constraints`. Todos los nodos del swarm son manager, así que el socket de
+# Docker de cualquiera puede responder a la API de Swarm que este proveedor
+# necesita.
+#
+# Fase 3b (docs/31-docker-swarm.md): certificado real de *.home.arpa como
+# `docker secret` nativo (creado a mano fuera de este compose -- ver
+# comentario en `secrets:` más abajo, un secret con contenido real no debe
+# vivir en un fichero versionado en git) + proveedor `file` con las rutas
+# reales de nginx que no necesitan auth_request/forward-auth (ver
+# dynamic/routes.yml para la lista completa y lo que queda fuera a
+# propósito). Sigue en puertos de prueba (8443, no 443) -- todavía en
+# paralelo al nginx real de pi-dns, sin tocar DNS.
+#
+# Cierre de la mejora 41 (2026-08-28): nginx en pi-dns decomisionado de
+# verdad (dejó de ser vía de rollback), *.home.arpa retirado de Pi-hole y de
+# este stack -- 404labo.net es ahora el único dominio que sirve el clúster.
+version: "3.8"
+
+services:
+  traefik:
+    image: traefik:v3.2
+    environment:
+      # Sin esto, el cliente Docker interno de Traefik negocia por defecto la
+      # versión de API 1.24 (muy antigua) contra un Docker Engine 29.x, que
+      # exige mínimo 1.40 -- error real encontrado: "client version 1.24 is
+      # too old. Minimum supported API version is 1.40". Fijar una versión
+      # moderna evita la negociación fallida.
+      DOCKER_API_VERSION: "1.45"
+    command:
+      - "--providers.swarm.endpoint=unix:///var/run/docker.sock"
+      - "--providers.swarm.exposedByDefault=false"
+      # Nombre REAL de la red tal como la ve Docker (con el prefijo del stack,
+      # "traefik_traefik-public") -- "traefik-public" a secas falla con
+      # "Could not find network named traefik-public", encontrado en vivo.
+      - "--providers.swarm.network=traefik_traefik-public"
+      # Proveedor `file` -- rutas estáticas hacia backends que todavía NO son
+      # servicios de Swarm (la inmensa mayoría hoy, fase 3b), igual que hace
+      # nginx con IP:puerto fija. Ver dynamic/routes.yml.
+      - "--providers.file.directory=/etc/traefik/dynamic"
+      - "--providers.file.watch=true"
+      # Puertos internos normales (80/443).
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--api.dashboard=true"
+      - "--api.insecure=true"
+      - "--log.level=INFO"
+      - "--accesslog=true"
+    ports:
+      # Puertos REALES (80/443) desde el cutover de DNS (2026-08-26, fase 3b
+      # cierre) -- confirmado libres en los 5 nodos antes de aplicar (ver
+      # docs/31-docker-swarm.md). nginx (pi-dns) sigue escuchando 80/443 en
+      # SU PROPIA IP sin conflicto -- son máquinas distintas, no el mismo
+      # host. Nada apunta a esto por DNS todavía hasta que se muevan los
+      # registros de Pi-hole hostname a hostname.
+      - "80:80"
+      - "443:443"
+      # Dashboard de prueba, sin proteger (api.insecure) -- cerrar antes de
+      # dar la migración por completa (quitar api.insecure, proteger con
+      # ForwardAuth o similar).
+      #
+      # Puerto REAL cambiado de 8090 a 18090 (2026-08-26, incidente real): al
+      # ser `mode: global`, Traefik publica este puerto en LOS 5 NODOS -- en
+      # pi-utils choca con el puerto real de producción de capataz-frontend
+      # (192.168.1.173:8090, ver routes.yml servicio `index`). No se
+      # manifestó hasta un reinicio en frío de pi-utils, en el que dockerd
+      # reservó 8090 para la routing mesh de Traefik ANTES que el propio
+      # capataz-frontend pudiera arrancar, dejándolo en `Exited (1)` con
+      # "address already in use". Confirmado 18090 libre en los 5 nodos
+      # antes de aplicar el cambio.
+      - "18090:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    configs:
+      - source: traefik-dynamic-routes-v5
+        target: /etc/traefik/dynamic/routes.yml
+    secrets:
+      # Versión real en el clúster puede ir por delante de esta -- mejora 41
+      # (2026-08-28) automatizó la rotación en cada renovación real de
+      # Let's Encrypt (shared/scripts/deploy-traefik-cert.sh, disparado como
+      # --reloadcmd de acme.sh en pi-dns), y ese script sube de versión sin
+      # tocar este fichero. Se actualiza aquí a mano la próxima vez que este
+      # compose se toque por otro motivo -- no hace falta perseguir cada
+      # rotación automática.
+      - source: 404labo-net-crt-v3
+        target: 404labo-net.crt
+      - source: 404labo-net-key-v3
+        target: 404labo-net.key
+    networks:
+      - traefik-public
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        mode: non-blocking
+        max-buffer-size: 4m
+    deploy:
+      mode: global
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+
+networks:
+  traefik-public:
+    driver: overlay
+    attachable: true
+
+configs:
+  # Auto-creado por `docker stack deploy` a partir de dynamic/routes.yml --
+  # sufijo -vN porque los config de Swarm son inmutables (igual que los
+  # secrets): un cambio de contenido exige subir de versión y re-desplegar,
+  # no se puede editar en sitio. v3: tercer incremento de 3b, añade el
+  # certificado/routers de 404labo.net. v4: Fase A de la mejora 41
+  # (2026-08-28) -- añade el router gemelo *.404labo.net para cada hostname
+  # que aún vivía solo en *.home.arpa (paso aditivo, ver dynamic/routes.yml).
+  # v5: cierre de la mejora 41 (2026-08-28) -- retira los ~24 routers
+  # `Host(*.home.arpa)` y el certificado de *.home.arpa, verificados sanos
+  # antes todos sus gemelos *.404labo.net.
+  traefik-dynamic-routes-v5:
+    file: ./dynamic/routes.yml
+
+secrets:
+  # Certificado real de Let's Encrypt para 404labo.net/*.404labo.net (mejora
+  # 32) -- emitido por shared/scripts/renew-letsencrypt.sh en pi-dns (reto
+  # DNS-01 vía dns_aws/Route53). Mejora 41 (2026-08-28): la rotación de este
+  # secret tras cada renovación real SÍ está automatizada ahora
+  # (shared/scripts/deploy-traefik-cert.sh, disparado como --reloadcmd de
+  # acme.sh -- sube de versión y hace `docker service update` sobre
+  # traefik_traefik solo, sin `docker stack deploy`). El número de versión
+  # de abajo es el que había la última vez que se tocó este fichero, no
+  # necesariamente el real -- ver comentario junto a `secrets:` del servicio.
+  404labo-net-crt-v3:
+    external: true
+  404labo-net-key-v3:
+    external: true

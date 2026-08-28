@@ -1,0 +1,59 @@
+# PoC Fase 0 (docs/31-docker-swarm.md): valida si `docker stack deploy` acepta
+# tal cual las claves que usan node-exporter/cadvisor hoy en Compose puro
+# (pid: host, privileged, cgroup: host, devices:) — el mayor riesgo técnico
+# no verificado de toda la migración (mejora 33, punto 7 de docs/22).
+# Mismas claves EXACTAS que pi-utils/docker-compose.yml, solo se quita
+# container_name/restart (Swarm los ignora) y se prueba en el swarm de un
+# solo nodo (pinchi) antes de comprometerse a `mode: global` en los 5 nodos.
+version: "3.8"
+
+services:
+  node-exporter-check:
+    image: prom/node-exporter:v1.8.0
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.rootfs=/rootfs"
+      - "--path.sysfs=/host/sys"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    ports:
+      - "9199:9100"
+    networks:
+      - check-net
+    pid: host
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname == pinchi
+
+  cadvisor-check:
+    image: gcr.io/cadvisor/cadvisor:v0.55.1
+    command:
+      - "-disable_metrics=advtcp,cpu_topology,cpuset,hugetlb,memory_numa,process,referenced_memory,resctrl,sched,tcp,udp,disk,diskIO"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    ports:
+      - "8181:8080"
+    networks:
+      - check-net
+    privileged: true
+    devices:
+      - /dev/kmsg
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname == pinchi
+
+networks:
+  check-net:
+    driver: overlay
+    attachable: true

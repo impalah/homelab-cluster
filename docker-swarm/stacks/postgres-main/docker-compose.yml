@@ -1,0 +1,71 @@
+# Fase 4 (docs/31-docker-swarm.md): último servicio con estado migrado al
+# swarm -- el de mayor riesgo, compartido por prácticamente todo lo demás
+# (apikey-service, authentik, n8n-main, open-webui, sonarqube, bifrost,
+# postgres-exporter). `constraints: node.hostname==retaco` -- los datos
+# (`/srv/homelab/retaco/postgres/data`) siguen en el mismo bind-mount de
+# siempre, NUNCA se mueven de nodo.
+#
+# POSTGRES_PASSWORD vía `_FILE` -- soporte NATIVO del entrypoint oficial de
+# la imagen `postgres` para leer secretos de fichero (sin wrapper propio,
+# a diferencia de los servicios ya migrados a Infisical). postgres-main NO
+# está en Infisical todavía (mejora 28, pendiente para más adelante junto a
+# postgres-exporter/whisper-service/vllm, ver docs/26) -- se mantiene el
+# mismo criterio de la copia Compose clásica, solo que el secreto pasa de
+# variable de entorno en texto plano (.env) a `docker secret` nativo, mismo
+# patrón que `registry` (REGISTRY_HTTP_SECRET).
+#
+# POSTGRES_USER/POSTGRES_DB/init/ solo importan en el PRIMER arranque con
+# datos vacíos -- el directorio de datos NO está vacío (BD real ya
+# inicializada), así que la imagen los ignora en la práctica; se mantienen
+# solo por autodocumentación, en caso de que algún día haga falta reiniciar
+# desde cero. `N8N_DB_NAME`/`N8N_DB_USER`/`N8N_DB_PASSWORD` de la copia
+# Compose clásica eran ya vestigiales -- el script `01-init-n8n.sh` que los
+# consumía ya no existe en `init/` (confirmado antes de migrar) -- no se
+# replican aquí.
+#
+# Publicado en el mismo puerto (5432) -- postgres-exporter (pi-obs) y
+# sonarqube (pi-sonar) ya alcanzan esto por IP real (192.168.1.174) o por el
+# alias DNS `postgresql.home.arpa` (Pi-hole, no alias Docker), ninguno de
+# los dos cambia con esta migración.
+version: "3.8"
+
+services:
+  postgres-main:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: dbadmin
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres-admin-password
+      POSTGRES_DB: postgres
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - /srv/homelab/retaco/postgres/data:/var/lib/postgresql/data
+      - /srv/homelab/retaco/postgres/init:/docker-entrypoint-initdb.d:ro
+    secrets:
+      - source: postgres-admin-password-v1
+        target: postgres-admin-password
+    ports:
+      - "5432:5432"
+    networks:
+      - postgres-main-net
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        mode: non-blocking
+        max-buffer-size: 4m
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname==retaco
+      restart_policy:
+        condition: on-failure
+
+networks:
+  postgres-main-net:
+    driver: overlay
+    attachable: true
+
+secrets:
+  postgres-admin-password-v1:
+    external: true

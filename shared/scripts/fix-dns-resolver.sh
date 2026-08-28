@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # =============================================================================
 # fix-dns-resolver.sh
-# Comprueba, en cada nodo, que la resolución de *.home.arpa funciona de
+# Comprueba, en cada nodo, que la resolución de *.404labo.net funciona de
 # verdad — es decir, que systemd-resolved está usando pi-dns
 # (192.168.1.170) y no cae al DNS secundario del netplan (1.1.1.1). Si no
 # funciona, reinicia systemd-resolved en ese nodo (mismo fix aplicado a
-# mano en pi-sonar cuando SonarQube no podía resolver postgresql.home.arpa
+# mano en pi-sonar cuando SonarQube no podía resolver postgresql.404labo.net
 # tras un encendido físico — ver docs/13-troubleshooting.md,
 # docs/20-apagado-y-encendido-cluster.md).
 #
 # Prueba FUNCIONAL, no de introspección de `resolvectl status`: resuelve
-# un hostname *.home.arpa real y compara la IP devuelta con la esperada.
-# 1.1.1.1 (el DNS secundario) no conoce ningún registro home.arpa, así que
+# un hostname *.404labo.net real y compara la IP devuelta con la esperada.
+# 1.1.1.1 (el DNS secundario) no conoce ningún registro 404labo.net, así que
 # una respuesta correcta solo puede venir de pi-dns — sin ambigüedad,
 # a diferencia de intentar leer el campo "Current DNS Server" de
 # `resolvectl status`, que ni siquiera aparece en modo "stub" (el habitual
@@ -46,16 +46,16 @@ declare -A TARGETS=(
   [retaco]="u-data@192.168.1.174"
 )
 
-# Hostname *.home.arpa a resolver como prueba en cada nodo, y la IP
+# Hostname *.404labo.net a resolver como prueba en cada nodo, y la IP
 # esperada — evitando que un nodo resuelva su propio hostname (que en
 # Ubuntu suele responder vía /etc/hosts con 127.0.1.1, sin pasar por DNS
 # de verdad, dando un falso "OK").
 declare -A TEST_QUERY=(
-  [pi-dns]="retaco.home.arpa"
-  [pi-obs]="pi-dns.home.arpa"
-  [pi-sonar]="pi-dns.home.arpa"
-  [pi-utils]="pi-dns.home.arpa"
-  [retaco]="pi-dns.home.arpa"
+  [pi-dns]="retaco.404labo.net"
+  [pi-obs]="pi-dns.404labo.net"
+  [pi-sonar]="pi-dns.404labo.net"
+  [pi-utils]="pi-dns.404labo.net"
+  [retaco]="pi-dns.404labo.net"
 )
 declare -A TEST_EXPECTED=(
   [pi-dns]="192.168.1.174"

@@ -138,6 +138,13 @@ Medio-alto — por volumen, no por dificultad. Abordar incrementalmente.
 
 Todo el código vive en GitHub. Intención: migrar a Forgejo autoalojado como sistema principal, GitHub como espejo mientras haga falta.
 
+**Decisión de secuenciación (2026-08-24)**: se planteó abordar Forgejo como parte de la
+migración a Docker Swarm (mejora 33, `docs/31-docker-swarm.md`) — servicio nuevo, sin legado
+Compose, buena validación de bajo riesgo del patrón `constraints`+bind-mount. El usuario decidió
+sacarlo de esa migración explícitamente: Forgejo se aborda en su propio esfuerzo, **después** de
+que el clúster esté migrado a Swarm por completo y el DNS esté resuelto — no antes, no mezclado
+con la migración a Swarm. Sin dependencia técnica añadida hacia la mejora 33 más allá de esto.
+
 ### Qué haría falta
 
 #### 7.1 Instalación
@@ -970,23 +977,28 @@ Piloto ejecutado (2026-08-22) para un único hostname (`home.404labo.net`, mismo
 
 **Decisión tomada**: migrar la gestión DNS de `404labo.net` a una **hosted zone completa en AWS Route53** (no solo delegar el subdominio `_acme-challenge`, que habría bastado para el reto DNS-01 con menor radio de cambio — se descartó a favor de la zona completa por dar más control sobre el dominio en su conjunto). Provisionado con **Terraform** (infraestructura como código), no consola/CLI manual — coherente con el resto de este repo (todo declarativo, versionado). Con la zona en Route53, `acme.sh` puede usar su plugin `dns_aws` (soporte SigV4 completo, ya maduro) para crear/borrar el TXT del reto automáticamente en cada renovación, sin intervención humana — desbloquea también el cliente ACME desacoplado descrito en la siguiente sección.
 
-Pendiente de ejecutar:
-1. Terraform: hosted zone Route53 para `404labo.net` + usuario/policy IAM de mínimo privilegio para `acme.sh` (`route53:ChangeResourceRecordSets`/`GetChange`/`ListResourceRecordSets`, restringido por `Resource: arn:aws:route53:::hostedzone/<ID>` — nunca credenciales de la cuenta root ni de alcance amplio).
-2. Antes de mover los NS del dominio en Dinahosting hacia Route53: replicar en la hosted zone nueva cualquier registro que `404labo.net` ya tenga hoy en Dinahosting (web, correo, lo que sea) — el corte de NS deja esos servicios sin resolver hasta que la zona nueva tenga paridad completa con la vieja.
-3. Una vez el NS delegue en Route53 y propague: reconfigurar `acme.sh` con `dns_aws` y el usuario IAM del punto 1, sustituyendo el flujo manual del piloto.
-4. Construir el script de renovación por cron (`shared/scripts/renew-letsencrypt.sh`, patrón ya usado por `check-image-updates.sh`/`registry-garbage-collect.sh` — tarea efímera, no un servicio Compose persistente) con `--reloadcmd` hacia `docker compose exec nginx nginx -s reload`. Ubicación inicial en `pi-dns` (nodo actual del renovador), a mover el día que se ejecute la mejora 39 (renovador desacoplado de Traefik, fuera del swarm).
+**Ejecutado (2026-08-26)**:
+1. ~~Terraform: hosted zone Route53...~~ Hosted zone y usuario IAM creados por el usuario directamente en AWS (consola/CLI, no Terraform) — desviación del plan original de "todo declarativo"; pendiente valorar si merece la pena importarlo a Terraform más adelante, sin bloquear el resto. Policy IAM confirmada de alcance mínimo (`route53:ChangeResourceRecordSets`/`GetChange`/`ListResourceRecordSets` sobre la hosted zone de `404labo.net`, nada más).
+2. NS del dominio movidos a Route53 y propagados — confirmado en vivo (`dig NS 404labo.net` devuelve los 4 `awsdns-*` de la hosted zone, `home.404labo.net`/`capataz-api.404labo.net` resuelven igual que antes).
+3. `acme.sh` (v3.1.4, instalado en `pi-dns` desde el tarball oficial — el script suelto no basta, faltan los plugins `dnsapi/`) reconfigurado con `dns_aws`. **Hallazgo real**: desde acme.sh v3.x el CA por defecto es ZeroSSL, no Let's Encrypt — hace falta `--server letsencrypt` explícito o se emite (y registra una cuenta) contra el CA equivocado sin avisar. Certificado real emitido en producción (`404labo.net` + `*.404labo.net`), instalado con `acme.sh --install-cert` para registrar de forma permanente el CA y el `--reloadcmd` de despliegue.
+4. `shared/scripts/renew-letsencrypt.sh` construido y desplegado (cron diario `03:30` en `pi-dns`, mismo patrón que `check-image-updates.sh`). Credenciales AWS del usuario IAM leídas de **Infisical** (Machine Identity `acme-dns-renewer`, Universal Auth, carpeta `/acme-dns-renewer/` del proyecto "Homelab Cluster") en vez de un fichero plano propio — mismo wrapper de dos pasos que el resto de servicios migrados (`docs/26-infisical-secretos.md`); solo las credenciales bootstrap de esa Machine Identity viven en `pi-dns/.env` (real, gitignored). `--reloadcmd` copia el cert emitido al path real de nginx (`sudo cp` + `nginx -s reload`, permisos root en `/srv/homelab/pi-dns/nginx/certs/`) — verificado en vivo, nginx sirve el cert nuevo sin downtime. Se queda en `pi-dns` de forma permanente (no es una ubicación "inicial a mover" — coincide con ser también el nodo fuera del swarm de la mejora 39, ver más abajo).
 
 ### Decisión de arquitectura tomada: renovación desacoplada de Traefik, un único escritor
 
-Con Traefik desplegado en modo `global` dentro del swarm (mejora 35/39) y los certificados en un almacén NFS compartido entre réplicas, **ninguna réplica de Traefik gestiona su propio `certificatesResolver` ACME**. El motivo es concreto, no una preferencia de estilo:
+Con Traefik desplegado en modo `global` dentro del swarm (mejora 35/39), **ninguna réplica de Traefik gestiona su propio `certificatesResolver` ACME**. El motivo es concreto, no una preferencia de estilo:
 
-1. Traefik v2/v3 (a diferencia de v1) no trae ya un backend de KV distribuido para el estado ACME — si cada réplica `global` intentara renovar por su cuenta contra el mismo `acme.json` en NFS, se generarían condiciones de carrera entre ellas. El bloqueo de ficheros de NFS es *advisory*, no garantizado, y el NAS del clúster además solo soporta NFSv3 (mejora 10, `docs/21-configuracion-nas-ugreen.md`), con locking todavía más débil que v4 — justo el escenario donde una corrupción del fichero de estado ACME es más probable, no una posibilidad remota.
-2. **Solución**: un único proceso "renovador" (`certbot`/`acme.sh` con el plugin DNS-01 del proveedor elegido, por cron), corriendo en un solo nodo siempre encendido, **fuera de Traefik por completo** — no hace falta que sea Swarm-aware, ni que reciba tráfico entrante en absoluto, porque el reto es DNS-01 (punto 2 de esta mejora), no HTTP-01. Escribe certificado y clave en el NFS compartido.
-3. Todas las réplicas `global` de Traefik solo **leen** ese certificado vía su proveedor de fichero dinámico (`tls.certificates`) — nunca configuran un `certificatesResolver` propio. Detalle completo del reparto lectura/escritura y de por qué se descartó el ACME nativo de Traefik para este caso: mejora 39.
-4. La CA interna, si se mantiene en paralelo para servicios puramente internos (punto 5 de esta mejora), encaja en el mismo NFS sin conflicto: es, de hecho, el caso trivial de este mismo patrón — un certificado que casi nunca se reescribe (10 años de validez), servido en modo solo lectura por todas las réplicas.
+1. Traefik v2/v3 (a diferencia de v1) no trae ya un backend de KV distribuido para el estado ACME — si cada réplica `global` intentara renovar por su cuenta, se generarían condiciones de carrera entre ellas.
+2. **Solución real implementada (2026-08-26, distinta del NFS previsto originalmente aquí)**: un único proceso "renovador" (`acme.sh` con `dns_aws`, por cron) corre en `pi-dns` — fuera de Traefik y fuera del swarm por completo (coincide con que `pi-dns` ya está excluido del swarm por la mejora 37/39), no Swarm-aware, sin tráfico entrante, porque el reto es DNS-01. El certificado NO se comparte vía NFS del NAS — en vez de eso viaja a Traefik como **Docker secret nativo de Swarm** (`docker secret create`, mismo mecanismo ya usado para el certificado de `*.home.arpa`, `docs/31-docker-swarm.md` fase 3b), distribuido de forma nativa y cifrada a los 5 nodos sin depender del NAS/NFSv3 en absoluto.
+3. Todas las réplicas `global` de Traefik solo **leen** ese secret vía su proveedor de fichero dinámico (`tls.certificates`) — nunca configuran un `certificatesResolver` propio.
+4. ~~**Hueco pendiente de automatizar**~~ — **Cerrado** (2026-08-28, cierre mejora 41): `shared/scripts/deploy-traefik-cert.sh`, registrado como `--reloadcmd` de `acme.sh` (sustituye al `--reloadcmd` de `nginx`, decomisionado en el mismo cierre), sube de versión el secret (`docker secret create` + `docker service update` sobre `traefik_traefik` por SSH desde `pi-dns` a un nodo manager, con una clave dedicada de un solo propósito) y lo hace sin `docker stack deploy` completo. Probado en vivo rotando el secret dos veces seguidas (v1→v2→v3) sin downtime.
+5. La CA interna, reducida ya a un único consumidor (Valkey, ver mejora 41), sigue el mismo patrón trivial: un certificado que casi nunca se reescribe, sin necesidad de esta automatización.
 
 ### Esfuerzo estimado
 Medio-alto — depende sobre todo del proveedor DNS elegido (facilidad de su API para el reto DNS-01); combinarlo con Traefik (mejoras 35/39) no simplifica el mecanismo de renovación en sí (que queda deliberadamente fuera de Traefik), pero sí resuelve dónde y cómo se sirve el resultado.
+
+### Cierre (2026-08-28)
+
+Completada junto con el cierre de la mejora 41 (`docs/31-docker-swarm.md`, Fase 5) — todos los puntos de "Qué haría falta" resueltos: dominio real (`404labo.net`), DNS-01 vía Route53/`dns_aws` con renovación automática por cron, cliente ACME desacoplado de Traefik (un único escritor en `pi-dns`), rotación del secret de Traefik ya automatizada (ver arriba), y Split DNS de Tailscale confirmado funcionando con el dominio real. Única desviación respecto al plan original: la hosted zone de Route53 y el usuario IAM se crearon a mano (consola/CLI), no vía Terraform — se deja apuntado como posible limpieza futura, no bloqueante, no forma parte del backlog activo.
 
 ---
 
@@ -1161,13 +1173,13 @@ Bajo-medio — las consultas PromQL y aplicar los límites son mecánicos; el tr
 
 ### Qué haría falta
 
-1. Aplicar el punto 2 de la mejora 33 (quórum) con `pi-dns` y `ryzen` ya excluidos de raíz.
-2. Desplegar Traefik como stack Swarm en modo `global`, con el *provider* de Docker Swarm (mejora 35, punto 1) y publicación `ingress` en los puertos 80/443.
-3. Migrar los registros DNS de `shared/dns/dns-records.md` y Pi-hole de la IP de `pi-dns` a la del swarm (cualquier nodo miembro sirve como destino, por la routing mesh).
-4. Montar el NFS compartido de certificados (solo lectura) en las réplicas `global` de Traefik, y desplegar el renovador ACME desacoplado (mejora 32) en un nodo fijo, siempre encendido.
-5. Mover el frontend estático de Capataz a `pi-utils` (o al nodo que finalmente se decida), como contenedor propio en vez de ficheros servidos por `nginx`.
-6. Decidir y documentar el destino de `apikey-service` (punto 7 de más arriba) antes de dar la migración por completa.
-7. Actualizar `docs/01-topologia.md` una vez implementado: `pi-dns` deja de describirse como "puerta de entrada HTTPS del clúster", pasa a ser únicamente DNS interno + acceso remoto (Tailscale); el diagrama de arquitectura de servicios cambia su nodo de entrada.
+1. ~~Aplicar el punto 2 de la mejora 33 (quórum)...~~ **Hecho** — los 5 managers, `pi-dns`/`ryzen` excluidos desde el inicio.
+2. ~~Desplegar Traefik como stack Swarm en modo `global`...~~ **Hecho y verificado (2026-08-26)** — publicación `ingress` real en 80/443 en los 5 nodos, confirmado libres antes de aplicar.
+3. ~~Migrar los registros DNS...~~ **Hecho y verificado (2026-08-26)** — 28 hostnames movidos de `pi-dns` a `pinchi` (192.168.1.175, elegido con el usuario por menor carga que `retaco` y no ser `pi-utils`), `nginx` en `pi-dns` se deja vivo como rollback. Detalle completo del cutover: `docs/31-docker-swarm.md`, sub-fase 3b cierre.
+4. ~~Montar el NFS compartido de certificados...~~ **Implementado distinto de lo previsto aquí**: en vez de NFS, el certificado viaja a Traefik como **Docker secret nativo de Swarm** (mismo mecanismo para `*.home.arpa` y `404labo.net`) — más simple, sin depender del NAS/NFSv3. El renovador desacoplado (mejora 32, `shared/scripts/renew-letsencrypt.sh`) sí quedó como estaba previsto: un único proceso, en `pi-dns`, fuera de Traefik y del swarm.
+5. ~~Mover el frontend estático de Capataz a `pi-utils`...~~ **Ya hecho de antes** (2026-08-22, independiente de esta migración) — `capataz-frontend` ya corre como contenedor propio en `pi-utils`, confirmado en pie durante la verificación del cutover.
+6. ~~Decidir y documentar el destino de `apikey-service`...~~ **Decidido con el usuario (2026-08-25)**: copia nueva dentro del swarm (sin `constraints`), en paralelo a la de `pi-dns` — comparten `postgres-main`, sin riesgo de divergencia. Detalle: `docs/31-docker-swarm.md` sub-fase 3b, segundo incremento.
+7. **Pendiente**: actualizar `docs/01-topologia.md` — `pi-dns` deja de describirse como "puerta de entrada HTTPS del clúster", pasa a ser únicamente DNS interno + acceso remoto (Tailscale); el diagrama de arquitectura de servicios cambia su nodo de entrada. Se deja para el cierre general de la mejora 33 (Fase 5), junto con `CLAUDE.md`, para no tocar la documentación de topología dos veces mientras aún quedan servicios con estado por migrar (Fase 4).
 
 ### Esfuerzo estimado
 Medio-alto — no es tanto trabajo nuevo en sí como una condición de diseño a aplicar cuando se implementen las mejoras 32, 33 y 35; el grueso del esfuerzo real vive en esas tres, esta mejora fija cómo encajan entre sí y qué le pasa a `pi-dns`.
@@ -1197,6 +1209,81 @@ Bajo-medio — el despliegue en sí reutiliza la config de Unbound/Pi-hole ya ex
 
 ---
 
+## 41. Retirar `*.home.arpa` por completo — todos los servicios bajo `404labo.net`
+
+**Prioridad: media — a ejecutar cuando la mejora 33 (Swarm) esté cerrada del todo**
+
+### Qué hay hoy
+
+Tras el cutover de DNS de la mejora 33 (`docs/31-docker-swarm.md`, sub-fase 3b), **solo 2 de ~28 hostnames** usan el dominio público `404labo.net` (`home.404labo.net`/`capataz-api.404labo.net`, ambos del mismo servicio Capataz) — el resto sigue en `*.home.arpa`, resuelto solo en la LAN vía Pi-hole y servido con la CA interna propia (`docs/15-ca-interna.md`), que hay que instalar a mano en cada dispositivo cliente nuevo. El mecanismo para el dominio público ya está completamente resuelto y probado en producción (mejora 32): certificado **wildcard** `*.404labo.net` + apex, emitido y renovado sin intervención humana (`shared/scripts/renew-letsencrypt.sh`, cron en `pi-dns`, reto DNS-01 vía `dns_aws`/Route53). Al ser wildcard, cubre cualquier hostname nuevo bajo `404labo.net` sin reemitir nada — la parte cara de esta mejora ya está hecha, lo que queda es trabajo de enrutado y limpieza de referencias, no de PKI.
+
+**Nota de seguridad ya discutida y resuelta**: con certificado wildcard (no uno por hostname), los nombres reales de los servicios (`vaultwarden.404labo.net`, `authentik.404labo.net`...) **no quedan expuestos en los logs de Certificate Transparency** — solo se ve que existe un wildcard válido para el dominio, no qué subdominios hay detrás. Tampoco existe ningún registro A público para estos hostnames (solo resuelven vía Pi-hole en la LAN) — mantener este mismo patrón (wildcard + sin registros A públicos) es condición para que esta mejora no aumente la superficie de ataque real.
+
+### Qué haría falta
+
+1. **Para cada hostname hoy en `*.home.arpa` servido por Traefik** (los ~26 de `docker-swarm/stacks/traefik/dynamic/routes.yml`, ver tabla completa en `shared/dns/dns-records.md`): añadir un router equivalente con `Host(<nombre>.404labo.net)`, reutilizando el mismo `service:` y el certificado wildcard ya cargado (`tls: {}` — Traefik ya elige el cert correcto por SNI, sin config adicional; mismo patrón que `home.404labo.net`/`capataz-api.404labo.net` ya usan hoy).
+2. **Registrar los nuevos hostnames en Pi-hole** (`shared/dns/dns-records.md` + `shared/scripts/load-dns-records.sh`) — mismo mecanismo ya usado en el cutover de la mejora 33, sin registro A público en ningún caso (mantener la nota de seguridad de arriba).
+3. **Periodo de coexistencia recomendado, no cutover directo**: dejar ambos dominios resolviendo al mismo servicio durante un tiempo prudencial (routers `Host(...)` en Traefik no son excluyentes, pueden convivir) antes de retirar `*.home.arpa` de Pi-hole — permite detectar referencias rotas sin presión.
+4. **Barrido de referencias cruzadas hardcodeadas a `*.home.arpa`** — el trabajo real de esta mejora, no la PKI. Al menos ya identificado: `CAPATAZ_FRONTEND_OIDC_ISSUER`/Redirect URIs en Authentik (`docs/28`, ya tiene el patrón de añadir un Redirect URI nuevo por dominio, hecho una vez para `home.404labo.net`), cualquier `allowed origins`/CORS de las APIs propias, y cualquier `.env`/`docker-compose.yml` de nodo que referencie un hostname `.home.arpa` de OTRO servicio (no genérico, hay que revisar servicio a servicio — no se puede hacer con un solo `grep` de forma segura porque hay que confirmar cuáles son referencias reales y cuáles son solo documentación/comentarios).
+5. **Decidir el destino de los 3 hostnames excluidos del cutover de la mejora 33** (`apikey.home.arpa`, `pihole.home.arpa`, `old.index.home.arpa`):
+   - `pihole.home.arpa` — candidato natural a quedarse permanentemente en `home.arpa`: es la propia infraestructura de resolución DNS, resolverlo vía un dominio público añadiría una dependencia circular rara (necesitar DNS público para llegar al panel que gestiona el DNS interno).
+   - `apikey.home.arpa`/`old.index.home.arpa` — mismo motivo que en la mejora 33 (sin puerto LAN publicado / sin backend de fichero-servidor en Traefik); resolver esto es tangencial a esta mejora, no bloqueante.
+6. **Retirar la CA interna de los dispositivos cliente** una vez todo lo demás esté migrado y estable — el objetivo final que justifica la mejora: dejar de tener que instalar `docs/15-ca-interna.md` en cada dispositivo nuevo. Gradual, no de golpe.
+7. Decidir si conviene un subdominio propio (p. ej. `cluster.404labo.net`) en vez de usar `404labo.net`/`*.404labo.net` a secas, por si el dominio se usa alguna vez para algo público no relacionado con el clúster — decisión abierta, hoy el dominio parece dedicado solo a esto.
+8. Una vez migrado y estable: retomar la decisión, ya apuntada en la mejora 33, de decomisionar `nginx` en `pi-dns` de verdad (hoy se mantiene desplegado como vía de rollback).
+
+### Esfuerzo estimado
+Medio — el mecanismo de certificados y el enrutado en Traefik ya están resueltos y probados en producción (mejoras 32/33); el grueso real es el barrido manual de referencias cruzadas (punto 4) y decidir con calma, sin prisa, el destino de los 3 hostnames excluidos (punto 5).
+
+### Cierre (2026-08-28)
+
+Completada de punta a punta, sin excepciones. Los ~26 hostnames de Traefik pasaron por un periodo de
+coexistencia (ambos dominios en paralelo, verificados uno a uno) antes del corte final; ver
+`docs/31-docker-swarm.md` para el detalle completo del cierre y los dos incidentes reales encontrados
+en el proceso (carrera de arranque en Swarm con puertos publicados, y falta de almacén de CAs de
+sistema en varias imágenes base). Resumen de las decisiones tomadas en los 3 hostnames excluidos
+(punto 5) y el resto de puntos abiertos:
+
+- **`pihole.home.arpa`** — sin sustituto de hostname, tal y como se apuntaba como candidato natural:
+  panel publicado directo en la LAN por IP:puerto (`http://192.168.1.170:8053`), sin proxy delante.
+- **`apikey.home.arpa`** — retirado; acceso administrativo directo por IP:puerto a la instancia
+  canónica del propio Swarm (`http://192.168.1.175:8091`). La copia de `apikey-service` que vivía en
+  `pi-dns` para servir a `nginx` se retiró también (mejora 39 quedó cerrada de paso).
+- **`old.index.home.arpa`** — retirado sin sustituto, superseded por Capataz (mejora 15) desde antes.
+- **CA interna** (punto 6) — NO retirada de los dispositivos cliente: Valkey (mejora 24) sigue
+  firmando su certificado TLS con ella (un bug real de Swarm con bind-mounts `:ro` y claves TLS obligó
+  a revertir el plan de reutilizar el wildcard real ahí, ver `docs/31`) — es el único consumidor que
+  queda. `generate-ca.sh` se conserva activo; `generate-cert.sh` (el cert de `*.home.arpa`) sí quedó
+  retirado, junto con el resto de `nginx`.
+- **Subdominio propio** (punto 7) — no se adoptó; `404labo.net`/`*.404labo.net` a secas, sigue
+  pareciendo dedicado solo a este clúster.
+- **Decomisión de `nginx`** (punto 8) — hecha en este mismo cierre, junto con el resto.
+
+---
+
+## 42. Alertas de disponibilidad de nodos y servicios — nadie avisa hoy si algo se cae
+
+**Prioridad: media**
+
+### Qué hay hoy
+
+Prometheus ya scrapea `node-exporter`/`cadvisor` de los 7 nodos (`pi-obs/config/prometheus.yml`, un `job_name` por nodo — `node-exporter-ryzen`, `node-exporter-retaco`, `node-exporter-pi-dns`, `node-exporter-pi-obs`, `node-exporter-pi-sonar`, `node-exporter-pi-utils`, `node-exporter-pinchi`, y el equivalente `cadvisor-*`) — la métrica estándar `up` (1 si el scrape responde, 0 si no) ya existe para cada uno, sin que haga falta añadir nada nuevo para tener la señal. El único consumidor activo de esa clase de dato hoy es la alerta de undervoltage (`pi-obs/config/grafana/alerting/undervoltage.yml`, `docs/14-monitorizacion-completa-cluster.md`) — no existe ninguna regla equivalente sobre `up`, así que un nodo caído (`pi-utils` se cayó unos días antes de escribir esto, sin que nadie se enterara hasta comprobarlo a mano) no genera ningún aviso, solo un hueco silencioso en los paneles de Grafana para quien entre a mirarlos.
+
+**Decisión ya tomada, no evaluar de nuevo**: no se adopta Uptime Kuma ni herramienta equivalente. El dato que haría falta vigilar (¿responde este nodo?) ya lo tiene Prometheus por el simple hecho de scrapear — una herramienta aparte duplicaría esa vigilancia y añadiría una pieza más de la que depender (incluida la pregunta recursiva de quién avisa si la propia herramienta de vigilancia se cae). Grafana Alerting (nativo desde v8, ya en uso para undervoltage) es la vía natural: reutiliza infraestructura ya desplegada y el mismo patrón de fichero de aprovisionamiento ya probado.
+
+### Qué haría falta
+
+1. Regla de alerta nueva, mismo patrón que `undervoltage.yml`: `pi-obs/config/grafana/alerting/node-down.yml`, condición `up{job=~"node-exporter-.*"} == 0` sostenida un par de minutos (evitar falsos positivos por un reinicio rápido o una ventana de mantenimiento) — una alerta por nodo, usando `{{ $labels.job }}` en el mensaje para identificar cuál.
+2. Decidir el alcance real: ¿solo "¿responde el nodo?" (`node-exporter-*`), o también "¿responde el contenedor de métricas?" (`cadvisor-*`, sería redundante con lo anterior en la práctica ya que ambos corren en el mismo host) y/o alertas específicas por servicio HTTP (necesitaría `blackbox_exporter`, no desplegado hoy — mucho más granular pero una pieza nueva de verdad, a diferencia de la regla de `up` que no necesita nada nuevo). Empezar por nodo es lo mínimo que resuelve el incidente real que motiva esta mejora.
+3. Canal de notificación — la pieza que de verdad falta, no la detección: comparte dependencia con la mejora 4 (ntfy, sin implementar todavía). Mientras tanto, Grafana Alerting soporta *contact points* básicos (email SMTP, webhook genérico) que servirían de solución provisional sin esperar a que ntfy exista — evaluar si compensa montar ese puente temporal o esperar a la mejora 4 directamente.
+4. Montar el fichero nuevo como bind-mount adicional en `docker-swarm/stacks/pi-obs/docker-compose.yml` (junto a `undervoltage.yml`, mismo `volumes:` de `grafana`), `docker service update --force pi-obs_grafana` (o redeploy del stack) para que lo recoja.
+5. Probarlo de verdad, no solo confirmar que la regla carga en la UI: parar `node-exporter` de un nodo a propósito (o apagarlo con cuidado) y confirmar que la alerta dispara y notifica de verdad por el canal elegido.
+
+### Esfuerzo estimado
+Bajo — reutiliza infraestructura y patrón exactamente iguales a los de la alerta de undervoltage ya provisionada (punto 1 es casi mecánico); el grueso real de la decisión está en el canal de notificación (punto 3), compartido con la mejora 4.
+
+---
+
 ## Resumen
 
 | # | Mejora | Prioridad | Esfuerzo | Depende de |
@@ -1207,7 +1294,7 @@ Bajo-medio — el despliegue en sí reutiliza la config de Unbound/Pi-hole ya ex
 | 4 | ntfy (notificaciones proactivas) | Media | Medio | — |
 | 5 | Integración NUT del SAI existente | Media | Medio | Modelo de SAI compatible con `usbhid-ups` |
 | 6 | Migrar tooling de mantenimiento a Ansible | Media | Medio-alto | Punto 2 (ya cumplido) |
-| 7 | Forgejo (repos + CI + artefactos), con GitHub como espejo | Media | Alto | Punto 2 (ya cumplido) |
+| 7 | Forgejo (repos + CI + artefactos), con GitHub como espejo | Media | Alto | Punto 2 (ya cumplido); esfuerzo separado, después de que la mejora 33 (Swarm) esté completa y el DNS resuelto |
 | 8 | ~~Registry: limpieza y garbage collection~~ | Media | Bajo | **Implementado (uso manual)** — `docs/29-registry-mantenimiento.md`; alerta de disco diferida a la mejora 3 |
 | 9 | Tailscale: política de ACL | Baja | Bajo-medio | Tailscale ya desplegado (`docs/18`) |
 | 10 | ~~NAS UGREEN: migrar `nfs-data` a NFSv4~~ — completada | Baja | — | Investigado en real: UGOS Pro revierte `/etc/exports` solo, sin tocar la GUI — inviable. NFSv3 definitivo (`docs/21`) |
@@ -1232,14 +1319,16 @@ Bajo-medio — el despliegue en sí reutiliza la config de Unbound/Pi-hole ya ex
 | 29 | Integrar Authentik en el resto de paneles (OIDC nativo: Grafana, Portainer...) | Media | Medio | Authentik ya desplegado y patrón forward-auth validado (mejora 25, `docs/27`) |
 | 30 | Entorno de notebooks en el clúster (code-server / JupyterLab) para estudios de datos | Baja-media | Bajo-medio | Postgres/Qdrant y NFS del NAS ya disponibles; Authentik (mejora 25) para protegerlo; solo compensa si hace falta ejecución que sobreviva a la sesión de escritorio |
 | 31 | Nexus (u alternativa) como repositorio centralizado de paquetes, integrado con Forgejo | Baja | Medio | Forgejo (mejora 7) para la integración de CI; NFS del NAS ya disponible; experimento deliberado, no cubre carencia operativa hoy |
-| 32 | Dominio real + certificados Let's Encrypt (sustituye CA interna) | Media | Medio-alto | Piloto en `home.404labo.net` ya hecho (DNS-01 manual, Dinahosting sin API); pendiente migrar gestión DNS de 404labo.net a Route53 vía Terraform para automatizar con `acme.sh`/`dns_aws`; renovación desacoplada de Traefik (un único escritor), ver mejora 39 |
-| 33 | Migrar el clúster a Docker Swarm, progresivamente | Baja-media | Alto | Reversión consciente de la decisión "no Swarm" fijada en este `CLAUDE.md`; `ryzen` (mejora 37) y `pi-dns` (mejora 39) quedan fuera del swarm; imágenes multi-arch ya resueltas para `apikey-service`/`markitdown-service` |
-| 34 | GitOps para las aplicaciones del clúster (propuestas a evaluar) | Media | Medio-alto | Depende de la propuesta elegida; sinergia con mejora 33 si se adopta Swarm |
-| 35 | Sustituir `nginx` por Traefik, integrado con Docker Swarm | Media | Alto | Depende en la práctica de la mejora 33 (Swarm); ubicación y modo `global` decididos en la mejora 39 |
+| 32 | ~~Dominio real + certificados Let's Encrypt (sustituye CA interna)~~ | Media | Medio-alto | **Completado** (2026-08-28, cierre mejora 41) — DNS-01 automatizado vía Route53/`dns_aws`, renovación por cron + rotación automática del secret de Traefik; CA interna reducida a un único consumidor (Valkey) |
+| 33 | ~~Migrar el clúster a Docker Swarm, progresivamente~~ | Baja-media | Alto | **Completado** (2026-08-27) — `docs/31-docker-swarm.md`; `ryzen` (mejora 37) y `pi-dns` (mejora 39) quedan fuera del swarm |
+| 34 | GitOps para las aplicaciones del clúster (propuestas a evaluar) | Media | Medio-alto | Depende de la propuesta elegida; sinergia con mejora 33 (ya completada) |
+| 35 | ~~Sustituir `nginx` por Traefik, integrado con Docker Swarm~~ | Media | Alto | **Completado** (2026-08-28, cierre mejora 41) — `docker-swarm/stacks/traefik/`; `nginx` en `pi-dns` decomisionado del todo |
 | 36 | Vigilancia y alertas del estado de parcheo de los nodos (SO), y su continuación en Swarm | Media | Bajo | Distinto de la mejora 6 (Ansible = idempotencia del tooling, no vigilancia); reutiliza el patrón de `check-image-updates.sh` (`docs/16`) y la alerta de disco (mejora 3) |
-| 37 | `ryzen` (mole) fuera del clúster Swarm — operativa como nodo Compose independiente | Baja-media | Bajo | Decisión de alcance de la mejora 33 (`ryzen` excluido, ni siquiera worker); documentación de la mejora 35 (Traefik no puede autodescubrirlo) |
+| 37 | ~~`ryzen` (mole) fuera del clúster Swarm — operativa como nodo Compose independiente~~ | Baja-media | Bajo | **Completado** — decisión de alcance de la mejora 33, confirmada estable |
 | 38 | Capacity planning con datos reales — `mem_limit`/`cpus` a partir de picos en Prometheus | Media | Bajo-medio | cAdvisor/Prometheus ya desplegados (`docs/04`, `docs/08`); inventario de servicios ya hecho (`docs/01`); GPU de `ryzen` queda fuera |
-| 39 | `pi-dns` fuera del clúster Swarm — solo DNS/Tailscale; Traefik en modo `global` dentro del swarm | Media | Medio-alto | Depende de las mejoras 32, 33 y 35; destino de `apikey-service` queda como decisión abierta |
-| 40 | DNS secundario del clúster — resolución de `*.home.arpa` sin depender solo de `pi-dns` | Media | Bajo-medio | Config de Unbound/Pi-hole ya versionada; alcance de sincronización (Pi-hole completo vs. solo Unbound) queda como decisión abierta |
+| 39 | ~~`pi-dns` fuera del clúster Swarm — solo DNS/Tailscale; Traefik en modo `global` dentro del swarm~~ | Media | Medio-alto | **Completado** — `apikey-service` migrado al Swarm (mejora 41, cierre), la copia local de `pi-dns` retirada |
+| 40 | DNS secundario del clúster — resolución de `*.404labo.net` sin depender solo de `pi-dns` | Media | Bajo-medio | Config de Unbound/Pi-hole ya versionada; alcance de sincronización (Pi-hole completo vs. solo Unbound) queda como decisión abierta |
+| 41 | ~~Retirar `*.home.arpa` por completo — todo bajo `404labo.net`~~ | Media | Medio | **Completado** (2026-08-28) — `home.arpa` retirado de Pi-hole/Traefik/Unbound, `nginx` decomisionado, ver `docs/31-docker-swarm.md` |
+| 42 | Alertas de disponibilidad de nodos y servicios | Media | Bajo | Prometheus/Grafana Alerting ya desplegados, mismo patrón que la alerta de undervoltage (`docs/14`); canal de notificación real comparte dependencia con la mejora 4 (ntfy) |
 
 Ninguna de estas mejoras es urgente ni bloqueante — el clúster funciona correctamente sin ellas.

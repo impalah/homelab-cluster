@@ -2,11 +2,23 @@
 # =============================================================================
 # toggle-direct-access.sh
 # Activa o desactiva el acceso DIRECTO por IP:puerto a los servicios HTTP de
-# un nodo que también están expuestos vía nginx en pi-dns (ollama, whisper,
-# n8n, etc.) — en "off", esos puertos solo aceptan conexiones desde pi-dns
-# (192.168.1.170); el resto de la LAN tiene que pasar siempre por
-# https://<servicio>.home.arpa, igual que hoy hace cualquiera que ya use el
-# hostname en vez de la IP.
+# un nodo que también están expuestos vía Traefik (docker-swarm/stacks/
+# traefik/) — en "off", esos puertos solo aceptan conexiones desde los nodos
+# del Swarm; el resto de la LAN tiene que pasar siempre por
+# https://<servicio>.404labo.net, igual que hoy hace cualquiera que ya use
+# el hostname en vez de la IP.
+#
+# Mejora 41 (cierre, 2026-08-28) -- REESCRITO: hasta ahora el único origen
+# permitido en "off" era pi-dns (192.168.1.170), porque nginx ahí era el
+# único que proxificaba estos puertos. Con nginx decomisionado, quien
+# proxifica de verdad es Traefik, en `mode: global` sobre los 5 nodos
+# manager del Swarm (retaco/pi-obs/pi-sonar/pi-utils/pinchi) -- la petición
+# real que llega a cada backend puede originarse en CUALQUIERA de esos 5,
+# no en pi-dns (que ya no tiene ningún rol de proxy). Dejar el allowlist
+# viejo tal cual habría roto el propio tráfico legítimo de Traefik en modo
+# "off" -- bug real encontrado (sin llegar a desplegarse, verificado antes:
+# ningún nodo tenía reglas DROP activas) al revisar este script durante el
+# cierre de la mejora 41.
 #
 # Requiere haber ejecutado antes setup-firewall.sh en el nodo. Ver el
 # razonamiento completo (por qué "ufw deny <puerto>" NO basta con Docker) en
@@ -14,15 +26,19 @@
 #
 # Uso: bash toggle-direct-access.sh <nodo|all> <on|off|status>
 #   on     — acceso directo abierto a toda la LAN (estado actual/por defecto)
-#   off    — solo pi-dns puede alcanzar esos puertos directamente
+#   off    — solo los nodos del Swarm pueden alcanzar esos puertos directamente
 #   status — muestra el estado actual de cada puerto, sin cambiar nada
 #
 # Nodos válidos: ryzen | retaco | pi-obs | pi-sonar | pi-utils | all
-# (pi-dns no tiene puertos gestionados aquí — es el propio origen permitido)
+# (pi-dns queda fuera -- ya no proxifica nada, no necesita ser origen
+# permitido; pinchi tampoco tiene puertos gestionados aquí hoy, pero SÍ es
+# uno de los orígenes permitidos por correr Traefik)
 # =============================================================================
 set -euo pipefail
 
-PI_DNS_IP="192.168.1.170"
+# Los 5 nodos manager del Swarm -- cualquiera puede ser el que de verdad
+# origina la petición proxificada por Traefik (mode: global), ver cabecera.
+SWARM_NODE_IPS="192.168.1.171 192.168.1.172 192.168.1.173 192.168.1.174 192.168.1.175"
 
 NODE="${1:-}"
 MODE="${2:-}"
@@ -85,33 +101,39 @@ if ! sudo iptables -L DOCKER-USER >/dev/null 2>&1; then
   exit 1
 fi
 for PORT in ${ports}; do
-  has_allow=0
+  allow_count=0
   has_drop=0
-  if sudo iptables -C DOCKER-USER -p tcp --dport \"\${PORT}\" -s ${PI_DNS_IP} -j ACCEPT 2>/dev/null; then
-    has_allow=1
-  fi
+  for SRC_IP in ${SWARM_NODE_IPS}; do
+    if sudo iptables -C DOCKER-USER -p tcp --dport \"\${PORT}\" -s \"\${SRC_IP}\" -j ACCEPT 2>/dev/null; then
+      allow_count=\$((allow_count + 1))
+    fi
+  done
   if sudo iptables -C DOCKER-USER -p tcp --dport \"\${PORT}\" -j DROP 2>/dev/null; then
     has_drop=1
   fi
 
   if [ '${MODE}' = 'status' ]; then
     if [ \"\${has_drop}\" = 1 ]; then
-      echo \"  [CERRADO] puerto \${PORT} -- solo pi-dns\"
+      echo \"  [CERRADO] puerto \${PORT} -- solo nodos del Swarm (\${allow_count}/5 reglas ACCEPT)\"
     else
       echo \"  [ABIERTO] puerto \${PORT} -- toda la LAN\"
     fi
   elif [ '${MODE}' = 'off' ]; then
-    if [ \"\${has_allow}\" = 0 ]; then
-      sudo iptables -I DOCKER-USER 1 -p tcp --dport \"\${PORT}\" -s ${PI_DNS_IP} -j ACCEPT
-    fi
+    for SRC_IP in ${SWARM_NODE_IPS}; do
+      if ! sudo iptables -C DOCKER-USER -p tcp --dport \"\${PORT}\" -s \"\${SRC_IP}\" -j ACCEPT 2>/dev/null; then
+        sudo iptables -I DOCKER-USER 1 -p tcp --dport \"\${PORT}\" -s \"\${SRC_IP}\" -j ACCEPT
+      fi
+    done
     if [ \"\${has_drop}\" = 0 ]; then
       sudo iptables -A DOCKER-USER -p tcp --dport \"\${PORT}\" -j DROP
     fi
-    echo \"  [CERRADO] puerto \${PORT} -- ahora solo pi-dns\"
+    echo \"  [CERRADO] puerto \${PORT} -- ahora solo nodos del Swarm\"
   elif [ '${MODE}' = 'on' ]; then
-    if [ \"\${has_allow}\" = 1 ]; then
-      sudo iptables -D DOCKER-USER -p tcp --dport \"\${PORT}\" -s ${PI_DNS_IP} -j ACCEPT
-    fi
+    for SRC_IP in ${SWARM_NODE_IPS}; do
+      if sudo iptables -C DOCKER-USER -p tcp --dport \"\${PORT}\" -s \"\${SRC_IP}\" -j ACCEPT 2>/dev/null; then
+        sudo iptables -D DOCKER-USER -p tcp --dport \"\${PORT}\" -s \"\${SRC_IP}\" -j ACCEPT
+      fi
+    done
     if [ \"\${has_drop}\" = 1 ]; then
       sudo iptables -D DOCKER-USER -p tcp --dport \"\${PORT}\" -j DROP
     fi

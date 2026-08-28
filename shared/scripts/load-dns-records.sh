@@ -8,63 +8,63 @@
 #
 # Uso:
 #   PIHOLE_PASSWORD=xxx bash load-dns-records.sh
-#   PIHOLE_URL=http://localhost:8053 PIHOLE_PASSWORD=xxx bash load-dns-records.sh
 #
 # Requiere: curl, jq (sudo apt install -y jq)
 #
-# La primera vez, *.home.arpa todavía no resuelve en ningún sitio (ni en la
-# propia Pi), así que hay que ejecutarlo apuntando a localhost/8053 desde la
-# propia pi-dns, o a través del túnel SSH:
-#   ssh -L 8053:127.0.0.1:8053 u-dns@192.168.1.170
-#   PIHOLE_URL=http://localhost:8053 bash load-dns-records.sh
+# PIHOLE_URL por defecto es IP:puerto directo (192.168.1.170:8053, panel de
+# Pi-hole publicado en la LAN sin proxy desde el cierre de la mejora 41) --
+# a propósito no un hostname: este script es lo que carga los registros que
+# harían falta para resolver uno, así que depender de un hostname aquí sería
+# circular. Reachable desde cualquier punto de la LAN, no hace falta túnel
+# SSH salvo que se ejecute desde fuera de ella.
 # =============================================================================
 set -euo pipefail
 
-PIHOLE_URL="${PIHOLE_URL:-https://pihole.home.arpa}"
+PIHOLE_URL="${PIHOLE_URL:-http://192.168.1.170:8053}"
 PIHOLE_PASSWORD="${PIHOLE_PASSWORD:?Debes exportar PIHOLE_PASSWORD}"
 
 # Mantener sincronizado con shared/dns/dns-records.md
+# Mejora 41 (cerrada 2026-08-28): home.arpa retirado por completo -- solo
+# quedan registros *.404labo.net. PIHOLE_URL ya no puede ser un hostname
+# .home.arpa/.404labo.net (dependería de la propia resolución que este
+# script está a punto de (re)cargar) -- IP:puerto directo de Pi-hole, sin
+# nginx delante (decomisionado en el mismo cierre).
 HOSTS='[
-  "192.168.1.150 ryzen.home.arpa",
-  "192.168.1.174 retaco.home.arpa",
-  "192.168.1.174 postgresql.home.arpa",
-  "192.168.1.174 valkey.home.arpa",
-  "192.168.1.180 ketekasko.home.arpa",
-  "192.168.1.170 pi-dns.home.arpa",
-  "192.168.1.171 pi-obs.home.arpa",
-  "192.168.1.172 pi-sonar.home.arpa",
-  "192.168.1.173 pi-utils.home.arpa",
-  "192.168.1.175 pinchi.home.arpa",
-  "192.168.1.170 pihole.home.arpa",
-  "192.168.1.170 index.home.arpa",
-  "192.168.1.170 capataz-api.home.arpa",
-  "192.168.1.170 old.index.home.arpa",
-  "192.168.1.170 openwebui.home.arpa",
-  "192.168.1.170 n8n.home.arpa",
-  "192.168.1.170 ollama.home.arpa",
-  "192.168.1.170 vllm.home.arpa",
-  "192.168.1.170 comfyui.home.arpa",
-  "192.168.1.170 qdrant.home.arpa",
-  "192.168.1.170 whisper.home.arpa",
-  "192.168.1.170 grafana.home.arpa",
-  "192.168.1.170 prometheus.home.arpa",
-  "192.168.1.170 sonarqube.home.arpa",
-  "192.168.1.170 bifrost.home.arpa",
-  "192.168.1.170 rsshub.home.arpa",
-  "192.168.1.170 markitdown.home.arpa",
-  "192.168.1.170 crawl4ai.scraper.home.arpa",
-  "192.168.1.170 n8n-aux.home.arpa",
-  "192.168.1.170 portainer.home.arpa",
-  "192.168.1.170 vaultwarden.home.arpa",
-  "192.168.1.170 apikey.home.arpa",
-  "192.168.1.170 registry.home.arpa",
-  "192.168.1.170 epub2pdf.home.arpa",
-  "192.168.1.170 pdf2chunks.home.arpa",
-  "192.168.1.170 open-terminal.home.arpa",
-  "192.168.1.170 infisical.home.arpa",
-  "192.168.1.170 authentik.home.arpa",
-  "192.168.1.170 home.404labo.net",
-  "192.168.1.170 capataz-api.404labo.net"
+  "192.168.1.150 ryzen.404labo.net",
+  "192.168.1.174 retaco.404labo.net",
+  "192.168.1.174 postgresql.404labo.net",
+  "192.168.1.174 valkey.404labo.net",
+  "192.168.1.180 ketekasko.404labo.net",
+  "192.168.1.170 pi-dns.404labo.net",
+  "192.168.1.171 pi-obs.404labo.net",
+  "192.168.1.172 pi-sonar.404labo.net",
+  "192.168.1.173 pi-utils.404labo.net",
+  "192.168.1.175 pinchi.404labo.net",
+  "192.168.1.175 home.404labo.net",
+  "192.168.1.175 capataz-api.404labo.net",
+  "192.168.1.175 openwebui.404labo.net",
+  "192.168.1.175 n8n.404labo.net",
+  "192.168.1.175 ollama.404labo.net",
+  "192.168.1.175 vllm.404labo.net",
+  "192.168.1.175 comfyui.404labo.net",
+  "192.168.1.175 qdrant.404labo.net",
+  "192.168.1.175 whisper.404labo.net",
+  "192.168.1.175 grafana.404labo.net",
+  "192.168.1.175 prometheus.404labo.net",
+  "192.168.1.175 sonarqube.404labo.net",
+  "192.168.1.175 bifrost.404labo.net",
+  "192.168.1.175 rsshub.404labo.net",
+  "192.168.1.175 crawl4ai.scraper.404labo.net",
+  "192.168.1.175 n8n-aux.404labo.net",
+  "192.168.1.175 portainer.404labo.net",
+  "192.168.1.175 vaultwarden.404labo.net",
+  "192.168.1.175 registry.404labo.net",
+  "192.168.1.175 epub2pdf.404labo.net",
+  "192.168.1.175 pdf2chunks.404labo.net",
+  "192.168.1.175 open-terminal.404labo.net",
+  "192.168.1.175 infisical.404labo.net",
+  "192.168.1.175 authentik.404labo.net",
+  "192.168.1.175 markitdown.404labo.net"
 ]'
 
 echo "[INFO] Autenticando en ${PIHOLE_URL}..."

@@ -16,14 +16,14 @@
 # en vez de perseguir una coexistencia que el propio empaquetado no permite.
 #
 # Uso: bash setup-firewall.sh <nodo|all>
-# Nodos válidos: ryzen | retaco | pi-obs | pi-sonar | pi-utils | all
+# Nodos válidos: ryzen | retaco | pi-obs | pi-sonar | pi-utils | pinchi | all
 # =============================================================================
 set -euo pipefail
 
 NODE="${1:-}"
 if [ -z "${NODE}" ]; then
   echo "[ERROR] Uso: setup-firewall.sh <nodo|all>"
-  echo "        Nodos válidos: ryzen | retaco | pi-obs | pi-sonar | pi-utils | all"
+  echo "        Nodos válidos: ryzen | retaco | pi-obs | pi-sonar | pi-utils | pinchi | all"
   exit 1
 fi
 
@@ -34,6 +34,7 @@ declare -A TARGETS=(
   [pi-obs]="u-obs@192.168.1.171"
   [pi-sonar]="u-sonar@192.168.1.172"
   [pi-utils]="u-utils@192.168.1.173"
+  [pinchi]="u-forge@192.168.1.175"
 )
 
 REMOTE_SCRIPT='
@@ -79,7 +80,7 @@ setup_node() {
 }
 
 if [ "${NODE}" = "all" ]; then
-  for n in ryzen retaco pi-obs pi-sonar pi-utils; do
+  for n in ryzen retaco pi-obs pi-sonar pi-utils pinchi; do
     setup_node "${n}"
   done
 else

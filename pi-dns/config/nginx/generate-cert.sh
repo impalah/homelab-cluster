@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
 # =============================================================================
+# RETIRADO (mejora 41, cierre, 2026-08-28) — nginx (el único consumidor de
+# este certificado) dejó de desplegarse; *.home.arpa se retiró de Pi-hole.
+# Traefik usa el certificado wildcard real de Let's Encrypt para
+# *.404labo.net (shared/scripts/renew-letsencrypt.sh), no este. No hay
+# ninguna razón para volver a ejecutar este script — conservado como
+# referencia histórica.
+# =============================================================================
 # generate-cert.sh
 # Genera (o regenera) el certificado de *.home.arpa que usa nginx, FIRMADO
 # por la CA interna del clúster (generate-ca.sh) — ya no autofirmado.

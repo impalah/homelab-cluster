@@ -1,17 +1,22 @@
-# pi-dns — DNS + Proxy Inverso
+# pi-dns — DNS
 
 **IP:** `192.168.1.170`  
 **Hardware:** Raspberry Pi 5 (4 GB o 8 GB RAM)
+
+> ⚠️ **`nginx` y la copia local de `apikey-service` se decomisionaron al cerrar la mejora 41**
+> (2026-08-28, `docs/22-mejoras-futuras.md`) — Traefik, en el Swarm, es el proxy inverso del
+> clúster ahora (`docker-swarm/stacks/traefik/`); `apikey-service` tiene su propia instancia
+> canónica en el Swarm (`docker-swarm/stacks/apikey-service/`). Este nodo queda deliberadamente
+> **fuera** del Swarm — solo DNS + Tailscale. La config de `nginx` se conserva bajo `config/nginx/`
+> como referencia histórica, marcada como retirada, nunca desplegada.
 
 ## Servicios
 
 | Servicio | Puerto (host) | Descripción |
 |---|---|---|
 | unbound | interno (172.20.0.2:5335) | Resolvedor DNS recursivo |
-| pihole | 53/tcp, 53/udp, 127.0.0.1:8053 | DNS autoritativo + ad-block |
-| nginx | 80, 443 | Proxy inverso HTTPS para el clúster + panel estático `index.home.arpa` |
-| apikey-service | interno (172.20.0.9:8090) | Emisión/validación de API keys propias, usado por nginx mediante `auth_request` — ver `docs/06-instalacion-pi1-dns.md` |
-| tailscale | `network_mode: host` | Subnet router — acceso remoto autenticado a toda la LAN + Split DNS de `*.home.arpa` — ver `docs/18-tailscale.md` |
+| pihole | 53/tcp, 53/udp, `8053` (LAN, sin proxy desde el cierre de la mejora 41) | DNS autoritativo + ad-block — panel en `http://192.168.1.170:8053` |
+| tailscale | `network_mode: host` | Subnet router — acceso remoto autenticado a toda la LAN + Split DNS de `*.404labo.net` — ver `docs/18-tailscale.md` |
 
 ## Arranque rápido
 
@@ -25,35 +30,26 @@ echo "nameserver 1.1.1.1" | sudo tee /etc/resolv.conf
 # 2. Preparar directorios
 sudo bash /srv/homelab/shared/scripts/prepare-host.sh pi-dns
 
-# 3. Copiar configuraciones estáticas
+# 3. Copiar configuración estática
 cp config/unbound/unbound.conf /srv/homelab/pi-dns/unbound/config/
-cp config/nginx/nginx.conf /srv/homelab/pi-dns/nginx/conf/
-cp config/nginx/proxy-common.conf /srv/homelab/pi-dns/nginx/conf/
-cp config/nginx/apikey-auth.conf /srv/homelab/pi-dns/nginx/conf/
 
-# 4. Generar el certificado TLS (necesario antes del primer arranque)
-bash config/nginx/generate-cert.sh
-
-# 5. Arrancar stack
+# 4. Arrancar stack
 cp .env.example .env
-nano .env    # Ajustar PIHOLE_PASSWORD, APIKEY_DATABASE_URL, APIKEY_ADMIN_TOKEN
-docker login registry.home.arpa   # una sola vez — apikey-service se publica en el registry, no se construye aquí
-docker compose pull apikey-service
+nano .env    # Ajustar PIHOLE_PASSWORD
 docker compose up -d
 docker compose ps
 ```
 
-> `apikey-service` necesita su base de datos creada de antemano en `postgres-main` (retaco) — ver `docs/06-instalacion-pi1-dns.md` sección "Despliegue" antes del primer arranque.
-
 ## Post-arranque
 
-Añadir los registros DNS en Pi-hole (primer acceso vía túnel SSH, ver `docs/06-instalacion-pi1-dns.md` sección 7.1): → `http://localhost:8053/admin` (con `ssh -L 8053:127.0.0.1:8053 u-dns@192.168.1.170`) → **Settings → DNS Records** (Pi-hole v6)
+Añadir los registros DNS en Pi-hole: `http://192.168.1.170:8053/admin` → **Settings → DNS Records**
+(Pi-hole v6).
 
-Más rápido que añadirlos uno a uno: cargar la tabla completa por API con `shared/scripts/load-dns-records.sh` (detalle en `docs/06-instalacion-pi1-dns.md` sección 7.1).
+Más rápido que añadirlos uno a uno: cargar la tabla completa por API con
+`shared/scripts/load-dns-records.sh` (`PIHOLE_URL` por defecto ya apunta a
+`http://192.168.1.170:8053`).
 
 Ver la tabla completa en: `shared/dns/dns-records.md`
-
-Para acceder por nombre de host (`https://grafana.home.arpa`, etc.) desde tu PC de gestión **sin** cambiar aún el DNS del router: `docs/06-instalacion-pi1-dns.md` sección 8.1 (configuración temporal reversible, solo afecta a tu equipo). El cambio definitivo a nivel de router (afecta a toda la red) es el paso 8 del mismo documento.
 
 ## Estructura de archivos
 
@@ -65,42 +61,25 @@ pi-dns/
 └── config/
     ├── unbound/
     │   └── unbound.conf       ← configuración del resolvedor recursivo
-    └── nginx/
-        ├── nginx.conf          ← proxy inverso para todos los servicios
-        ├── proxy-common.conf   ← cabeceras comunes (incl. soporte WebSocket)
-        ├── apikey-auth.conf    ← snippet auth_request para proteger un servicio con API key
-        ├── generate-ca.sh      ← genera la CA raíz interna (una sola vez)
-        ├── generate-cert.sh    ← genera/regenera el certificado TLS, firmado por la CA
-        └── html/
-            ├── index.html      ← panel de acceso a los servicios (index.home.arpa)
-            └── icons/          ← logos de cada servicio (SVG/PNG, servidos localmente)
-
+    └── nginx/                  ← RETIRADO (mejora 41) -- referencia histórica, nunca desplegado
+        ├── nginx.conf          ← marcado retirado en cabecera
+        ├── proxy-common.conf
+        ├── apikey-auth.conf
+        ├── authentik-auth.conf
+        ├── generate-ca.sh      ← SIGUE ACTIVO -- Valkey (docker-swarm/stacks/valkey/) sigue
+        │                          firmando su cert TLS con esta CA, único consumidor que queda
+        ├── generate-cert.sh    ← retirado (cert de *.home.arpa, ya nadie lo usa)
+        ├── generate-valkey-cert.sh ← SIGUE ACTIVO -- regenera el cert de Valkey (CN=valkey.404labo.net)
+        └── html/               ← panel estático original, retirado (superseded por Capataz, mejora 15)
 ```
 
-`apikey-service` ya no tiene código bajo `pi-dns/` — vive en `services/apikey-service/` (raíz del repo) y se publica en `registry.home.arpa` mediante `make build` (multi-arch amd64+arm64, esta Pi lo necesita); este nodo solo hace `image:` + `pull` (`docs/06-instalacion-pi1-dns.md`, `docs/05-instalacion-retaco.md` sección 5.3):
-
-```
-services/apikey-service/
-├── Dockerfile
-├── pyproject.toml
-└── src/apikey_service/
-    ├── controllers/    ← routers FastAPI (HTTP in/out)
-    ├── services/       ← reglas de negocio (hash/validación/revocado de keys)
-    └── repositories/   ← acceso a datos (SQLAlchemy + asyncpg)
-```
-
-## Panel de servicios (`index.home.arpa`)
-
-Página estática (HTML + CSS puro, sin JS ni frameworks) servida directamente por nginx — no es un proxy, `nginx` sirve los ficheros de `config/nginx/html/` con `root`/`try_files`. Una tarjeta por servicio con interfaz web real (no incluye APIs sin interfaz como Ollama o Whisper-service), cada una enlaza a su `https://*.home.arpa` en una pestaña nueva. No se limita a servicios del propio clúster: el NAS UGREEN (`ketekasko`, fuera del clúster Docker) también tiene su tarjeta aquí, enlazando directamente a `https://ketekasko.home.arpa:9443` — ver `docs/21-configuracion-nas-ugreen.md`.
-
-**Añadir un servicio nuevo a la lista:**
-1. Copiar un icono a `config/nginx/html/icons/` (buscar el SVG oficial en [simple-icons](https://simpleicons.org) o el logo del propio proyecto en su repositorio de GitHub).
-2. Añadir una tarjeta `<a class="card">` nueva en `config/nginx/html/index.html`, copiando la estructura de una existente.
-3. Desplegar: `rsync -av config/nginx/html/ u-dns@192.168.1.170:/srv/homelab/pi-dns/nginx/html/` — no hace falta reiniciar nginx (son ficheros estáticos, se sirven directo del disco).
+`apikey-service` ya no tiene código bajo `pi-dns/` ni un contenedor propio aquí — vive en `services/apikey-service/` (raíz del repo), se publica en `registry.404labo.net` mediante `make build` (multi-arch amd64+arm64), y su instancia canónica corre en el Swarm (`docker-swarm/stacks/apikey-service/`), alcanzable por routing mesh en `http://<nodo-swarm>:8091` para gestión administrativa directa.
 
 ## Notas
 
-- nginx usa un certificado firmado por una **CA interna propia** (`config/nginx/generate-ca.sh` + `generate-cert.sh`), válido 10 años por defecto — no es Let's Encrypt, ya que `*.home.arpa` no es un dominio público. Instalando el certificado de la CA en cada dispositivo (una vez, ver `docs/15-ca-interna.md`) desaparecen los avisos del navegador para siempre, incluso al regenerar el certificado de servicio. Sin instalarla, sigue funcionando con `-k`/`--insecure` en `curl` o aceptando la excepción manualmente.
-- Pi-hole expone su web en `127.0.0.1:8053` (no directamente en 80) para evitar conflicto con nginx.
-- El orden de arranque está gestionado por `depends_on`: unbound → pihole → nginx; `apikey-service` arranca en paralelo a pihole (sin depender de él) pero nginx espera a que ambos estén `healthy` antes de arrancar, porque su `auth_request` los necesita.
-- Regenerar el certificado de servicio (nuevo nombre de host, rotación, etc.): ver `docs/06-instalacion-pi1-dns.md` sección 11. La CA en sí casi nunca hace falta regenerarla — ver aviso en `docs/15-ca-interna.md`.
+- `generate-ca.sh`/`generate-valkey-cert.sh` son los dos únicos scripts de `config/nginx/` que
+  siguen activos — todo lo demás ahí (nginx en sí, `generate-cert.sh`, el panel estático) quedó
+  retirado al cerrar la mejora 41, conservado solo como referencia histórica. Ver
+  `docs/15-ca-interna.md` para el estado actual de la CA interna (vigencia reducida a Valkey).
+- Pi-hole publica su panel directo en `192.168.1.170:8053`, sin proxy delante, desde el mismo
+  cierre.

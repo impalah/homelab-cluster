@@ -2,7 +2,7 @@
 
 ## Qué resuelve
 
-Acceso a todo el clúster desde fuera de la LAN, autenticado (solo dispositivos que hayan iniciado sesión en el tailnet con la cuenta autorizada), sin abrir ningún puerto en el router de casa. Un dispositivo remoto conectado a Tailscale llega a cualquier IP de `192.168.1.0/24` y resuelve `*.home.arpa` exactamente igual que si estuviera en la LAN.
+Acceso a todo el clúster desde fuera de la LAN, autenticado (solo dispositivos que hayan iniciado sesión en el tailnet con la cuenta autorizada), sin abrir ningún puerto en el router de casa. Un dispositivo remoto conectado a Tailscale llega a cualquier IP de `192.168.1.0/24` y resuelve `*.404labo.net` exactamente igual que si estuviera en la LAN.
 
 ## Arquitectura
 
@@ -12,14 +12,14 @@ Dispositivo remoto (móvil/portátil, con Tailscale)
   ▼
 pi-dns (192.168.1.170) — subnet router
   ├─ anuncia la ruta 192.168.1.0/24 al resto del tailnet
-  └─ Pi-hole + Unbound (ya existían) — resuelven *.home.arpa
+  └─ Pi-hole + Unbound (ya existían) — resuelven *.404labo.net
 ```
 
-`pi-dns` hace de único punto de entrada remoto porque ya es el nodo DNS/proxy del clúster (`docs/06-instalacion-pi1-dns.md`) — coherente con "resolver `*.home.arpa`": las consultas DNS del tailnet llegan al mismo nodo que ya las resuelve, sin saltos extra. Nada se instala en el resto de nodos — llegan a través de la ruta anunciada, igual que cualquier otro tráfico de la LAN.
+`pi-dns` hace de único punto de entrada remoto porque ya es el nodo DNS/proxy del clúster (`docs/06-instalacion-pi1-dns.md`) — coherente con "resolver `*.404labo.net`": las consultas DNS del tailnet llegan al mismo nodo que ya las resuelve, sin saltos extra. Nada se instala en el resto de nodos — llegan a través de la ruta anunciada, igual que cualquier otro tráfico de la LAN.
 
-**Split DNS** (configurado en el panel de Tailscale, no en este repo): un nameserver personalizado, restringido al dominio `home.arpa`, apuntando a `192.168.1.170`. Solo las consultas de `*.home.arpa` se enrutan por el tailnet — el resto del tráfico DNS del dispositivo remoto sigue su camino normal (no es "forzar todo el DNS", es "split").
+**Split DNS** (configurado en el panel de Tailscale, no en este repo): un nameserver personalizado, restringido al dominio `404labo.net`, apuntando a `192.168.1.170`. Solo las consultas de `*.404labo.net` se enrutan por el tailnet — el resto del tráfico DNS del dispositivo remoto sigue su camino normal (no es "forzar todo el DNS", es "split").
 
-⚠️ Un dispositivo remoto necesita también confiar en la CA interna del clúster para que las conexiones HTTPS a `*.home.arpa` no den aviso de certificado — exactamente el mismo procedimiento que en cualquier equipo de la LAN, ver `docs/15-ca-interna.md`. Tailscale resuelve el *acceso*, no el *certificado*.
+Desde el cierre de la mejora 41 (2026-08-28, `docs/22-mejoras-futuras.md`), `*.404labo.net` sirve un certificado wildcard real de Let's Encrypt — un dispositivo remoto **no** necesita instalar ninguna CA propia para que las conexiones HTTPS funcionen sin aviso, a diferencia de cuando el clúster usaba `*.home.arpa` con la CA interna (`docs/15-ca-interna.md`). Tailscale resuelve el *acceso*; el *certificado* ya no depende de nada específico de este clúster.
 
 ## Instalación
 
@@ -99,7 +99,7 @@ print('AllowedIPs:', d['AllowedIPs'])   # debe incluir 192.168.1.0/24
 
 ### 5. Split DNS (manual, panel)
 
-`https://login.tailscale.com/admin/dns` → *Nameservers* → *Add nameserver* → *Custom* → `192.168.1.170` → activar **Restrict to domain** → `home.arpa` → guardar. **No** activar "Override local DNS" — el objetivo es que solo `*.home.arpa` vaya por este nameserver, el resto del tráfico DNS del dispositivo remoto sigue su camino normal.
+`https://login.tailscale.com/admin/dns` → *Nameservers* → *Add nameserver* → *Custom* → `192.168.1.170` → activar **Restrict to domain** → `404labo.net` → guardar. **No** activar "Override local DNS" — el objetivo es que solo `*.404labo.net` vaya por este nameserver, el resto del tráfico DNS del dispositivo remoto sigue su camino normal.
 
 ### 6. (Recomendado) Desactivar caducidad de clave del nodo
 
@@ -109,7 +109,7 @@ print('AllowedIPs:', d['AllowedIPs'])   # debe incluir 192.168.1.0/24
 
 1. Instalar la app oficial de Tailscale (móvil, portátil) e iniciar sesión con la cuenta autorizada.
 2. Instalar la CA interna del clúster en ese dispositivo — `docs/15-ca-interna.md` (mismo procedimiento que cualquier equipo de la LAN).
-3. Con Tailscale activo, cualquier `https://*.home.arpa` funciona igual que estando en casa — probado de verdad con datos móviles (fuera de la LAN), `index.home.arpa` resuelve y carga.
+3. Con Tailscale activo, cualquier `https://*.404labo.net` funciona igual que estando en casa — probado de verdad con datos móviles (fuera de la LAN), `home.404labo.net` resuelve y carga.
 
 ## Verificación
 
@@ -119,8 +119,8 @@ docker exec tailscale tailscale status          # el propio nodo, "online", ruta
 docker inspect tailscale --format='RestartCount: {{.RestartCount}}'   # 0 = estable, sin crash-loop
 
 # Desde un dispositivo remoto conectado a Tailscale (fuera de la LAN)
-nslookup markitdown.home.arpa                    # debe devolver una IP 192.168.1.x
-curl -sk https://index.home.arpa -o /dev/null -w "HTTP %{http_code}\n"
+nslookup markitdown.404labo.net                    # debe devolver una IP 192.168.1.x
+curl -sk https://home.404labo.net -o /dev/null -w "HTTP %{http_code}\n"
 ```
 
 ## Seguridad — decisiones tomadas y pendientes
@@ -136,6 +136,6 @@ curl -sk https://index.home.arpa -o /dev/null -w "HTTP %{http_code}\n"
 | El contenedor reinicia solo cada ~60s, cada vez con una URL de inicio de sesión distinta | Inicio de sesión interactivo sin auth key — `containerboot` lo mata a los 60s | Usar `TS_AUTHKEY` (sección 3), no inicio de sesión por URL |
 | `tailscale status` muestra un bloque "Health check" quejándose de la tabla `filter`/`ip6tables` | Faltan módulos de kernel o `/lib/modules` no está montado | Sección 2 de este documento |
 | `failed to enable src_valid_mark: ... read-only file system` | Sysctl no aplicable desde dentro del contenedor | `net.ipv4.conf.all.src_valid_mark=1` en el host (sección 2) |
-| Dispositivo remoto no resuelve `*.home.arpa` | Split DNS no configurado, o "Restrict to domain" no activado | Sección 5 |
+| Dispositivo remoto no resuelve `*.404labo.net` | Split DNS no configurado, o "Restrict to domain" no activado | Sección 5 |
 | DNS resuelve pero no conecta | Subnet route no aprobada en el panel | Sección 4 |
 | Aviso de certificado no confiable en el navegador remoto | Esperado — falta instalar la CA interna en ese dispositivo | `docs/15-ca-interna.md` |

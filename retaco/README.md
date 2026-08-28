@@ -10,13 +10,13 @@
 
 | Servicio | Puerto (host) | URL pública |
 |---|---|---|
-| postgres-main | 5432 | `postgresql.home.arpa:5432` (alias DNS directo, sin proxy — no es HTTP) |
-| n8n-main | 5678 | https://n8n.home.arpa (proxy nginx en pi-dns) |
-| qdrant | 6333 (127.0.0.1:6334 gRPC) | https://qdrant.home.arpa (proxy nginx en pi-dns) |
-| registry | 5000 | https://registry.home.arpa (proxy nginx en pi-dns) — auth htpasswd propia, credenciales en Vaultwarden |
-| epub2pdf-service | 8003 | https://epub2pdf.home.arpa (proxy nginx en pi-dns) — protegido con apikey-service |
-| pdf2chunks-service | 8004 | https://pdf2chunks.home.arpa (proxy nginx en pi-dns) — protegido con apikey-service |
-| open-webui | 8080 | https://openwebui.home.arpa (proxy nginx en pi-dns) |
+| postgres-main | 5432 | `postgresql.404labo.net:5432` (alias DNS directo, sin proxy — no es HTTP) |
+| n8n-main | 5678 | https://n8n.404labo.net (proxy Traefik) |
+| qdrant | 6333 (127.0.0.1:6334 gRPC) | https://qdrant.404labo.net (proxy Traefik) |
+| registry | 5000 | https://registry.404labo.net (proxy Traefik) — auth htpasswd propia, credenciales en Vaultwarden |
+| epub2pdf-service | 8003 | https://epub2pdf.404labo.net (proxy Traefik) — protegido con apikey-service |
+| pdf2chunks-service | 8004 | https://pdf2chunks.404labo.net (proxy Traefik) — protegido con apikey-service |
+| open-webui | 8080 | https://openwebui.404labo.net (proxy Traefik) |
 | node-exporter | 9100 | — (consultado por Prometheus en pi-obs) |
 | cadvisor | 8081→8080 | — (consultado por Prometheus en pi-obs) |
 | portainer-agent | 9001 | — (conectado al servidor Portainer en pi-utils) |
@@ -66,5 +66,5 @@ retaco/
 - Copias de seguridad: `bash /srv/homelab/shared/scripts/backup-postgres.sh retaco postgres-main <n8n|sonarqube>` — una base a la vez, ver `docs/12-backups-y-restore.md`.
 - Ver `docs/05-instalacion-retaco.md` para las migraciones completas desde `ryzen` y `pi-sonar`, incluyendo el traspaso de los datos existentes (no solo el despliegue en vacío).
 - `epub2pdf-service`/`pdf2chunks-service` no usan disco local para `/data/input`/`/data/output` — montan subcarpetas de `ketekasko:/volume1/nfs-data` (NAS UGREEN, vía NFSv3) en `/mnt/nfs-data/{epub2pdf,pdf2chunks}/{input,output}` del host. Requiere `nfs-common` instalado y la entrada correspondiente en `/etc/fstab` — ver `docs/05-instalacion-retaco.md` sección 5.4 y `docs/21-configuracion-nas-ugreen.md`.
-- `open-webui` migrado desde `ryzen`, después reconfigurado para no depender de SQLite/ChromaDB locales: `DATABASE_URL` apunta a la base `openwebui` en `postgres-main` (este mismo nodo, por nombre de contenedor), `VECTOR_DB=qdrant` apunta al `qdrant` de este nodo (colecciones propias con prefijo `open-webui_...`, sin chocar con `articles`/`transcripts`). Al cambiar de SQLite a Postgres los usuarios se recrean desde cero (fue una decisión consciente, había muy poco configurado todavía) — `WEBUI_SECRET_KEY` ya no necesita coincidir con el valor viejo de `ryzen` por ese motivo, aunque se dejó igual de todas formas. `ENABLE_OLLAMA_API=false`: no usa conexión nativa a Ollama, solo la conexión "OpenAI API" contra `https://bifrost.home.arpa/v1` (Bifrost, en `pi-sonar`, unifica Bedrock y Ollama detrás de la misma virtual key) — ver `docs/23-bifrost-gateway-llm.md`.
+- `open-webui` migrado desde `ryzen`, después reconfigurado para no depender de SQLite/ChromaDB locales: `DATABASE_URL` apunta a la base `openwebui` en `postgres-main` (este mismo nodo, por nombre de contenedor), `VECTOR_DB=qdrant` apunta al `qdrant` de este nodo (colecciones propias con prefijo `open-webui_...`, sin chocar con `articles`/`transcripts`). Al cambiar de SQLite a Postgres los usuarios se recrean desde cero (fue una decisión consciente, había muy poco configurado todavía) — `WEBUI_SECRET_KEY` ya no necesita coincidir con el valor viejo de `ryzen` por ese motivo, aunque se dejó igual de todas formas. `ENABLE_OLLAMA_API=false`: no usa conexión nativa a Ollama, solo la conexión "OpenAI API" contra `https://bifrost.404labo.net/v1` (Bifrost, en `pi-sonar`, unifica Bedrock y Ollama detrás de la misma virtual key) — ver `docs/23-bifrost-gateway-llm.md`.
 - `OPENWEBUI_DB_PASSWORD` y `QDRANT_API_KEY` — credenciales en Vaultwarden, entrada "openwebui — postgres" y "qdrant — api key" respectivamente (no hay forma automática de escribirlas ahí: Vaultwarden es E2E, el servidor nunca conoce la contraseña maestra de ningún usuario, así que hay que añadirlas a mano una vez).

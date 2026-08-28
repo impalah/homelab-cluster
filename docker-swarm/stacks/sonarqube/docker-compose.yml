@@ -1,0 +1,107 @@
+# Fase 4 (docs/31-docker-swarm.md): sonarqube pinnado a pi-sonar
+# (constraints: node.hostname==pi-sonar), mismos datos sin mover. Ya usaba
+# IP/alias DNS reales para postgres-main (postgresql.home.arpa, no alias
+# Docker) -- migración simple, sin ajustes de red necesarios. Backup previo
+# ejecutado (data/+extensions/, 314M).
+#
+# ⚠️ Imagen fijada por DIGEST, no por el tag flotante "sonarqube:community"
+# de la copia clásica -- incidente real (2026-08-27): el primer despliegue
+# con el tag flotante resolvió una imagen 26.8.0 ya cacheada en el nodo
+# (pull de 5 días antes, nunca aplicado porque nadie había recreado el
+# contenedor clásico desde entonces) en vez de la que llevaba semanas
+# corriendo de verdad -- SonarQube arrancó pidiendo DB_MIGRATION_NEEDED sin
+# que nadie lo pidiera. Decisión del usuario: revertir al digest exacto de
+# la imagen que corría antes de tocar nada, sin migrar. Actualizar de
+# verdad queda como decisión aparte y deliberada, no de rebote -- mismo
+# criterio ya aplicado a este servicio en Compose clásico (nunca
+# auto-actualizar, ver docs/16-mantenimiento-actualizaciones.md).
+version: "3.8"
+
+services:
+  sonarqube:
+    image: sonarqube@sha256:160bd2f6a3485bd09b655ef22dd63c02bd1fa7ba82aa5d9973fd010b8bcca0b3
+    environment:
+      SONAR_JDBC_URL: jdbc:postgresql://postgresql.404labo.net:5432/sonarqube
+      SONAR_WEB_JAVAOPTS: -Xmx512m -Xms128m
+      SONAR_CE_JAVAOPTS: -Xmx512m -Xms128m
+      SONAR_SEARCH_JAVAOPTS: -Xmx1g -Xms1g -XX:MaxDirectMemorySize=256m
+      SONAR_CORE_SERVERBASEURL: https://sonarqube.404labo.net
+      # SSL_CERT_FILE hace falta solo para el binario CLI de Infisical (Go) --
+      # esta imagen no trae un almacén de CAs de sistema utilizable por él
+      # (hallazgo real, ver apikey-service); el propio JRE de SonarQube ya
+      # trae su cacerts estándar, sin relación con esto.
+      INFISICAL_DOMAIN: https://infisical.404labo.net/api
+      SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
+    volumes:
+      - /srv/homelab/pi-sonar/sonarqube/data:/opt/sonarqube/data
+      - /srv/homelab/pi-sonar/sonarqube/extensions:/opt/sonarqube/extensions
+      - /srv/homelab/pi-sonar/sonarqube/logs:/opt/sonarqube/logs
+      - /srv/homelab/pi-sonar/sonarqube/temp:/opt/sonarqube/temp
+      - /srv/homelab/pi-sonar/sonarqube/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
+      - /srv/homelab/pi-sonar/infisical-cli/infisical:/usr/local/bin/infisical:ro
+    secrets:
+      - source: sonarqube-infisical-client-id-v1
+        target: sonarqube-infisical-client-id
+      - source: sonarqube-infisical-client-secret-v1
+        target: sonarqube-infisical-client-secret
+      - source: sonarqube-infisical-project-id-v1
+        target: sonarqube-infisical-project-id
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        CLIENT_ID=$$(cat /run/secrets/sonarqube-infisical-client-id) &&
+        CLIENT_SECRET=$$(cat /run/secrets/sonarqube-infisical-client-secret) &&
+        PROJECT_ID=$$(cat /run/secrets/sonarqube-infisical-project-id) &&
+        TOKEN=$$(infisical login --method=universal-auth \
+          --client-id="$$CLIENT_ID" \
+          --client-secret="$$CLIENT_SECRET" \
+          --plain --silent) &&
+        exec infisical run --token="$$TOKEN" --projectId="$$PROJECT_ID" --env=prod --path=/sonarqube/ -- \
+          /opt/sonarqube/docker/entrypoint.sh
+    ports:
+      # mode: host, no ingress -- ver nota en docker-swarm/stacks/pi-obs/
+      # docker-compose.yml. Encontrado en vivo (2026-08-27): en modo ingress
+      # (el implícito), el puerto 9000 ya lo reservaba authentik-server
+      # (retaco) en TODO el swarm, no solo en su propio nodo -- chocó al
+      # desplegar aunque sonarqube va pinnado a pi-sonar, un nodo distinto.
+      # `mode: host` publica solo en el nodo donde realmente aterriza la
+      # tarea, sin reservar el puerto en el resto del swarm -- semánticamente
+      # más correcto además, ya que este servicio nunca necesitó la routing
+      # mesh (siempre pinnado a un único nodo).
+      - target: 9000
+        published: 9000
+        mode: host
+    networks:
+      - sonarqube-net
+    ulimits:
+      nofile:
+        soft: 131072
+        hard: 131072
+      nproc: 8192
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        mode: non-blocking
+        max-buffer-size: 4m
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname==pi-sonar
+      restart_policy:
+        condition: on-failure
+
+networks:
+  sonarqube-net:
+    driver: overlay
+    attachable: true
+
+secrets:
+  sonarqube-infisical-client-id-v1:
+    external: true
+  sonarqube-infisical-client-secret-v1:
+    external: true
+  sonarqube-infisical-project-id-v1:
+    external: true

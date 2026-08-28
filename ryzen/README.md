@@ -18,15 +18,15 @@ Cada uno es su propio proyecto Compose (`homelab-ryzen` y `homelab-ryzen-observa
 
 | Servicio | Puerto (host→container) | URL pública |
 |---|---|---|
-| ollama | 11434 | https://ollama.home.arpa (requiere API key — ver aviso abajo) |
-| vllm | 8010→8000 | https://vllm.home.arpa (requiere API key — ver aviso abajo) |
-| whisper-service | 9800 | https://whisper.home.arpa |
-| comfyui | 8188 | https://comfyui.home.arpa (requiere API key — ver aviso abajo) |
+| ollama | 11434 | https://ollama.404labo.net (requiere API key — ver aviso abajo) |
+| vllm | 8010→8000 | https://vllm.404labo.net (requiere API key — ver aviso abajo) |
+| whisper-service | 9800 | https://whisper.404labo.net |
+| comfyui | 8188 | https://comfyui.404labo.net (requiere API key — ver aviso abajo) |
 | node-exporter | 9100 | — (consultado por Prometheus en pi-obs) |
 | cadvisor | 8081→8080 | — (consultado por Prometheus en pi-obs) |
 | portainer-agent | 9001 | — (conectado al servidor Portainer en pi-utils) |
 
-> Los puertos HTTP se publican en todas las interfaces (no solo loopback) — nginx en `pi-dns`, que se ejecuta en *otro* nodo, necesita alcanzarlos por la LAN para hacer de proxy inverso y exponerlos mediante HTTPS. (Nota: esta tabla decía antes "127.0.0.1", pero no se corresponde con el `docker-compose.yml` real — corregido.)
+> Los puertos HTTP se publican en todas las interfaces (no solo loopback) — Traefik, en el Swarm (cualquiera de los 5 nodos manager), necesita alcanzarlos por la LAN para hacer de proxy inverso y exponerlos mediante HTTPS.
 
 > `postgres-main`, `qdrant` y `n8n-main` se migraron al nodo `retaco` (192.168.1.174) — ver `docs/05-instalacion-retaco.md`. `open-webui` se migró después, al mismo `retaco` — ver `docs/23-bifrost-gateway-llm.md`. No hay ningún servicio de datos, automatización o interfaz de usuario en este nodo; solo cómputo con GPU (`ollama`/`vllm`/`whisper-service`/`comfyui`), consumido por Open WebUI a través de Bifrost (`pi-sonar`) o directamente vía los hostnames públicos de abajo.
 
@@ -52,7 +52,7 @@ bash switch-gpu1-backend.sh comfyui           # para whisper-service si está ar
 
 ## Acceso externo con API key
 
-`ollama.home.arpa`, `vllm.home.arpa` y `comfyui.home.arpa` exigen la cabecera `X-Api-Key` (protegidos con `apikey-service`, ver `docs/06-instalacion-pi1-dns.md`) — cualquier cliente en la LAN o workflow de n8n que los llame por el nombre de host público necesita una key emitida ahí. **Open WebUI, ahora en `retaco`, no usa ninguna de estas rutas**: llega a `ollama` por IP directa (`http://192.168.1.150:11434`) a través de Bifrost (`pi-sonar`), sin pasar por `nginx`/`apikey-service` — ver `docs/23-bifrost-gateway-llm.md`. ComfyUI, si lo usas desde el propio navegador de esta máquina, tampoco necesita key: `http://localhost:8188` directo.
+`ollama.404labo.net`, `vllm.404labo.net` y `comfyui.404labo.net` exigen la cabecera `X-Api-Key` (protegidos con `apikey-service`, ver `docs/06-instalacion-pi1-dns.md`) — cualquier cliente en la LAN o workflow de n8n que los llame por el nombre de host público necesita una key emitida ahí. **Open WebUI, ahora en `retaco`, no usa ninguna de estas rutas**: llega a `ollama` por IP directa (`http://192.168.1.150:11434`) a través de Bifrost (`pi-sonar`), sin pasar por Traefik/`apikey-service` — ver `docs/23-bifrost-gateway-llm.md`. ComfyUI, si lo usas desde el propio navegador de esta máquina, tampoco necesita key: `http://localhost:8188` directo.
 
 ## Arranque rápido
 
@@ -103,10 +103,10 @@ ryzen/
 └── README.md
 ```
 
-`whisper-service` ya no tiene código aquí — vive en `services/whisper-service/` (raíz del repo) y se publica en `registry.home.arpa` mediante `make build`; este nodo solo hace `image:` + `pull` (`docs/05-instalacion-retaco.md` sección 5.3).
+`whisper-service` ya no tiene código aquí — vive en `services/whisper-service/` (raíz del repo) y se publica en `registry.404labo.net` mediante `make build`; este nodo solo hace `image:` + `pull` (`docs/05-instalacion-retaco.md` sección 5.3).
 
 ## Notas
 
-- Si algún workflow de n8n (ahora en `retaco`) llama a `ollama` o `whisper-service` por nombre de contenedor Docker (p. ej. `http://ollama:11434`), hay que actualizarlo al nombre de host público (`https://ollama.home.arpa`) — ya no comparten red Docker desde que n8n se migró.
+- Si algún workflow de n8n (ahora en `retaco`) llama a `ollama` o `whisper-service` por nombre de contenedor Docker (p. ej. `http://ollama:11434`), hay que actualizarlo al nombre de host público (`https://ollama.404labo.net`) — ya no comparten red Docker desde que n8n se migró.
 - `whisper-service` tarda ~90 segundos en arrancar (carga del modelo en GPU). El healthcheck tiene `start_period: 90s`.
 - Para descargar modelos en Ollama: `docker exec ollama ollama pull llama3.2:3b`

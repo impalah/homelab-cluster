@@ -1,0 +1,83 @@
+# Fase 1 (docs/31-docker-swarm.md): node-exporter + cadvisor como servicio
+# `mode: global` — sustituye las copias sueltas de cada docker-compose.yml de
+# nodo. promtail/portainer-agent se quedan fuera de este stack a propósito
+# (ver docs/31, tienen diferencias reales por nodo / requieren tocar el
+# propio Portainer server) — se abordan en un paso posterior.
+#
+# `constraints: node.labels.common-stack==enabled` permite un cutover
+# incremental nodo a nodo: solo aterriza en los nodos que ya tienen la
+# etiqueta puesta (ver init/label-nodes.sh y el runbook), en vez de
+# desplegarse de golpe en los 5 y chocar con los puertos de los contenedores
+# antiguos que todavía no se han parado.
+#
+# Claves ignoradas por Swarm confirmadas en el PoC de la Fase 0
+# (docs/31-docker-swarm.md): `pid`/`devices`/`privileged` no dan error pero
+# se ignoran en silencio -- se dejan igualmente por documentar la intención
+# original y por si una versión futura de Swarm las soporta. `cgroup: host`
+# SÍ rompe el despliegue -- se ha quitado.
+#
+# Rutas de bind-mount uniformes en los 5 nodos (no `/srv/homelab/<nodo>/...`
+# -- Swarm no soporta plantillas de nodo en rutas de host, ver docs/31):
+# `/srv/homelab/node-exporter-textfile` en vez de la ruta específica de
+# pi-obs (`/srv/homelab/pi-obs/node-exporter-textfile`, usada hoy por
+# check-image-updates.sh) -- en pi-obs se deja como symlink al directorio
+# real para no tocar ese script; en el resto de nodos es un directorio vacío
+# nuevo (colector sin datos todavía, pero ya preparado para la mejora 36).
+version: "3.8"
+
+services:
+  node-exporter:
+    image: prom/node-exporter:v1.8.0
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.rootfs=/rootfs"
+      - "--path.sysfs=/host/sys"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+      - "--collector.textfile.directory=/host/textfile"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+      - /srv/homelab/node-exporter-textfile:/host/textfile:ro
+    ports:
+      - "9100:9100"
+    networks:
+      - common-net
+    pid: host
+    deploy:
+      mode: global
+      placement:
+        constraints:
+          - node.labels.common-stack == enabled
+      restart_policy:
+        condition: on-failure
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.55.1
+    command:
+      - "-disable_metrics=advtcp,cpu_topology,cpuset,hugetlb,memory_numa,process,referenced_memory,resctrl,sched,tcp,udp,disk,diskIO"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    ports:
+      - "8081:8080"
+    networks:
+      - common-net
+    privileged: true
+    devices:
+      - /dev/kmsg
+    deploy:
+      mode: global
+      placement:
+        constraints:
+          - node.labels.common-stack == enabled
+      restart_policy:
+        condition: on-failure
+
+networks:
+  common-net:
+    driver: overlay
+    attachable: true

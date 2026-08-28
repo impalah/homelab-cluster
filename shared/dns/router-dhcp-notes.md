@@ -2,7 +2,7 @@
 
 ## Objetivo
 
-Asegurarse de que todos los dispositivos de la red doméstica usen `pi-dns` como servidor DNS primario, de modo que puedan resolver `*.home.arpa` sin ninguna configuración adicional en cada dispositivo.
+Asegurarse de que todos los dispositivos de la red doméstica usen `pi-dns` como servidor DNS primario, de modo que puedan resolver `*.404labo.net` sin ninguna configuración adicional en cada dispositivo.
 
 ---
 
@@ -27,7 +27,7 @@ Buscar en el menú: `LAN` → `DHCP Server` o `Red local` → `Configuración DH
 | DNS primario | `192.168.1.170` |
 | DNS secundario | `1.1.1.1` |
 
-> El DNS secundario `1.1.1.1` actúa como alternativa de respaldo automática si `pi-dns` está caído, pero en ese caso los nombres de host `*.home.arpa` no resolverán. Esto es el comportamiento esperado.
+> El DNS secundario `1.1.1.1` actúa como alternativa de respaldo automática si `pi-dns` está caído, pero en ese caso los nombres de host `*.404labo.net` no resolverán. Esto es el comportamiento esperado.
 
 ### Paso 4: Guardar y aplicar cambios
 
@@ -73,7 +73,7 @@ cat /etc/resolv.conf
 # Debe mostrar: nameserver 192.168.1.170
 
 # Probar resolución de nombre interno
-nslookup grafana.home.arpa
+nslookup grafana.404labo.net
 # Respuesta esperada: Address: 192.168.1.170
 
 # Probar resolución externa (verifica que Unbound funciona)

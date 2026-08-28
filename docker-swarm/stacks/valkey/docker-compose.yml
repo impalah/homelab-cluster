@@ -1,0 +1,90 @@
+# Fase 4 (docs/31-docker-swarm.md): valkey migrado al swarm.
+# `constraints: node.hostname==retaco` -- preserva el alias DNS directo a
+# 192.168.1.174 (shared/dns/dns-records.md) sin tener que tocar el registro.
+# Sin persistencia a propósito (solo caché, igual que en Compose clásico) --
+# no hay backup que hacer. Sin Infisical (ACL/TLS vía ficheros bind-mounted
+# directamente, igual que antes).
+#
+# Mejora 41 (2026-08-28): valkey.crt/valkey.key renombrados a CN=
+# valkey.404labo.net -- sigue siendo un cert AUTOFIRMADO por la CA interna
+# (generate-valkey-cert.sh), NO el wildcard real de Let's Encrypt.
+#
+# Se intentó reutilizar el cert/key real de Let's Encrypt (mismo criterio que
+# Traefik para 404labo.net) y se revirtió tras un hallazgo real, no
+# relacionado con el propio cert: valkey-server fallaba en el arranque con
+# "Failed to load private key: ... error:8000000D:system library::Permission
+# denied" -- de forma intermitente pero consistente, SOLO bajo `docker stack
+# deploy`/servicios de Swarm, y SOLO cuando el servicio publica un puerto
+# (`ports:`/`--publish`, cualquier modo, ingress u host). La misma imagen,
+# mismo comando, mismos ficheros (probados con el cert nuevo Y con el
+# autofirmado original, con/sin `:ro` en el mount, con distintos propietarios
+# y permisos Unix del fichero) funcionaban sin problema con `docker run`
+# normal, y también como servicio de Swarm SIN publicar ningún puerto.
+# Aislado con `docker service create` sueltos, variando un factor cada vez:
+# el problema real es una **condición de carrera en el arranque** -- cuando
+# Swarm tiene que montar además la malla de enrutado (routing mesh/IPVS) para
+# el puerto publicado, el arranque del contenedor tarda un poco más en
+# "asentarse" del todo, y valkey-server intenta leer la clave TLS
+# (prácticamente lo primero que hace) antes de que el bind-mount esté
+# realmente listo -- el kernel devuelve un EACCES real pero espurio. Nunca
+# visto en ningún otro servicio de esta migración porque ninguno lee un
+# fichero bind-mounted tan pronto en su arranque. Confirmado con un `sleep`
+# de arranque: añadiéndolo, el mismo contenedor con puerto publicado converge
+# sin problema. Fix real, robusto (no un `sleep` fijo): el `entrypoint`
+# espera en bucle a que la clave sea legible antes de arrancar
+# valkey-server de verdad. `:ro` en el mount de `/etc/valkey/tls` se
+# mantiene (nunca fue la causa real). capataz-api sigue confiando en esta
+# conexión vía la CA interna (bind-mount de `homelab-ca.crt`, sin cambios).
+version: "3.8"
+
+services:
+  valkey:
+    image: valkey/valkey:9.1.1-alpine
+    # Espera activa a que la clave TLS sea legible antes de arrancar de
+    # verdad -- ver comentario de cabecera (mejora 41, condición de carrera
+    # real de Swarm con puertos publicados). Máximo 10s (20 x 0.5s), muy por
+    # encima de lo que tarda en la práctica.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        for i in $$(seq 1 20); do
+          [ -r /etc/valkey/tls/valkey.key ] && break
+          sleep 0.5
+        done
+        exec valkey-server \
+          --aclfile /etc/valkey/users.acl \
+          --save "" \
+          --appendonly no \
+          --maxmemory 256mb \
+          --maxmemory-policy allkeys-lru \
+          --port 0 \
+          --tls-port 6379 \
+          --tls-cert-file /etc/valkey/tls/valkey.crt \
+          --tls-key-file /etc/valkey/tls/valkey.key \
+          --tls-ca-cert-file /etc/valkey/tls/ca.crt \
+          --tls-auth-clients no
+    volumes:
+      - /srv/homelab/retaco/valkey/users.acl:/etc/valkey/users.acl:ro
+      - /srv/homelab/retaco/valkey/tls:/etc/valkey/tls:ro
+    ports:
+      - "6379:6379"
+    networks:
+      - valkey-net
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        mode: non-blocking
+        max-buffer-size: 4m
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname==retaco
+      restart_policy:
+        condition: on-failure
+
+networks:
+  valkey-net:
+    driver: overlay
+    attachable: true

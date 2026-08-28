@@ -1,0 +1,67 @@
+# Fase 4 (docs/31-docker-swarm.md): primer servicio CON ESTADO migrado al
+# swarm -- elegido por ser el de menor riesgo (imágenes reconstruibles desde
+# services/<nombre>/ o el repo externo de cada una, no es una pérdida de
+# datos irrecuperable como postgres-main/vaultwarden).
+#
+# `constraints: node.hostname==retaco` -- los datos (blobs + htpasswd) siguen
+# en el mismo bind-mount de siempre, NUNCA se mueven de nodo (mismo criterio
+# que el resto de servicios con estado de esta fase). Mismo puerto publicado
+# (5000) que la copia Compose clásica que sustituye, así que
+# docker-swarm/stacks/traefik/dynamic/routes.yml NO necesita cambios --
+# sigue apuntando a 192.168.1.174:5000 tal cual, sea quien sea quien lo
+# orqueste por debajo.
+#
+# REGISTRY_HTTP_SECRET como `docker secret` en vez de variable de entorno --
+# mismo motivo que apikey-service (docker-swarm/stacks/apikey-service/):
+# `docker service inspect` expone las env vars en texto plano a cualquiera
+# con acceso al swarm, los secrets se montan como fichero. El htpasswd
+# sigue siendo un bind-mount de fichero real (ya lo era en Compose clásico,
+# no es un secreto rotable vía Infisical hoy).
+version: "3.8"
+
+services:
+  registry:
+    image: registry:2.8.3
+    environment:
+      REGISTRY_AUTH: htpasswd
+      REGISTRY_AUTH_HTPASSWD_REALM: "Homelab Cluster Registry"
+      REGISTRY_AUTH_HTPASSWD_PATH: /auth/htpasswd
+      REGISTRY_STORAGE_DELETE_ENABLED: "true"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        export REGISTRY_HTTP_SECRET=$$(cat /run/secrets/registry-http-secret)
+        exec registry serve /etc/docker/registry/config.yml
+    secrets:
+      - source: registry-http-secret-v1
+        target: registry-http-secret
+    volumes:
+      - /srv/homelab/retaco/registry/data:/var/lib/registry
+      - /srv/homelab/retaco/registry/auth:/auth:ro
+    ports:
+      - "5000:5000"
+    networks:
+      - registry-net
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        mode: non-blocking
+        max-buffer-size: 4m
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname==retaco
+      restart_policy:
+        condition: on-failure
+
+networks:
+  registry-net:
+    driver: overlay
+    attachable: true
+
+secrets:
+  registry-http-secret-v1:
+    external: true

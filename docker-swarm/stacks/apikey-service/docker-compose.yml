@@ -1,0 +1,103 @@
+# Fase 3b (docs/31-docker-swarm.md): apikey-service migrado al swarm, en
+# PARALELO a la copia que sigue viva en pi-dns (Compose puro, sin cambios) --
+# decisión del usuario (2026-08-25, adelanta parte de la Fase 4/mejora 39):
+# necesario para que el middleware ForwardAuth de Traefik pueda validar
+# X-Api-Key sin depender de la red Docker interna de pi-dns, donde
+# apikey-service no publica puerto al LAN. nginx (pi-dns) NO se toca en este
+# incremento -- sigue usando su propia copia, sin ningún cambio de config.
+#
+# Ambas copias (pi-dns y esta) son intercambiables sin coordinación: las
+# keys emitidas viven en postgres-main (retaco), compartido por las dos --
+# no hay estado local que pueda divergir.
+#
+# Sin `constraints` de nodo, mismo criterio que markitdown-service (Fase 2):
+# servicio sin estado local real (el binario de infisical y la CA son
+# prerequisitos ya replicados en los 5 nodos, docs/31-docker-swarm.md) --
+# se deja elegir al scheduler por defecto de Swarm.
+#
+# Credenciales de Infisical como `docker secret` (creados a mano, external:
+# true, igual que el certificado TLS de 3b) en vez de variables de entorno
+# -- Swarm expone `docker service inspect` con las env vars en texto plano
+# a cualquiera con acceso al swarm; los secrets se montan como fichero,
+# nunca aparecen en inspect. El entrypoint se adapta a leerlos de
+# /run/secrets/ en vez de $VAR directas (mismo patrón infisical login que
+# la copia de pi-dns, solo cambia de dónde saca el id/secret/project).
+version: "3.8"
+
+services:
+  apikey-service:
+    image: registry.404labo.net/apikey-service:latest
+    environment:
+      # Mejora 41 (2026-08-28): infisical.404labo.net usa el cert real de
+      # Let's Encrypt -- pero SSL_CERT_FILE SIGUE haciendo falta. Hallazgo
+      # real: esta imagen (y varias otras del clúster) no traen ningún
+      # almacén de CAs del sistema (`ls /etc/ssl/certs/ca-certificates.crt`
+      # → No such file or directory, confirmado en vivo) -- sin un
+      # SSL_CERT_FILE explícito, el binario de Infisical no valida NINGÚN
+      # HTTPS, ni siquiera con cert público real ("certificate signed by
+      # unknown authority"). homelab-ca.crt pasa a ser un bundle COMBINADO
+      # (CA interna + almacén de confianza público estándar de un sistema
+      # real), no solo la CA interna -- mismo fichero, contenido ampliado.
+      INFISICAL_DOMAIN: https://infisical.404labo.net/api
+      SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
+      APIKEY_OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://192.168.1.171:4318/v1/logs
+      APIKEY_LOG_LEVEL: INFO
+      APIKEY_LOG_FORMAT: json
+    volumes:
+      - /srv/homelab/apikey-service/infisical-cli/infisical:/usr/local/bin/infisical:ro
+      - /srv/homelab/apikey-service/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
+    secrets:
+      - source: apikey-infisical-client-id-v1
+        target: infisical-client-id
+      - source: apikey-infisical-client-secret-v1
+        target: infisical-client-secret
+      - source: apikey-infisical-project-id-v1
+        target: infisical-project-id
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        CLIENT_ID=$$(cat /run/secrets/infisical-client-id) &&
+        CLIENT_SECRET=$$(cat /run/secrets/infisical-client-secret) &&
+        PROJECT_ID=$$(cat /run/secrets/infisical-project-id) &&
+        TOKEN=$$(infisical login --method=universal-auth \
+          --client-id="$$CLIENT_ID" \
+          --client-secret="$$CLIENT_SECRET" \
+          --plain --silent) &&
+        exec infisical run --token="$$TOKEN" --projectId="$$PROJECT_ID" --env=prod --path=/apikey-service/ -- \
+          python3 -m uvicorn apikey_service.main:app --host 0.0.0.0 --port 8090 --app-dir src
+    ports:
+      # Publicado (routing mesh) -- no solo para Traefik (misma red overlay
+      # de abajo bastaría), sino por si algún día pi-dns necesita alcanzarlo
+      # cruzando la LAN igual que hace hoy con registry.404labo.net/qdrant.404labo.net,
+      # sin depender de estar en la misma red Docker.
+      - "8091:8090"
+    networks:
+      - apikey-net
+      - traefik-public
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        mode: non-blocking
+        max-buffer-size: 4m
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+
+networks:
+  apikey-net:
+    driver: overlay
+    attachable: true
+  traefik-public:
+    external: true
+    name: traefik_traefik-public
+
+secrets:
+  apikey-infisical-client-id-v1:
+    external: true
+  apikey-infisical-client-secret-v1:
+    external: true
+  apikey-infisical-project-id-v1:
+    external: true

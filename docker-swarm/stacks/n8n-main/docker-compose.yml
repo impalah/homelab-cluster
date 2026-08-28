@@ -1,0 +1,107 @@
+# Fase 4 (docs/31-docker-swarm.md): tercer servicio con estado migrado al
+# swarm. `constraints: node.hostname==retaco` -- los datos
+# (workflows/credenciales cifradas en /home/node/.n8n) siguen en el mismo
+# bind-mount de siempre, NUNCA se mueven de nodo. Reutiliza directamente las
+# rutas ya preparadas en retaco (infisical-cli, CA, datos).
+#
+# ⚠️ N8N_ENCRYPTION_KEY es irreversible una vez fijada (CLAUDE.md) -- NO
+# vive aquí ni en ningún fichero de este repo, se inyecta vía Infisical
+# (path /n8n-main/) exactamente igual que en el Compose clásico que
+# sustituye. La migración de orquestador no la toca en absoluto.
+#
+# `DB_POSTGRESDB_HOST` cambiado de "postgres-main" (alias de red Docker del
+# proyecto Compose de retaco) a la IP real -- postgres-main SIGUE siendo
+# Compose clásico (es el último de la Fase 4, con backup obligatorio antes),
+# así que n8n-main ya no comparte red de proyecto con él. Mismo criterio ya
+# usado con qdrant/open-webui y capataz-api (docs/28).
+version: "3.8"
+
+services:
+  n8n-main:
+    image: n8nio/n8n:latest
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: 192.168.1.174
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: n8n
+      DB_POSTGRESDB_USER: n8n
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      # Mejora 41 (2026-08-28): auditados los workflows con nodo webhook en
+      # postgres-main (n8n) antes de este cambio -- los 4 encontrados
+      # (Audio Transcribe, Classify Pending Articles, Embed Classified
+      # Articles, Retry Empty Markdown) están INACTIVOS (active=false), sin
+      # llamador externo real que dependa de la URL vieja hoy.
+      N8N_HOST: n8n.404labo.net
+      N8N_PORT: 5678
+      N8N_PROTOCOL: https
+      N8N_WEBHOOK_URL: https://n8n.404labo.net/
+      GENERIC_TIMEZONE: Europe/Madrid
+      N8N_LOG_LEVEL: info
+      N8N_PROXY_HOPS: "1"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
+      N8N_UNVERIFIED_PACKAGES_ENABLED: "true"
+      N8N_RUNNERS_TASK_TIMEOUT: "300"
+      N8N_COMPRESSION_NODE_MAX_DECOMPRESSED_SIZE_BYTES: "2147483648"
+      N8N_COMPRESSION_NODE_MAX_ZIP_ENTRIES: "5000"
+      # NODE_EXTRA_CA_CERTS/SSL_CERT_FILE SIGUEN haciendo falta -- Node no
+      # trae un almacén de CAs del sistema en esta imagen (hallazgo real, ver
+      # apikey-service). homelab-ca.crt pasa a ser un bundle combinado (CA
+      # interna + almacén público estándar), no solo la CA interna.
+      NODE_EXTRA_CA_CERTS: /etc/ssl/certs/homelab-ca.crt
+      SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
+      INFISICAL_DOMAIN: https://infisical.404labo.net/api
+    volumes:
+      - /srv/homelab/retaco/n8n/data:/home/node/.n8n
+      - /srv/homelab/retaco/n8n/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
+      - /srv/homelab/retaco/infisical-cli/infisical:/usr/local/bin/infisical:ro
+    secrets:
+      - source: n8n-main-infisical-client-id-v1
+        target: n8n-main-infisical-client-id
+      - source: n8n-main-infisical-client-secret-v1
+        target: n8n-main-infisical-client-secret
+      - source: n8n-main-infisical-project-id-v1
+        target: n8n-main-infisical-project-id
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        CLIENT_ID=$$(cat /run/secrets/n8n-main-infisical-client-id) &&
+        CLIENT_SECRET=$$(cat /run/secrets/n8n-main-infisical-client-secret) &&
+        PROJECT_ID=$$(cat /run/secrets/n8n-main-infisical-project-id) &&
+        TOKEN=$$(infisical login --method=universal-auth \
+          --client-id="$$CLIENT_ID" \
+          --client-secret="$$CLIENT_SECRET" \
+          --plain --silent) &&
+        exec infisical run --token="$$TOKEN" --projectId="$$PROJECT_ID" --env=prod --path=/n8n-main/ -- \
+          tini -- /docker-entrypoint.sh
+    ports:
+      - "5678:5678"
+    networks:
+      - n8n-main-net
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        mode: non-blocking
+        max-buffer-size: 4m
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname==retaco
+      restart_policy:
+        condition: on-failure
+
+networks:
+  n8n-main-net:
+    driver: overlay
+    attachable: true
+
+secrets:
+  n8n-main-infisical-client-id-v1:
+    external: true
+  n8n-main-infisical-client-secret-v1:
+    external: true
+  n8n-main-infisical-project-id-v1:
+    external: true

@@ -1,0 +1,79 @@
+# Fase 4 (docs/31-docker-swarm.md): bifrost pinnado a pi-sonar
+# (constraints: node.hostname==pi-sonar), mismos datos sin mover. Estado
+# real en postgres-main (bases "bifrost"), /app/data solo aloja ficheros de
+# trabajo internos -- sin backup dedicado (ya documentado como no-estado
+# real en la copia Compose clásica). Ollama (ryzen) por IP directa, sin
+# cambios.
+version: "3.8"
+
+services:
+  bifrost:
+    image: maximhq/bifrost:v1.6.8
+    environment:
+      AWS_REGION: eu-west-1
+      OLLAMA_UPSTREAM_URL: http://192.168.1.150:11434
+      # Mejora 41 (2026-08-28): cert real de Let's Encrypt, pero SSL_CERT_FILE
+      # SIGUE haciendo falta -- esta imagen no trae ningún almacén de CAs del
+      # sistema (hallazgo real, ver apikey-service). homelab-ca.crt pasa a
+      # ser un bundle combinado (CA interna + almacén público estándar).
+      INFISICAL_DOMAIN: https://infisical.404labo.net/api
+      SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
+    volumes:
+      - /srv/homelab/pi-sonar/bifrost/data:/app/data
+      - /srv/homelab/pi-sonar/bifrost/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
+      - /srv/homelab/pi-sonar/infisical-cli/infisical:/usr/local/bin/infisical:ro
+    secrets:
+      - source: bifrost-infisical-client-id-v1
+        target: bifrost-infisical-client-id
+      - source: bifrost-infisical-client-secret-v1
+        target: bifrost-infisical-client-secret
+      - source: bifrost-infisical-project-id-v1
+        target: bifrost-infisical-project-id
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        CLIENT_ID=$$(cat /run/secrets/bifrost-infisical-client-id) &&
+        CLIENT_SECRET=$$(cat /run/secrets/bifrost-infisical-client-secret) &&
+        PROJECT_ID=$$(cat /run/secrets/bifrost-infisical-project-id) &&
+        TOKEN=$$(infisical login --method=universal-auth \
+          --client-id="$$CLIENT_ID" \
+          --client-secret="$$CLIENT_SECRET" \
+          --plain --silent) &&
+        exec infisical run --token="$$TOKEN" --projectId="$$PROJECT_ID" --env=prod --path=/bifrost/ -- \
+          /app/docker-entrypoint.sh /app/main
+    ports:
+      # mode: host, no ingress -- mismo motivo que sonarqube/authentik: en
+      # modo ingress el puerto queda reservado en todo el swarm, no solo en
+      # pi-sonar, y chocó con open-webui (retaco, también 8080).
+      - target: 8080
+        published: 8080
+        mode: host
+    networks:
+      - bifrost-net
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        mode: non-blocking
+        max-buffer-size: 4m
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname==pi-sonar
+      restart_policy:
+        condition: on-failure
+
+networks:
+  bifrost-net:
+    driver: overlay
+    attachable: true
+
+secrets:
+  bifrost-infisical-client-id-v1:
+    external: true
+  bifrost-infisical-client-secret-v1:
+    external: true
+  bifrost-infisical-project-id-v1:
+    external: true

@@ -1,0 +1,140 @@
+# Fase 4 (docs/31-docker-swarm.md): quinto servicio con estado migrado al
+# swarm -- server + worker juntos en el mismo stack (comparten el bind-mount
+# /data). `constraints: node.hostname==retaco` para ambos -- los datos
+# siguen en el mismo sitio de siempre, sin mover. Reutiliza directamente las
+# rutas ya preparadas en retaco (infisical-cli, CA, datos, certs).
+#
+# `AUTHENTIK_POSTGRESQL__HOST` cambiado de "postgres-main" (alias de red
+# Docker del proyecto Compose de retaco) a la IP real -- postgres-main sigue
+# en Compose clásico (es el último de la Fase 4), mismo criterio ya usado
+# con qdrant/n8n-main. La BD "authentik" en sí no se toca ni se mueve --
+# sigue siendo la misma instancia de postgres-main de siempre, solo cambia
+# cómo se alcanza.
+#
+# Sin Redis/Valkey (confirmado contra la documentación oficial vigente,
+# nunca lo tuvo este despliegue). Sin puerto 9443 publicado -- TLS lo
+# termina Traefik/nginx, nunca doble TLS, igual que en Compose clásico.
+# authentik-worker sin puerto publicado -- comunicación con el server vía
+# Postgres, no directamente por red.
+#
+# NADA cambia para los consumidores externos: Traefik ya apunta a
+# `192.168.1.174:9000` tanto para el passthrough `authentik.home.arpa` como
+# para el middleware `authentik-auth` (forward-auth de `prometheus.home.arpa`,
+# docker-swarm/stacks/traefik/dynamic/routes.yml) -- mismo IP:puerto de
+# siempre, routes.yml no necesita ningún cambio.
+version: "3.8"
+
+x-authentik-common: &authentik-common
+  image: ghcr.io/goauthentik/server:2026.5.6
+  environment:
+    # SSL_CERT_FILE hace falta solo para el binario CLI de Infisical (Go) --
+    # hallazgo real, ver apikey-service. homelab-ca.crt es un bundle
+    # combinado (CA interna + almacén público estándar).
+    INFISICAL_DOMAIN: https://infisical.404labo.net/api
+    SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
+    AUTHENTIK_POSTGRESQL__HOST: 192.168.1.174
+    AUTHENTIK_POSTGRESQL__NAME: authentik
+    AUTHENTIK_POSTGRESQL__USER: authentik
+    AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
+    AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+    AUTHENTIK_OUTPOSTS__DISCOVER: "false"
+  secrets:
+    - source: authentik-infisical-client-id-v1
+      target: authentik-infisical-client-id
+    - source: authentik-infisical-client-secret-v1
+      target: authentik-infisical-client-secret
+    - source: authentik-infisical-project-id-v1
+      target: authentik-infisical-project-id
+  logging:
+    driver: loki
+    options:
+      loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+      mode: non-blocking
+      max-buffer-size: 4m
+
+services:
+  authentik-server:
+    <<: *authentik-common
+    volumes:
+      - /srv/homelab/retaco/infisical-cli/infisical:/usr/local/bin/infisical:ro
+      - /srv/homelab/retaco/authentik/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
+      - /srv/homelab/retaco/authentik/data:/data
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        CLIENT_ID=$$(cat /run/secrets/authentik-infisical-client-id) &&
+        CLIENT_SECRET=$$(cat /run/secrets/authentik-infisical-client-secret) &&
+        PROJECT_ID=$$(cat /run/secrets/authentik-infisical-project-id) &&
+        TOKEN=$$(infisical login --method=universal-auth \
+          --client-id="$$CLIENT_ID" \
+          --client-secret="$$CLIENT_SECRET" \
+          --plain --silent) &&
+        exec infisical run --token="$$TOKEN" --projectId="$$PROJECT_ID" --env=prod --path=/authentik/ -- \
+          dumb-init -- ak server
+    shm_size: 512mb
+    ports:
+      # mode: host, no ingress -- encontrado en vivo (2026-08-27, al migrar
+      # sonarqube): en modo ingress (el implícito), el puerto queda
+      # reservado en TODO el swarm, no solo en el nodo donde aterriza la
+      # tarea -- chocó con sonarqube (pi-sonar, también puerto 9000) aunque
+      # son nodos distintos. Ninguno de los servicios de esta fase con
+      # `constraints: node.hostname==X` necesita en realidad la routing
+      # mesh (una sola réplica, siempre en el mismo nodo) -- `mode: host`
+      # es lo semánticamente correcto, no solo el parche puntual.
+      - target: 9000
+        published: 9000
+        mode: host
+    networks:
+      - authentik-net
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname==retaco
+      restart_policy:
+        condition: on-failure
+
+  authentik-worker:
+    <<: *authentik-common
+    volumes:
+      - /srv/homelab/retaco/infisical-cli/infisical:/usr/local/bin/infisical:ro
+      - /srv/homelab/retaco/authentik/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
+      - /srv/homelab/retaco/authentik/data:/data
+      - /srv/homelab/retaco/authentik/certs:/certs
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        CLIENT_ID=$$(cat /run/secrets/authentik-infisical-client-id) &&
+        CLIENT_SECRET=$$(cat /run/secrets/authentik-infisical-client-secret) &&
+        PROJECT_ID=$$(cat /run/secrets/authentik-infisical-project-id) &&
+        TOKEN=$$(infisical login --method=universal-auth \
+          --client-id="$$CLIENT_ID" \
+          --client-secret="$$CLIENT_SECRET" \
+          --plain --silent) &&
+        exec infisical run --token="$$TOKEN" --projectId="$$PROJECT_ID" --env=prod --path=/authentik/ -- \
+          dumb-init -- ak worker
+    shm_size: 512mb
+    networks:
+      - authentik-net
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname==retaco
+      restart_policy:
+        condition: on-failure
+
+networks:
+  authentik-net:
+    driver: overlay
+    attachable: true
+
+secrets:
+  authentik-infisical-client-id-v1:
+    external: true
+  authentik-infisical-client-secret-v1:
+    external: true
+  authentik-infisical-project-id-v1:
+    external: true

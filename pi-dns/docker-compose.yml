@@ -6,6 +6,19 @@ name: homelab-pi-dns
 # IMPORTANTE: systemd-resolved debe estar deshabilitado en el host antes de arrancar.
 # =============================================================================
 
+# Logs -> driver `loki` nativo de Docker en vez de Promtail (docs/31-docker-swarm.md,
+# Fase 1) -- plugin arm64 oficial (grafana/loki-docker-driver:3.7.2-arm64), no
+# ":latest" (no es un manifest multi-arch real, resuelve a x86_64 en Raspberry
+# Pi). Funciona igual con `network_mode: host` (tailscale) -- el driver de
+# logging es independiente del modo de red.
+x-logging: &loki-logging
+  driver: loki
+  options:
+    loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+    loki-external-labels: "node=pi-dns"
+    mode: non-blocking
+    max-buffer-size: 4m
+
 services:
 
   # ---------------------------------------------------------------------------
@@ -15,6 +28,7 @@ services:
   unbound:
     image: mvance/unbound-rpi:latest
     container_name: unbound
+    logging: *loki-logging
     restart: unless-stopped
     volumes:
       - /srv/homelab/pi-dns/unbound/config/unbound.conf:/opt/unbound/etc/unbound/unbound.conf:ro
@@ -35,6 +49,7 @@ services:
   pihole:
     image: pihole/pihole:latest
     container_name: pihole
+    logging: *loki-logging
     restart: unless-stopped
     depends_on:
       unbound:
@@ -45,7 +60,7 @@ services:
       FTLCONF_webserver_api_password: ${PIHOLE_PASSWORD}
       PIHOLE_DNS_: ${PIHOLE_DNS_1:-172.20.0.2#5335}
       DNSSEC: ${PIHOLE_DNSSEC:-false}
-      VIRTUAL_HOST: ${VIRTUAL_HOST:-pi-dns.home.arpa}
+      VIRTUAL_HOST: ${VIRTUAL_HOST:-pi-dns.404labo.net}
       # Pi-hole v6 ya no usa DNSMASQ_LISTENING (variable de v5, ignorada
       # silenciosamente). Sin esto, Pi-hole rechaza consultas de cualquier
       # IP que no considere "red local" (ve la red interna de Docker como
@@ -60,7 +75,12 @@ services:
     ports:
       - "53:53/tcp"
       - "53:53/udp"
-      - "127.0.0.1:8053:80"
+      # Mejora 41 (cierre, 2026-08-28): antes solo en 127.0.0.1 -- nginx
+      # hacía de intermediario para el resto de la LAN vía pihole.home.arpa.
+      # Con nginx decomisionado, el panel se publica directo en la interfaz
+      # real del host, sin hostname ni proxy delante (decisión explícita del
+      # usuario) -- accesible en http://192.168.1.170:8053.
+      - "8053:80"
     networks:
       pi-dns-net:
         ipv4_address: 172.20.0.3
@@ -74,128 +94,39 @@ services:
       start_period: 20s
 
   # ---------------------------------------------------------------------------
-  # apikey-service — Emisión/validación de API keys propias, usado por nginx
-  # vía auth_request para proteger servicios que no tienen su propia
-  # autenticación (p. ej. ollama). Ver docs/06-instalacion-pi1-dns.md.
-  # Imagen del registry privado del clúster (registry.home.arpa), NO se
-  # construye aquí — build/push vive en services/apikey-service/Makefile
-  # ("make build"). Requiere "docker login registry.home.arpa" una vez en
-  # este nodo (docs/05-instalacion-retaco.md, sección 5.3) antes del primer
-  # "docker compose pull"/"up -d". Sin label de watchtower a propósito —
-  # mismo criterio que markitdown-service/whisper-service, ver
-  # docs/16-mantenimiento-actualizaciones.md.
+  # apikey-service y nginx — RETIRADOS (mejora 41, cierre, 2026-08-28).
   #
-  # PILOTO de la migración a Infisical (mejora 16, docs/26-infisical-secretos.md)
-  # — primer servicio migrado. NO se toca la imagen/Dockerfile en absoluto
-  # (ver docs/adr/0001-infisical-inyeccion-bind-mount-vs-imagen-derivada.md):
-  # el binario del CLI se monta por bind-mount desde el host
-  # (/srv/homelab/pi-dns/infisical-cli/infisical, desplegado con
-  # shared/scripts/deploy-infisical-cli.sh) y "entrypoint:"/"command:" se
-  # sobreescriben con un wrapper de shell.
+  # nginx era el proxy inverso original de *.home.arpa; desde el cutover de
+  # DNS de la mejora 33/39 (2026-08-26) ya no servía tráfico real (todos los
+  # hostnames apuntaban a Traefik en el Swarm), se dejaba desplegado sin
+  # tocar solo como vía de rollback inmediata. Con la mejora 41 cerrada
+  # (todo *.404labo.net verificado sano, home.arpa retirado de Pi-hole) ese
+  # rollback deja de tener sentido -- se paró y se retiró el contenedor. Su
+  # config (pi-dns/config/nginx/) se deja en el repo como referencia
+  # histórica, no se despliega en ningún sitio. El certificado de
+  # *.home.arpa (generate-cert.sh) queda igual de obsoleto -- no se genera
+  # ninguno nuevo.
   #
-  # Wrapper de DOS pasos, no un simple prefijo — descubierto en vivo probando
-  # contra la identidad real antes de tocar este contenedor: la versión del
-  # CLI desplegada (0.43.121) NO soporta Universal Auth directamente en
-  # "infisical run" vía las variables INFISICAL_UNIVERSAL_AUTH_CLIENT_ID/
-  # _CLIENT_SECRET (dispara un flujo de login interactivo por navegador en su
-  # lugar) — hace falta "infisical login --method=universal-auth" primero
-  # (devuelve un token de corta duración) y pasarlo a "infisical run
-  # --token=...". Por eso "command:" SÍ hace falta aquí (a diferencia de lo
-  # previsto originalmente en el ADR 0001 para el caso simple) — con
-  # entrypoint: sh -c no hay "CMD heredado de la imagen" al que agarrarse, así
-  # que el arranque real de uvicorn se reescribe explícito, igual que en el
-  # Dockerfile del servicio (services/apikey-service/Dockerfile).
+  # apikey-service (esta copia local) solo existía para el auth_request de
+  # nginx -- el Swarm tiene su propia instancia canónica
+  # (docker-swarm/stacks/apikey-service/, la que usa el middleware
+  # apikey-auth de Traefik), alcanzable en cualquier nodo por routing mesh
+  # en el puerto 8091 (p. ej. http://192.168.1.175:8091) para gestión
+  # administrativa directa. Sin nginx, esta copia de pi-dns no tenía ya
+  # ningún consumidor -- se retiró junto con él en vez de dejarla huérfana.
+  #
+  # La CA interna del clúster (generate-ca.sh, pi-dns/config/nginx/ca/) SÍ
+  # se conserva -- Valkey (docker-swarm/stacks/valkey/) sigue firmando su
+  # certificado TLS con ella, es el único consumidor que queda tras esta
+  # mejora (ver shared/dns/dns-records.md).
   # ---------------------------------------------------------------------------
-  apikey-service:
-    image: registry.home.arpa/apikey-service:latest
-    container_name: apikey-service
-    restart: unless-stopped
-    environment:
-      INFISICAL_UNIVERSAL_AUTH_CLIENT_ID: ${APIKEY_SERVICE_INFISICAL_CLIENT_ID}
-      INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET: ${APIKEY_SERVICE_INFISICAL_CLIENT_SECRET}
-      INFISICAL_PROJECT_ID: ${APIKEY_SERVICE_INFISICAL_PROJECT_ID}
-      INFISICAL_DOMAIN: https://infisical.home.arpa/api
-      # El CLI de Infisical (binario Go) no trae la CA interna del clúster en
-      # su almacén — SSL_CERT_FILE es la variable que respeta el propio
-      # runtime de Go (crypto/x509) para añadir una CA además de las públicas
-      # del sistema, sin tener que reconstruir la imagen ni instalar paquetes
-      # en el entrypoint. Sin esto: "x509: certificate signed by unknown
-      # authority" al llamar a infisical.home.arpa. Confirmado en vivo.
-      SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
-      APIKEY_OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: ${APIKEY_OTEL_EXPORTER_OTLP_LOGS_ENDPOINT:-http://192.168.1.171:4318/v1/logs}
-      APIKEY_LOG_LEVEL: ${APIKEY_LOG_LEVEL:-INFO}
-      APIKEY_LOG_FORMAT: ${APIKEY_LOG_FORMAT:-json}
-    volumes:
-      - /srv/homelab/pi-dns/infisical-cli/infisical:/usr/local/bin/infisical:ro
-      # CA interna del clúster, de solo lectura — copiada localmente desde
-      # /srv/homelab/pi-dns/nginx/ca/ca.crt (pi-dns YA la aloja, sin red).
-      - /srv/homelab/pi-dns/apikey-service/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        set -e
-        TOKEN=$$(infisical login --method=universal-auth \
-          --client-id="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_ID" \
-          --client-secret="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET" \
-          --plain --silent) &&
-        exec infisical run --token="$$TOKEN" --projectId="$$INFISICAL_PROJECT_ID" --env=prod --path=/apikey-service/ -- \
-          python3 -m uvicorn apikey_service.main:app --host 0.0.0.0 --port 8090 --app-dir src
-    networks:
-      pi-dns-net:
-        ipv4_address: 172.20.0.9
-    healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8090/health')\" || exit 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
-
-  # ---------------------------------------------------------------------------
-  # nginx — Proxy inverso HTTPS para todos los servicios del clúster
-  # Certificado autofirmado propio de larga duración, generado con
-  # config/nginx/generate-cert.sh (ver README de este nodo)
-  # ---------------------------------------------------------------------------
-  nginx:
-    image: nginx:1.27-alpine
-    container_name: nginx
-    restart: unless-stopped
-    depends_on:
-      pihole:
-        condition: service_healthy
-      apikey-service:
-        condition: service_healthy
-    volumes:
-      - /srv/homelab/pi-dns/nginx/conf/nginx.conf:/etc/nginx/nginx.conf:ro
-      - /srv/homelab/pi-dns/nginx/conf/proxy-common.conf:/etc/nginx/proxy-common.conf:ro
-      - /srv/homelab/pi-dns/nginx/conf/apikey-auth.conf:/etc/nginx/apikey-auth.conf:ro
-      - /srv/homelab/pi-dns/nginx/conf/authentik-auth.conf:/etc/nginx/authentik-auth.conf:ro
-      - /srv/homelab/pi-dns/nginx/certs:/etc/nginx/certs:ro
-      # Solo el .crt público de la CA (nunca la clave), para poder
-      # descargarla por HTTP en /ca.crt — ver docs/15-ca-interna.md
-      - /srv/homelab/pi-dns/nginx/ca/ca.crt:/etc/nginx/ca.crt:ro
-      # Panel estático original, ahora en old.index.home.arpa — HTML/CSS/iconos, sin backend
-      - /srv/homelab/pi-dns/nginx/html:/etc/nginx/index-html:ro
-      # Capataz (index.home.arpa) — build estático de frontend/, sin contenedor propio.
-      # Ver docs/28-capataz-consola-automatizacion.md.
-      - /srv/homelab/pi-dns/nginx/capataz-html:/etc/nginx/capataz-html:ro
-    ports:
-      - "80:80"
-      - "443:443"
-    networks:
-      pi-dns-net:
-        ipv4_address: 172.20.0.4
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz || exit 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
 
   # ---------------------------------------------------------------------------
   # tailscale — Subnet router: acceso remoto autenticado a toda la LAN
-  # (192.168.1.0/24) vía Tailscale, incluida la resolución de *.home.arpa
+  # (192.168.1.0/24) vía Tailscale, incluida la resolución de *.404labo.net
   # (Split DNS configurado en el panel de Tailscale, apuntando a este mismo
-  # nodo — ver docs/18-tailscale.md). network_mode: host a propósito — un
+  # nodo — ver docs/18-tailscale.md; "Restrict to domain" movido de
+  # home.arpa a 404labo.net al cerrar la mejora 41, 2026-08-28). network_mode: host a propósito — un
   # subnet router necesita la interfaz de red real del host, no la red bridge
   # de Docker. TS_ACCEPT_DNS=false porque este nodo YA es el servidor DNS del
   # clúster (Pi-hole+Unbound) — dejar que Tailscale reescriba su propio
@@ -206,6 +137,7 @@ services:
   tailscale:
     image: tailscale/tailscale:latest
     container_name: tailscale
+    logging: *loki-logging
     hostname: pi-dns
     restart: unless-stopped
     network_mode: host
@@ -238,6 +170,7 @@ services:
   node-exporter:
     image: prom/node-exporter:v1.8.0
     container_name: node-exporter
+    logging: *loki-logging
     restart: unless-stopped
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
@@ -263,6 +196,7 @@ services:
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:v0.55.1
     container_name: cadvisor
+    logging: *loki-logging
     restart: unless-stopped
     command:
       - "-disable_metrics=advtcp,cpu_topology,cpuset,hugetlb,memory_numa,process,referenced_memory,resctrl,sched,tcp,udp,disk,diskIO"
@@ -291,6 +225,7 @@ services:
   portainer-agent:
     image: portainer/agent:2.42.0
     container_name: portainer-agent
+    logging: *loki-logging
     restart: unless-stopped
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
@@ -314,6 +249,7 @@ services:
   watchtower:
     image: nickfedor/watchtower:latest
     container_name: watchtower
+    logging: *loki-logging
     restart: unless-stopped
     environment:
       WATCHTOWER_LABEL_ENABLE: "true"
@@ -327,24 +263,9 @@ services:
         ipv4_address: 172.20.0.8
 
   # ---------------------------------------------------------------------------
-  # promtail — Envía los logs de todos los contenedores de este nodo a Loki
-  # (pi-obs), para verlos desde Grafana. Ver docs/04-servicios-comunes.md.
+  # promtail — migrado al driver de logging `loki` nativo de Docker (ver
+  # x-logging arriba) — docs/31-docker-swarm.md. Ya no se despliega aquí.
   # ---------------------------------------------------------------------------
-  promtail:
-    image: grafana/promtail:3.0.0
-    container_name: promtail
-    restart: unless-stopped
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true"
-    volumes:
-      - /srv/homelab/pi-dns/promtail/promtail-config.yaml:/etc/promtail/config.yaml:ro
-      - /srv/homelab/pi-dns/promtail/data:/data
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
-    command: -config.file=/etc/promtail/config.yaml
-    networks:
-      pi-dns-net:
-        ipv4_address: 172.20.0.10
 
 networks:
   pi-dns-net:

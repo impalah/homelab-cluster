@@ -1,0 +1,43 @@
+# Fase 4 (docs/31-docker-swarm.md): epub2pdf-service migrado al swarm.
+# `constraints: node.hostname==retaco` -- OBLIGATORIO, no opcional: los
+# volúmenes /data/input y /data/output son subcarpetas del montaje NFS del
+# NAS (ketekasko:/volume1/nfs-data en /mnt/nfs-data), confirmado que SOLO
+# retaco tiene ese montaje entre los 5 nodos del swarm (comprobado con
+# `mount` en los 5 antes de migrar) -- en cualquier otro nodo el bind-mount
+# fallaría o (peor) crearía un directorio local vacío sin avisar. Sin
+# secretos (nunca los tuvo, .env sin overrides -- valores por defecto tal
+# cual estaban en Compose clásico).
+version: "3.8"
+
+services:
+  epub2pdf-service:
+    image: registry.404labo.net/epub2pdf-service:latest
+    environment:
+      EPUB2PDF_LOG_LEVEL: INFO
+      EPUB2PDF_LOG_FORMAT: json
+      EPUB2PDF_CONVERSION_TIMEOUT_SECONDS: "300"
+    volumes:
+      - /mnt/nfs-data/epub2pdf/input:/data/input:ro
+      - /mnt/nfs-data/epub2pdf/output:/data/output
+    ports:
+      - "8003:8003"
+    networks:
+      - epub2pdf-net
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        mode: non-blocking
+        max-buffer-size: 4m
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname==retaco
+      restart_policy:
+        condition: on-failure
+
+networks:
+  epub2pdf-net:
+    driver: overlay
+    attachable: true

@@ -1,5 +1,16 @@
 # 15 — CA interna del clúster (eliminar los avisos de certificado)
 
+> ⚠️ **Vigencia reducida desde el cierre de la mejora 41** (2026-08-28, `docs/22-mejoras-futuras.md`).
+> Todo el tráfico HTTP(S) del clúster sirve hoy `*.404labo.net` con un certificado wildcard real de
+> Let's Encrypt vía Traefik — un dispositivo cliente normal **ya no necesita instalar esta CA para
+> nada**. El único consumidor que queda es **Valkey** (`docs/25-valkey-cache.md`), que sigue
+> firmando su propio certificado TLS con esta CA interna (revertido de un intento de usar el
+> wildcard real por un bug real de Swarm con bind-mounts `:ro` y claves TLS, ver
+> `docs/31-docker-swarm.md`, Fase 5). El resto de este documento (generación de la CA, instalación
+> en dispositivos cliente, `nginx`/`generate-cert.sh`) describe cómo funcionaba **antes** del
+> cierre — se conserva como referencia histórica y porque `generate-ca.sh` sigue siendo el mecanismo
+> real para regenerar el certificado de Valkey si hiciera falta, no porque siga aplicando tal cual.
+
 ## Qué es y por qué
 
 `nginx` en `pi-dns` usaba un certificado **autofirmado**: el propio certificado se avala a sí mismo, así que ningún navegador confía en él por defecto — de ahí el aviso de "conexión no privada" en cada `*.home.arpa`.

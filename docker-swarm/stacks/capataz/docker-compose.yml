@@ -1,0 +1,289 @@
+# Fase 4 (docs/31-docker-swarm.md): capataz-api + capataz-runner +
+# capataz-frontend migrados al swarm, combinados en un solo stack por
+# conveniencia organizativa -- NO por necesidad de alias de red Docker: el
+# propio diseño de capataz-frontend ya proxea /api/ a
+# "https://capataz-api.404labo.net" (hostname real vía Traefik, ver
+# pi-utils/config/capataz-frontend/default.conf), no a un alias interno, así
+# que los tres servicios no dependen entre sí de estar en la misma red
+# overlay -- ya preparado de antes precisamente para Swarm (ver comentario
+# original en ese fichero).
+#
+# Los tres `constraints: node.hostname==pi-utils` -- el checkout parcial del
+# repo Capataz (catalog/, api/alembic*, certs/, config/capataz-frontend/)
+# solo existe en este nodo, rutas convertidas de relativas (./capataz/...)
+# a absolutas (/srv/homelab/pi-utils/capataz/...), obligatorio para
+# `docker stack deploy` (no hay contexto de fichero compose que resolver
+# relativo).
+#
+# Secrets nativos de Compose (ficheros bajo secrets/) convertidos a objetos
+# `docker secret` reales de Swarm (capataz-*-v1) -- mismo criterio que
+# postgres-main/registry. `target:` se mantiene igual al nombre original
+# (database_url, redis_url...) porque el código de Capataz lee
+# /run/secrets/<nombre> tal cual (capataz_api/infrastructure/secrets/
+# file_secret_reader.py, capataz_runner/config.py) -- cambiar el target
+# rompería la app.
+#
+# `depends_on: condition: service_healthy` (capataz-frontend -> capataz-api)
+# retirado -- Swarm no soporta ese arranque ordenado (confirmado en la
+# auditoría inicial de la mejora 33). Sin impacto real: nginx en
+# capataz-frontend proxea cada petición a capataz-api.404labo.net en el
+# momento en que llega, no en el arranque del contenedor -- no hay
+# acoplamiento de arranque que preservar.
+#
+# ⚠️ `tmpfs:` de sintaxis corta (top-level) es IGNORADO EN SILENCIO por
+# `docker stack deploy` -- confirmado en vivo: con `read_only: true` y sin
+# tmpfs real montado, capataz-runner murió en bucle con "FileNotFoundError:
+# No usable temporary directory found in ['/tmp', '/var/tmp', '/usr/tmp',
+# '/app']" (billiard/celery necesita /tmp escribible), y `docker inspect`
+# del contenedor confirmó `HostConfig.Tmpfs: null` pese a declararlo.
+# Mismo bug de familia que `mem_limit`/`host_ip` ya vistos en esta fase.
+# Fix: sintaxis larga de `volumes:` con `type: tmpfs` (sí viaja por la API
+# de Mounts real, que Swarm sí respeta) -- sin `noexec`/`nosuid` porque el
+# spec de Compose no expone esas opciones para tmpfs largo (solo
+# `size`/`mode`), aceptado como pérdida menor de endurecimiento defensivo,
+# no una regresión funcional.
+version: "3.8"
+
+services:
+  capataz-api:
+    image: registry.404labo.net/capataz-api:latest
+    environment:
+      # Valores tomados literalmente de pi-utils/.env real (no adivinados) --
+      # error cometido en el primer intento de esta migración: puse
+      # CAPATAZ_ENV=production + CAPATAZ_AUTH_MODE=dev_mock, combinación que
+      # el propio código rechaza en el arranque ("dev_mock authentication is
+      # permitted only when CAPATAZ_ENV=development"). El clúster corre
+      # Capataz en modo development/oidc de verdad, no production/dev_mock.
+      CAPATAZ_ENV: development
+      CAPATAZ_LOG_LEVEL: INFO
+      CAPATAZ_LOG_JSON: "false"
+      CAPATAZ_API_HOST: 0.0.0.0
+      CAPATAZ_API_PORT: "8000"
+      # Mejora 41 (2026-08-28): portainer/grafana/prometheus/authentik ya usan
+      # el cert real de Let's Encrypt. valkey.404labo.net, en cambio, sigue
+      # con un cert AUTOFIRMADO por la CA interna (revertido tras un bug real
+      # de Swarm con bind-mounts :ro + claves TLS, ver docker-swarm/stacks/
+      # valkey/docker-compose.yml) -- SSL_CERT_FILE/el bind-mount de la CA
+      # interna SIGUEN haciendo falta para la conexión redis_url.
+      CAPATAZ_CORS_ORIGINS: https://index.404labo.net
+      CAPATAZ_CELERY_QUEUE: automation
+      CAPATAZ_CELERY_CONCURRENCY: "2"
+      CAPATAZ_PORTAINER_URL: https://portainer.404labo.net
+      CAPATAZ_GRAFANA_URL: https://grafana.404labo.net
+      CAPATAZ_PROMETHEUS_URL: https://prometheus.404labo.net
+      CAPATAZ_AUTH_MODE: oidc
+      CAPATAZ_OIDC_ISSUER: https://authentik.404labo.net/application/o/capataz/
+      CAPATAZ_OIDC_AUDIENCE: capataz
+      CAPATAZ_OIDC_JWKS_URI: ""
+      CAPATAZ_OIDC_GROUPS_CLAIM: groups
+      CAPATAZ_INITIAL_CATALOG_YAML_PATH: /app/catalog/services.example.yaml
+      CAPATAZ_HTTP_TIMEOUT_SECONDS: "5"
+      CAPATAZ_HEALTH_ALLOWED_HOST_SUFFIXES: .404labo.net
+      CAPATAZ_STATUS_CACHE_TTL_SECONDS: "30"
+      SSL_CERT_FILE: /run/ca-certs/ca-bundle.pem
+    volumes:
+      - /srv/homelab/pi-utils/capataz/catalog:/app/catalog:ro
+      - /srv/homelab/pi-utils/capataz/api/alembic.ini:/app/alembic.ini:ro
+      - /srv/homelab/pi-utils/capataz/api/alembic:/app/alembic:ro
+      - /srv/homelab/pi-utils/capataz/certs:/run/ca-certs:ro
+      - type: tmpfs
+        target: /tmp
+        tmpfs:
+          size: 67108864
+    secrets:
+      - source: capataz-database-url-v2
+        target: database_url
+      - source: capataz-redis-url-v2
+        target: redis_url
+      - source: capataz-portainer-token-v1
+        target: portainer_token
+      - source: capataz-cognito-client-secret-v1
+        target: cognito_client_secret
+    ports:
+      - target: 8000
+        published: 8000
+        mode: host
+    networks:
+      - capataz-net
+    command:
+      - /bin/sh
+      - -ec
+      - >-
+        alembic upgrade head &&
+        exec uvicorn capataz_api.main:app --host 0.0.0.0 --port 8000
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=3)\" || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        mode: non-blocking
+        max-buffer-size: 4m
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname==pi-utils
+      restart_policy:
+        condition: on-failure
+      resources:
+        limits:
+          memory: 768m
+
+  capataz-runner:
+    image: registry.404labo.net/capataz-runner:latest
+    environment:
+      CAPATAZ_ENV: development
+      CAPATAZ_LOG_LEVEL: INFO
+      CAPATAZ_LOG_JSON: "false"
+      CAPATAZ_CELERY_QUEUE: automation
+      CAPATAZ_CELERY_CONCURRENCY: "2"
+      CAPATAZ_PORTAINER_URL: https://portainer.404labo.net
+      CAPATAZ_GRAFANA_URL: https://grafana.404labo.net
+      CAPATAZ_PROMETHEUS_URL: https://prometheus.404labo.net
+      SSL_CERT_FILE: /run/ca-certs/ca-bundle.pem
+    volumes:
+      - /srv/homelab/pi-utils/capataz/certs:/run/ca-certs:ro
+      - type: tmpfs
+        target: /tmp
+        tmpfs:
+          size: 134217728
+      - type: tmpfs
+        target: /home/capataz/.ansible/tmp
+        tmpfs:
+          size: 134217728
+    secrets:
+      - source: capataz-database-url-v2
+        target: database_url
+      - source: capataz-redis-url-v2
+        target: redis_url
+      - source: capataz-portainer-token-v1
+        target: portainer_token
+      - source: capataz-runner-ssh-private-key-v1
+        target: runner_ssh_private_key
+      - source: capataz-runner-known-hosts-v1
+        target: runner_known_hosts
+      - source: capataz-ansible-vault-password-v1
+        target: ansible_vault_password
+    networks:
+      - capataz-net
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A capataz_runner.celery_app:app inspect ping --timeout=5 | grep -q pong"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        mode: non-blocking
+        max-buffer-size: 4m
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname==pi-utils
+      restart_policy:
+        condition: on-failure
+      resources:
+        limits:
+          memory: 1024m
+
+  capataz-frontend:
+    image: registry.404labo.net/capataz-frontend:latest
+    environment:
+      CAPATAZ_FRONTEND_API_BASE_URL: /api/v1
+      CAPATAZ_FRONTEND_USE_MSW: "false"
+      CAPATAZ_FRONTEND_DEV_USER: ""
+      CAPATAZ_FRONTEND_OIDC_ISSUER: https://authentik.404labo.net/application/o/capataz/
+      CAPATAZ_FRONTEND_OIDC_CLIENT_ID: capataz
+      CAPATAZ_FRONTEND_OIDC_SCOPE: openid profile email groups
+    volumes:
+      - /srv/homelab/pi-utils/config/capataz-frontend/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - type: tmpfs
+        target: /tmp
+        tmpfs:
+          size: 33554432
+      - type: tmpfs
+        target: /var/cache/nginx
+        tmpfs:
+          size: 33554432
+      - type: tmpfs
+        target: /var/run
+        tmpfs:
+          size: 8388608
+      - type: tmpfs
+        target: /config-runtime
+        tmpfs:
+          size: 1048576
+    ports:
+      - target: 80
+        published: 8090
+        mode: host
+    networks:
+      - capataz-net
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:80/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        mode: non-blocking
+        max-buffer-size: 4m
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname==pi-utils
+      restart_policy:
+        condition: on-failure
+      resources:
+        limits:
+          memory: 256m
+
+networks:
+  capataz-net:
+    driver: overlay
+    attachable: true
+
+secrets:
+  capataz-database-url-v2:
+    external: true
+  capataz-redis-url-v2:
+    external: true
+  capataz-portainer-token-v1:
+    external: true
+  capataz-cognito-client-secret-v1:
+    external: true
+  capataz-runner-ssh-private-key-v1:
+    external: true
+  capataz-runner-known-hosts-v1:
+    external: true
+  capataz-ansible-vault-password-v1:
+    external: true

@@ -7,8 +7,8 @@
 
 | Servicio | Puerto (host) | URL pública |
 |---|---|---|
-| sonarqube | 127.0.0.1:9000 | https://sonarqube.home.arpa |
-| bifrost | 8080 | https://bifrost.home.arpa |
+| sonarqube | 127.0.0.1:9000 | https://sonarqube.404labo.net |
+| bifrost | 8080 | https://bifrost.404labo.net |
 
 > La base de datos de SonarQube vive en `retaco` (`postgres-main`), no en este nodo — ver `docs/05-instalacion-retaco.md`.
 > Bifrost es un gateway LLM hacia AWS Bedrock — `config_store`/`logs_store` también en `postgres-main` (base `bifrost`), mismo patrón que SonarQube (ver `docs/22-mejoras-futuras.md` punto 23) — ver `docs/23-bifrost-gateway-llm.md` para la instalación completa, la política IAM y el manual de operación.
@@ -38,7 +38,7 @@ docker compose logs -f sonarqube
 
 ## Post-arranque
 
-1. Acceder: `https://sonarqube.home.arpa` → admin / admin
+1. Acceder: `https://sonarqube.404labo.net` → admin / admin
 2. **Cambiar la contraseña inmediatamente** (SonarQube lo obliga en el primer inicio de sesión)
 3. Crear token de análisis: **My Account → Security → Generate Tokens**
 
@@ -46,7 +46,7 @@ docker compose logs -f sonarqube
 
 ```bash
 docker run --rm \
-  -e SONAR_HOST_URL="https://sonarqube.home.arpa" \
+  -e SONAR_HOST_URL="https://sonarqube.404labo.net" \
   -e SONAR_TOKEN="<tu-token>" \
   -v "$(pwd):/usr/src" \
   sonarsource/sonar-scanner-cli
@@ -82,7 +82,7 @@ docker compose logs -f bifrost
 Prueba rápida (desde cualquier nodo del clúster):
 
 ```bash
-curl -sk https://bifrost.home.arpa/v1/chat/completions \
+curl -sk https://bifrost.404labo.net/v1/chat/completions \
   -H "Authorization: Bearer ${BIFROST_VIRTUAL_KEY}" \
   -H "Content-Type: application/json" \
   -d '{"model": "bedrock/eu.anthropic.claude-sonnet-4-6", "messages": [{"role": "user", "content": "di 'hola' y nada más"}]}'

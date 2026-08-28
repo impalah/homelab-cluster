@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # registry-garbage-collect.sh
-# Recolecta (borra de disco) las capas de imagen Docker en registry.home.arpa
+# Recolecta (borra de disco) las capas de imagen Docker en registry.404labo.net
 # que ya no están referenciadas por ningún manifest/tag — mejora 8 de
 # docs/22-mejoras-futuras.md ("Registry — limpieza y garbage collection").
 #

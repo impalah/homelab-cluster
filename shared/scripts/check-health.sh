@@ -109,26 +109,23 @@ check_pi_dns() {
   echo "=== pi-dns (192.168.1.170) ==="
   check_docker_service pihole
   check_docker_service unbound
-  check_docker_service nginx
   check_docker_service node-exporter
   check_docker_service cadvisor
   check_docker_service portainer-agent
   check_docker_service watchtower
-  check_http "pihole admin (directo)" "http://127.0.0.1:8053/admin"
-  check_http "nginx pihole"       "https://pihole.home.arpa/admin/"
-  check_http "nginx openwebui"    "https://openwebui.home.arpa"
-  check_http "nginx grafana"      "https://grafana.home.arpa"
-  check_http "nginx n8n"          "https://n8n.home.arpa"
-  check_http "nginx portainer"    "https://portainer.home.arpa"
+  # nginx retirado (mejora 41, cierre 2026-08-28) -- Traefik en el Swarm
+  # sirve ahora todo el tráfico HTTP(S) real, bajo 404labo.net. Panel de
+  # Pi-hole publicado directo en la LAN, sin proxy delante.
+  check_http "pihole admin (LAN)" "http://192.168.1.170:8053/admin"
   check_http "node-exporter"      "http://192.168.1.170:9100/metrics"
   # DNS check
   if command -v dig &>/dev/null; then
     local result
-    result=$(dig +short openwebui.home.arpa @192.168.1.170 2>/dev/null | head -1)
+    result=$(dig +short grafana.404labo.net @192.168.1.170 2>/dev/null | head -1)
     if [ -n "${result}" ]; then
-      ok "DNS home.arpa → ${result}"
+      ok "DNS 404labo.net → ${result}"
     else
-      fail "DNS home.arpa no resuelve"
+      fail "DNS 404labo.net no resuelve"
     fi
   fi
 }

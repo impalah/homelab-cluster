@@ -1,0 +1,58 @@
+# Fase 4 (docs/31-docker-swarm.md): portainer (servidor) migrado al swarm --
+# último servicio de pi-utils en Compose clásico, cierra la migración de ese
+# nodo. `constraints: node.hostname==pi-utils` -- BoltDB real
+# (/srv/homelab/pi-utils/portainer/data, 3.1M) sigue en el mismo bind-mount,
+# sin mover. Backup físico completo ejecutado antes de migrar
+# (portainer-backup-<fecha>.tar.gz, junto a data/ en el mismo nodo).
+#
+# `mode: host` en el puerto 9000 -- reutiliza el mismo puerto que
+# authentik-server (retaco) y sonarqube (pi-sonar), también en mode: host:
+# sin colisión porque cada uno está pinnado a un nodo físico DISTINTO y
+# mode: host solo reserva el puerto en el nodo donde aterriza la tarea, no
+# en todo el swarm (a diferencia de ingress) -- ver docs/31 sección de
+# colisiones de puerto.
+#
+# Red `portainer-agent_agent_network` (external, ya creada por el stack
+# portainer-agent -- docker-swarm/stacks/portainer/agent-stack.yml) --
+# necesaria para que el servidor resuelva `tcp://agent:9001` como entorno
+# "Docker Swarm" único. Nombre real confirmado con `docker network ls`
+# (stack desplegado como "portainer-agent", no "portainer").
+#
+# Sin healthcheck -- la imagen portainer-ce no trae ni wget ni /bin/sh,
+# mismo motivo ya documentado en el bloque Compose clásico retirado.
+version: "3.8"
+
+services:
+  portainer:
+    image: portainer/portainer-ce:2.42.0
+    command: ["--http-enabled"]
+    volumes:
+      - /srv/homelab/pi-utils/portainer/data:/data
+    ports:
+      - target: 9000
+        published: 9000
+        mode: host
+    networks:
+      - portainer-net
+      - agent_network
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        mode: non-blocking
+        max-buffer-size: 4m
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname==pi-utils
+      restart_policy:
+        condition: on-failure
+
+networks:
+  portainer-net:
+    driver: overlay
+    attachable: true
+  agent_network:
+    name: portainer-agent_agent_network
+    external: true

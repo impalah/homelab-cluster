@@ -14,17 +14,21 @@ scrape_configs:
         labels:
           node: pi-obs
 
-  # Node Exporter — métricas del sistema pi-obs
+  # Node Exporter — métricas del sistema pi-obs. IP en vez de nombre de
+  # contenedor desde que node-exporter pasó a la red overlay del swarm
+  # (docker-swarm/stacks/common/, docs/31-docker-swarm.md) — ya no comparte
+  # la red bridge pi-obs-net con este Prometheus, mismo patrón que el resto
+  # de nodos remotos de más abajo.
   - job_name: node-exporter-pi-obs
     static_configs:
-      - targets: ["node-exporter:9100"]
+      - targets: ["192.168.1.171:9100"]
         labels:
           node: pi-obs
 
-  # cAdvisor — métricas de contenedores pi-obs
+  # cAdvisor — métricas de contenedores pi-obs (mismo motivo que arriba)
   - job_name: cadvisor-pi-obs
     static_configs:
-      - targets: ["cadvisor:8080"]
+      - targets: ["192.168.1.171:8081"]
         labels:
           node: pi-obs
 
@@ -106,3 +110,15 @@ scrape_configs:
       - targets: ["192.168.1.173:8081"]
         labels:
           node: pi-utils
+
+  - job_name: node-exporter-pinchi
+    static_configs:
+      - targets: ["192.168.1.175:9100"]
+        labels:
+          node: pinchi
+
+  - job_name: cadvisor-pinchi
+    static_configs:
+      - targets: ["192.168.1.175:8081"]
+        labels:
+          node: pinchi

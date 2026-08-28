@@ -8,8 +8,8 @@
 | Servicio | Puerto (host) | URL pública |
 |---|---|---|
 | otel-collector | 4317 (gRPC), 4318 (HTTP) | — (receptor interno) |
-| prometheus | 127.0.0.1:9090 | https://prometheus.home.arpa |
-| grafana | 127.0.0.1:3000 | https://grafana.home.arpa |
+| prometheus | 127.0.0.1:9090 | https://prometheus.404labo.net |
+| grafana | 127.0.0.1:3000 | https://grafana.404labo.net |
 | loki | 127.0.0.1:3100 | — (interno) |
 | tempo | 127.0.0.1:3200 | — (interno) |
 | node-exporter | 127.0.0.1:9100 | — (consultado por Prometheus) |
@@ -19,7 +19,7 @@
 
 > Nota: otel-collector expone sus puertos 4317/4318 en todas las interfaces (0.0.0.0) para recibir telemetría de otros nodos del clúster.
 
-> Este nodo también ejecuta, por cron (`03:30` diario), `shared/scripts/check-image-updates.sh` — revisa por SSH todo el clúster en busca de imágenes Docker desactualizadas (las que no auto-actualiza Watchtower) y expone el resultado como métrica Prometheus mediante el *textfile collector* de `node-exporter`. Panel: `https://grafana.home.arpa/d/homelab-actualizaciones-pendientes/`. Detalle completo en `docs/16-mantenimiento-actualizaciones.md`.
+> Este nodo también ejecuta, por cron (`03:30` diario), `shared/scripts/check-image-updates.sh` — revisa por SSH todo el clúster en busca de imágenes Docker desactualizadas (las que no auto-actualiza Watchtower) y expone el resultado como métrica Prometheus mediante el *textfile collector* de `node-exporter`. Panel: `https://grafana.404labo.net/d/homelab-actualizaciones-pendientes/`. Detalle completo en `docs/16-mantenimiento-actualizaciones.md`.
 
 ## Arranque rápido
 
@@ -64,7 +64,7 @@ OTEL_SERVICE_NAME=<nombre-servicio>
 
 ## Post-arranque Grafana
 
-1. Acceder: `https://grafana.home.arpa` → admin / valor de `GF_ADMIN_PASSWORD`
+1. Acceder: `https://grafana.404labo.net` → admin / valor de `GF_ADMIN_PASSWORD`
 2. Verificar datasources: **Configuration → Data Sources** → todos en estado **OK**
 3. Importar dashboards recomendados:
    - Node Exporter Full: ID `1860`

@@ -1,0 +1,91 @@
+# Fase 4 (docs/31-docker-swarm.md): segundo servicio CON ESTADO migrado al
+# swarm, tras `registry`. `constraints: node.hostname==retaco` -- los datos
+# (storage/snapshots) siguen en el mismo bind-mount de siempre, NUNCA se
+# mueven de nodo. Reutiliza directamente las rutas ya preparadas en retaco
+# (infisical-cli, CA, datos) -- no hace falta replicarlas a los otros 4
+# nodos del swarm como con apikey-service, porque este servicio nunca va a
+# programarse en ningún otro (constraint fijo).
+#
+# Consumidor interno afectado: open-webui (retaco/docker-compose.yml) usaba
+# el alias de red Docker "qdrant" (mismo proyecto Compose) -- ya actualizado
+# para hablar por IP:puerto real (192.168.1.174:6333), mismo criterio que
+# capataz-api (docs/28) para sobrevivir a Swarm sin depender de la red del
+# proyecto Compose.
+#
+# Puerto gRPC (6334) NO publicado -- en el Compose clásico estaba atado a
+# 127.0.0.1 (loopback only, nunca alcanzable desde otro nodo) y nada en el
+# repo lo usa (confirmado por grep). Swarm no soporta publicar un puerto
+# solo-loopback en modo ingress (siempre publica en todas las interfaces de
+# los 5 nodos) -- omitirlo del todo es más fiel al alcance real de hoy que
+# abrirlo a toda la LAN sin necesidad.
+#
+# INFISICAL_UNIVERSAL_AUTH_CLIENT_ID/_SECRET/PROJECT_ID como Docker secrets
+# en vez de variables de entorno -- mismo motivo que apikey-service/registry.
+version: "3.8"
+
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    environment:
+      # Mejora 41 (2026-08-28): cert real de Let's Encrypt en infisical.404labo.net,
+      # pero SSL_CERT_FILE SIGUE haciendo falta -- esta imagen no trae ningún
+      # almacén de CAs del sistema (hallazgo real, ver apikey-service).
+      # homelab-ca.crt pasa a ser un bundle combinado (CA interna + almacén
+      # público estándar), no solo la CA interna.
+      INFISICAL_DOMAIN: https://infisical.404labo.net/api
+      SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
+    volumes:
+      - /srv/homelab/retaco/qdrant/storage:/qdrant/storage
+      - /srv/homelab/retaco/qdrant/snapshots:/qdrant/snapshots
+      - /srv/homelab/retaco/qdrant/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
+      - /srv/homelab/retaco/infisical-cli/infisical:/usr/local/bin/infisical:ro
+    secrets:
+      - source: qdrant-infisical-client-id-v1
+        target: qdrant-infisical-client-id
+      - source: qdrant-infisical-client-secret-v1
+        target: qdrant-infisical-client-secret
+      - source: qdrant-infisical-project-id-v1
+        target: qdrant-infisical-project-id
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        CLIENT_ID=$$(cat /run/secrets/qdrant-infisical-client-id) &&
+        CLIENT_SECRET=$$(cat /run/secrets/qdrant-infisical-client-secret) &&
+        PROJECT_ID=$$(cat /run/secrets/qdrant-infisical-project-id) &&
+        TOKEN=$$(infisical login --method=universal-auth \
+          --client-id="$$CLIENT_ID" \
+          --client-secret="$$CLIENT_SECRET" \
+          --plain --silent) &&
+        exec infisical run --token="$$TOKEN" --projectId="$$PROJECT_ID" --env=prod --path=/qdrant/ -- \
+          ./entrypoint.sh
+    ports:
+      - "6333:6333"
+    networks:
+      - qdrant-net
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        mode: non-blocking
+        max-buffer-size: 4m
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname==retaco
+      restart_policy:
+        condition: on-failure
+
+networks:
+  qdrant-net:
+    driver: overlay
+    attachable: true
+
+secrets:
+  qdrant-infisical-client-id-v1:
+    external: true
+  qdrant-infisical-client-secret-v1:
+    external: true
+  qdrant-infisical-project-id-v1:
+    external: true

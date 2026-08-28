@@ -20,244 +20,58 @@ name: homelab-pi-sonar
 #   (persistir en /etc/sysctl.d/99-homelab-sonar.conf)
 # =============================================================================
 
+# Logs -> driver `loki` nativo de Docker en vez de Promtail (docs/31-docker-swarm.md,
+# Fase 1) -- plugin arm64 oficial (grafana/loki-docker-driver:3.7.2-arm64), no
+# ":latest" (no es un manifest multi-arch real, resuelve a x86_64 en Raspberry Pi).
+x-logging: &loki-logging
+  driver: loki
+  options:
+    loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+    loki-external-labels: "node=pi-sonar"
+    mode: non-blocking
+    max-buffer-size: 4m
+
 services:
 
   # ---------------------------------------------------------------------------
-  # sonarqube — Plataforma de análisis de calidad de código
-  #
-  # Migrado a Infisical (mejora 28, docs/22-mejoras-futuras.md) — mismo patrón
-  # que el resto. SONAR_JDBC_USERNAME/SONAR_JDBC_PASSWORD ya no vienen de
-  # ${...} — los inyecta "infisical run" (secretos renombrados de
-  # SONARQUBE_DB_USER/SONARQUBE_DB_PASSWORD a SONAR_JDBC_USERNAME/
-  # SONAR_JDBC_PASSWORD en Infisical para que coincidan con lo que SonarQube
-  # espera de verdad). Entrypoint real de la imagen
-  # "/opt/sonarqube/docker/entrypoint.sh" (confirmado con docker inspect).
+  # sonarqube / bifrost — MIGRADOS al swarm (Fase 4, docs/31-docker-swarm.md,
+  # 2026-08-27). Fuente de verdad ahora: docker-swarm/stacks/sonarqube/ y
+  # docker-swarm/stacks/bifrost/, cada uno en su propio stack (no comparten
+  # nada entre sí, sin alias de red cruzados), ambos pinnados con
+  # `node.hostname==pi-sonar` -- mismos datos, sin mover. Ya usaban IP/alias
+  # DNS reales (postgresql.home.arpa, 192.168.1.150 para Ollama), nunca alias
+  # Docker -- sin ajustes de red necesarios. Backup previo de sonarqube
+  # ejecutado (data/+extensions/, 314M); bifrost sin backup dedicado (su
+  # estado real vive en postgres-main, /app/data no aloja datos reales, ya
+  # documentado así en la copia clásica). Bloque retirado a propósito (no
+  # solo los contenedores parados), mismo motivo que el resto de servicios
+  # migrados en esta fase.
   # ---------------------------------------------------------------------------
-  sonarqube:
-    image: sonarqube:community
-    container_name: sonarqube
-    restart: unless-stopped
-    environment:
-      # postgres-main vive en retaco, no en este host — conexión cross-host
-      # vía el alias directo postgresql.home.arpa (ver
-      # shared/dns/dns-records.md, sección "Alias directos").
-      SONAR_JDBC_URL: jdbc:postgresql://postgresql.home.arpa:5432/${SONARQUBE_DB_NAME:-sonarqube}
-      SONAR_WEB_JAVAOPTS: ${SONAR_WEB_JAVAOPTS:--Xmx512m -Xms128m}
-      SONAR_CE_JAVAOPTS: ${SONAR_CE_JAVAOPTS:--Xmx512m -Xms128m}
-      SONAR_SEARCH_JAVAOPTS: ${SONAR_SEARCH_JAVAOPTS:--Xmx1g -Xms1g -XX:MaxDirectMemorySize=256m}
-      SONAR_CORE_SERVERBASEURL: ${SONAR_CORE_SERVERBASEURL:-https://sonarqube.home.arpa}
-      INFISICAL_UNIVERSAL_AUTH_CLIENT_ID: ${SONARQUBE_INFISICAL_CLIENT_ID}
-      INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET: ${SONARQUBE_INFISICAL_CLIENT_SECRET}
-      INFISICAL_PROJECT_ID: ${SONARQUBE_INFISICAL_PROJECT_ID}
-      INFISICAL_DOMAIN: https://infisical.home.arpa/api
-      SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
-    volumes:
-      - /srv/homelab/pi-sonar/sonarqube/data:/opt/sonarqube/data
-      - /srv/homelab/pi-sonar/sonarqube/extensions:/opt/sonarqube/extensions
-      - /srv/homelab/pi-sonar/sonarqube/logs:/opt/sonarqube/logs
-      - /srv/homelab/pi-sonar/sonarqube/temp:/opt/sonarqube/temp
-      # CA interna del clúster, de solo lectura — necesaria para que el CLI de
-      # Infisical (Go) confíe en infisical.home.arpa. Descargar antes del
-      # primer arranque:
-      #   curl -s http://192.168.1.170/ca.crt -o /srv/homelab/pi-sonar/sonarqube/ca/homelab-ca.crt
-      - /srv/homelab/pi-sonar/sonarqube/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
-      - /srv/homelab/pi-sonar/infisical-cli/infisical:/usr/local/bin/infisical:ro
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        set -e
-        TOKEN=$$(infisical login --method=universal-auth \
-          --client-id="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_ID" \
-          --client-secret="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET" \
-          --plain --silent) &&
-        exec infisical run --token="$$TOKEN" --projectId="$$INFISICAL_PROJECT_ID" --env=prod --path=/sonarqube/ -- \
-          /opt/sonarqube/docker/entrypoint.sh
-    ports:
-      - "9000:9000"
-    networks:
-      - pi-sonar-net
-    ulimits:
-      nofile:
-        soft: 131072
-        hard: 131072
-      nproc: 8192
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:9000/api/system/status | grep -q '\"status\":\"UP\"' || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 120s
 
   # ---------------------------------------------------------------------------
-  # bifrost — Gateway unificado de LLM (AWS Bedrock, ver docs/22-mejoras-futuras.md
-  # punto 21 y docs/23-bifrost-gateway-llm.md para el detalle completo).
-  # Config declarativa en config/bifrost/config.json. El fichero de config solo
-  # referencia variables de entorno (prefijo "env."), nunca credenciales en
-  # claro — igual que el resto del repo.
-  #
-  # config_store/logs_store: postgres-main en retaco (base "bifrost", ver
-  # docs/22-mejoras-futuras.md punto 23), no SQLite local — mismo patrón que
-  # sonarqube/n8n/openwebui/apikeys. /srv/homelab/pi-sonar/bifrost/data ya
-  # solo aloja ficheros de trabajo internos de la imagen, no estado real.
-  #
-  # Credenciales AWS: el usuario IAM base ("bifrost-bedrock-base", en
-  # AWS_ACCESS_KEY_ID/SECRET) NO tiene permiso de Bedrock por sí mismo, solo
-  # sts:AssumeRole sobre AWS_ROLE_ARN ("bifrost-bedrock-invoke", el que sí lo
-  # tiene). El propio bedrock_key_config de Bifrost soporta "role_arn" de
-  # forma nativa (ver config/bifrost/config.json) — Bifrost hace el
-  # assume-role solo y renueva la sesión temporal solo, sin credenciales de
-  # Bedrock estáticas en ningún sitio. Ver docs/23-bifrost-gateway-llm.md
-  # sección IAM para el porqué completo (por qué no un usuario único con
-  # permiso directo, por qué no AmazonBedrockFullAccess).
-  #
-  # NUNCA se auto-actualiza (sin label de watchtower): a diferencia de
-  # node-exporter/cadvisor, un upgrade silencioso aquí puede cambiar el
-  # comportamiento de autenticación/gobernanza o romper la integración con
-  # Bedrock sin que nadie lo revise antes — mismo criterio que sonarqube en
-  # este mismo nodo.
-  #
-  # Migrado a Infisical (mejora 28, docs/22-mejoras-futuras.md) — mismo patrón
-  # que el resto. Los 7 secretos ya se llamaban igual en Infisical que lo que
-  # Bifrost espera (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_ROLE_ARN,
-  # BIFROST_VIRTUAL_KEY, BIFROST_ADMIN_USERNAME, BIFROST_ADMIN_PASSWORD,
-  # BIFROST_DB_PASSWORD) — sin necesidad de renombrar nada, a diferencia de
-  # n8n/qdrant/open-webui/rsshub/vaultwarden/sonarqube. Entrypoint real de la
-  # imagen "/app/docker-entrypoint.sh /app/main" (confirmado con docker
-  # inspect). Pendiente de verificar en el propio despliegue si
-  # BIFROST_ADMIN_USERNAME/_PASSWORD se releen en cada arranque o solo la
-  # primera vez (como Grafana) — ver docs/26-infisical-secretos.md.
+  # node-exporter / cadvisor — migrados a Docker Swarm (mode: global),
+  # docker-swarm/stacks/common/docker-compose.yml — ver docs/31-docker-swarm.md.
+  # Ya no se despliegan aquí; Prometheus (pi-obs) los sigue scrapeando por la
+  # misma IP:puerto que antes, sin cambios en su configuración.
   # ---------------------------------------------------------------------------
-  bifrost:
-    image: maximhq/bifrost:v1.6.8
-    container_name: bifrost
-    restart: unless-stopped
-    environment:
-      AWS_REGION: ${AWS_REGION:-eu-west-1}
-      # Ollama en ryzen, por IP:puerto directo (11434 publicado en el host,
-      # ver ryzen/docker-compose.yml) — a propósito NO vía ollama.home.arpa/
-      # nginx/apikey-service: es tráfico servicio-a-servicio dentro de la
-      # LAN, mismo patrón que el resto del clúster (n8n-main, Qdrant...
-      # llegan a sus backends por IP directa, apikey-service solo protege
-      # las rutas de nginx pensadas para clientes humanos/externos). Ollama
-      # no tiene autenticación propia — igual que hoy, sin cambios de
-      # superficie de riesgo real, solo cambia quién hace la llamada.
-      OLLAMA_UPSTREAM_URL: ${OLLAMA_UPSTREAM_URL:-http://192.168.1.150:11434}
-      INFISICAL_UNIVERSAL_AUTH_CLIENT_ID: ${BIFROST_INFISICAL_CLIENT_ID}
-      INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET: ${BIFROST_INFISICAL_CLIENT_SECRET}
-      INFISICAL_PROJECT_ID: ${BIFROST_INFISICAL_PROJECT_ID}
-      INFISICAL_DOMAIN: https://infisical.home.arpa/api
-      SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
-    volumes:
-      - /srv/homelab/pi-sonar/bifrost/data:/app/data
-      # CA interna del clúster, de solo lectura — necesaria para que el CLI de
-      # Infisical (Go) confíe en infisical.home.arpa. Descargar antes del
-      # primer arranque:
-      #   curl -s http://192.168.1.170/ca.crt -o /srv/homelab/pi-sonar/bifrost/ca/homelab-ca.crt
-      - /srv/homelab/pi-sonar/bifrost/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
-      - /srv/homelab/pi-sonar/infisical-cli/infisical:/usr/local/bin/infisical:ro
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        set -e
-        TOKEN=$$(infisical login --method=universal-auth \
-          --client-id="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_ID" \
-          --client-secret="$$INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET" \
-          --plain --silent) &&
-        exec infisical run --token="$$TOKEN" --projectId="$$INFISICAL_PROJECT_ID" --env=prod --path=/bifrost/ -- \
-          /app/docker-entrypoint.sh /app/main
-    ports:
-      - "8080:8080"
-    networks:
-      - pi-sonar-net
-    healthcheck:
-      # La imagen NO trae bash (el truco /dev/tcp de qdrant no vale aquí —
-      # visto en el despliegue real: "bash: not found", contenedor marcado
-      # unhealthy pese a responder bien). Sí trae wget.
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/health || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 15s
 
   # ---------------------------------------------------------------------------
-  # node-exporter — Métricas del sistema host, scrapeadas por Prometheus en pi-obs
+  # portainer-agent — migrado a Docker Swarm (mode: global, patrón oficial
+  # agent-stack.yml), docker-swarm/stacks/portainer/ — ver docs/31-docker-swarm.md.
+  # Ya no se despliega aquí.
   # ---------------------------------------------------------------------------
-  node-exporter:
-    image: prom/node-exporter:v1.8.0
-    container_name: node-exporter
-    restart: unless-stopped
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true"
-    command:
-      - "--path.procfs=/host/proc"
-      - "--path.rootfs=/rootfs"
-      - "--path.sysfs=/host/sys"
-      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
-    volumes:
-      - /proc:/host/proc:ro
-      - /sys:/host/sys:ro
-      - /:/rootfs:ro
-    ports:
-      - "9100:9100"
-    networks:
-      - pi-sonar-net
-    pid: host
-
-  # ---------------------------------------------------------------------------
-  # cadvisor — Métricas de contenedores Docker, scrapeadas por Prometheus en pi-obs
-  # ---------------------------------------------------------------------------
-  cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.55.1
-    container_name: cadvisor
-    restart: unless-stopped
-    command:
-      - "-disable_metrics=advtcp,cpu_topology,cpuset,hugetlb,memory_numa,process,referenced_memory,resctrl,sched,tcp,udp,disk,diskIO"
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true"
-    volumes:
-      - /:/rootfs:ro
-      - /var/run:/var/run:ro
-      - /sys:/sys:ro
-      - /var/lib/docker/:/var/lib/docker:ro
-      - /dev/disk/:/dev/disk:ro
-    ports:
-      - "8081:8080"
-    networks:
-      - pi-sonar-net
-    privileged: true
-    cgroup: host
-    devices:
-      - /dev/kmsg
-
-  # ---------------------------------------------------------------------------
-  # portainer-agent — Expone el Docker de este nodo a Portainer (servidor en
-  # pi-utils). Ver docs/10-instalacion-pi4-utils.md.
-  # ---------------------------------------------------------------------------
-  portainer-agent:
-    image: portainer/agent:2.42.0
-    container_name: portainer-agent
-    restart: unless-stopped
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true"
-    environment:
-      AGENT_CLUSTER_ADDR: ""
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /var/lib/docker/volumes:/var/lib/docker/volumes
-    ports:
-      - "9001:9001"
-    networks:
-      - pi-sonar-net
 
   # ---------------------------------------------------------------------------
   # watchtower — Auto-actualiza SOLO los contenedores con la label
-  # com.centurylinklabs.watchtower.enable=true (node-exporter, cadvisor,
-  # portainer-agent) — servicios sin estado. sonarqube NUNCA se
-  # auto-actualiza — ver docs/16-mantenimiento-actualizaciones.md.
+  # com.centurylinklabs.watchtower.enable=true — hoy ningún servicio de este
+  # nodo la lleva. node-exporter/cadvisor/portainer-agent/promtail ya no
+  # están aquí (migrados a Swarm/driver loki, ver arriba); sonarqube/bifrost
+  # NUNCA se auto-actualizan — ver docs/16-mantenimiento-actualizaciones.md.
   # ---------------------------------------------------------------------------
   watchtower:
     image: nickfedor/watchtower:latest
     container_name: watchtower
+    logging: *loki-logging
     restart: unless-stopped
     environment:
       WATCHTOWER_LABEL_ENABLE: "true"
@@ -270,23 +84,9 @@ services:
       - pi-sonar-net
 
   # ---------------------------------------------------------------------------
-  # promtail — Envía los logs de todos los contenedores de este nodo a Loki
-  # (pi-obs), para verlos desde Grafana. Ver docs/04-servicios-comunes.md.
+  # promtail — migrado al driver de logging `loki` nativo de Docker (ver
+  # x-logging arriba) — docs/31-docker-swarm.md. Ya no se despliega aquí.
   # ---------------------------------------------------------------------------
-  promtail:
-    image: grafana/promtail:3.0.0
-    container_name: promtail
-    restart: unless-stopped
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true"
-    volumes:
-      - /srv/homelab/pi-sonar/promtail/promtail-config.yaml:/etc/promtail/config.yaml:ro
-      - /srv/homelab/pi-sonar/promtail/data:/data
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
-    command: -config.file=/etc/promtail/config.yaml
-    networks:
-      - pi-sonar-net
 
 networks:
   pi-sonar-net:

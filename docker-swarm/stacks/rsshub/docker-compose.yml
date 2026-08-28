@@ -1,0 +1,81 @@
+# Fase 4 (docs/31-docker-swarm.md): rsshub migrado al swarm. A diferencia de
+# markitdown-service (Fase 2, que usa una ruta genérica /srv/homelab/
+# markitdown-cache replicada a propósito en los 5 nodos), aquí los
+# bind-mounts (CA interna, binario infisical) siguen con la ruta con forma
+# de nodo /srv/homelab/pi-utils/rsshub/... -- solo existe en pi-utils.
+# `constraints: node.hostname==pi-utils` es obligatorio: sin él, el
+# scheduler intenta nodos al azar y falla con "bind source path does not
+# exist" hasta acertar por azar (visto en vivo en el primer despliegue --
+# 3 intentos rechazados en pi-sonar antes de aterrizar en pi-utils).
+version: "3.8"
+
+services:
+  rsshub:
+    image: diygod/rsshub:latest
+    environment:
+      NODE_ENV: production
+      CACHE_TYPE: memory
+      CACHE_EXPIRE: "300"
+      PUPPETEER_WS_ENDPOINT: ""
+      NO_LOGFILES: "true"
+      # Mejora 41 (2026-08-28): cert real de Let's Encrypt, pero SSL_CERT_FILE
+      # SIGUE haciendo falta -- esta imagen (Debian, sin `ca-certificates`)
+      # no trae ningún almacén de CAs del sistema (hallazgo real, ver
+      # apikey-service). homelab-ca.crt pasa a ser un bundle combinado (CA
+      # interna + almacén público estándar), no solo la CA interna.
+      INFISICAL_DOMAIN: https://infisical.404labo.net/api
+      SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
+    volumes:
+      - /srv/homelab/pi-utils/rsshub/data:/app/data
+      - /srv/homelab/pi-utils/rsshub/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
+      - /srv/homelab/pi-utils/infisical-cli/infisical:/usr/local/bin/infisical:ro
+    secrets:
+      - source: rsshub-infisical-client-id-v1
+        target: rsshub-infisical-client-id
+      - source: rsshub-infisical-client-secret-v1
+        target: rsshub-infisical-client-secret
+      - source: rsshub-infisical-project-id-v1
+        target: rsshub-infisical-project-id
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        CLIENT_ID=$$(cat /run/secrets/rsshub-infisical-client-id) &&
+        CLIENT_SECRET=$$(cat /run/secrets/rsshub-infisical-client-secret) &&
+        PROJECT_ID=$$(cat /run/secrets/rsshub-infisical-project-id) &&
+        TOKEN=$$(infisical login --method=universal-auth \
+          --client-id="$$CLIENT_ID" \
+          --client-secret="$$CLIENT_SECRET" \
+          --plain --silent) &&
+        exec infisical run --token="$$TOKEN" --projectId="$$PROJECT_ID" --env=prod --path=/rsshub/ -- \
+          dumb-init -- npm run start
+    ports:
+      - "1200:1200"
+    networks:
+      - rsshub-net
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        mode: non-blocking
+        max-buffer-size: 4m
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname==pi-utils
+      restart_policy:
+        condition: on-failure
+
+networks:
+  rsshub-net:
+    driver: overlay
+    attachable: true
+
+secrets:
+  rsshub-infisical-client-id-v1:
+    external: true
+  rsshub-infisical-client-secret-v1:
+    external: true
+  rsshub-infisical-project-id-v1:
+    external: true

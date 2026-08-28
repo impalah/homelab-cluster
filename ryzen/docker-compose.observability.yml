@@ -17,6 +17,17 @@ name: homelab-ryzen-observability
 #   docker compose -f docker-compose.observability.yml down
 # =============================================================================
 
+# Logs -> driver `loki` nativo de Docker en vez de Promtail (docs/31-docker-swarm.md,
+# Fase 1) -- ryzen es x86_64, el plugin sí funciona aquí (a diferencia de las
+# Raspberry Pi, arm64, sin build del plugin).
+x-logging: &loki-logging
+  driver: loki
+  options:
+    loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+    loki-external-labels: "node=ryzen"
+    mode: non-blocking
+    max-buffer-size: 4m
+
 services:
 
   # ---------------------------------------------------------------------------
@@ -26,6 +37,7 @@ services:
     image: prom/node-exporter:v1.8.0
     container_name: node-exporter
     restart: unless-stopped
+    logging: *loki-logging
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
     command:
@@ -50,6 +62,7 @@ services:
     image: gcr.io/cadvisor/cadvisor:v0.55.1
     container_name: cadvisor
     restart: unless-stopped
+    logging: *loki-logging
     command:
       - "-disable_metrics=advtcp,cpu_topology,cpuset,hugetlb,memory_numa,process,referenced_memory,resctrl,sched,tcp,udp,disk,diskIO"
     labels:
@@ -77,6 +90,7 @@ services:
     image: portainer/agent:2.42.0
     container_name: portainer-agent
     restart: unless-stopped
+    logging: *loki-logging
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
     environment:
@@ -100,6 +114,7 @@ services:
     image: nickfedor/watchtower:latest
     container_name: watchtower
     restart: unless-stopped
+    logging: *loki-logging
     environment:
       WATCHTOWER_LABEL_ENABLE: "true"
       WATCHTOWER_CLEANUP: "true"
@@ -111,23 +126,9 @@ services:
       - ryzen-observability-net
 
   # ---------------------------------------------------------------------------
-  # promtail — Envía los logs de todos los contenedores de este nodo a Loki
-  # (pi-obs), para verlos desde Grafana. Ver docs/04-servicios-comunes.md.
+  # promtail — migrado al driver de logging `loki` nativo de Docker (ver
+  # x-logging arriba) — docs/31-docker-swarm.md. Ya no se despliega aquí.
   # ---------------------------------------------------------------------------
-  promtail:
-    image: grafana/promtail:3.0.0
-    container_name: promtail
-    restart: unless-stopped
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true"
-    volumes:
-      - /srv/homelab/ryzen/promtail/promtail-config.yaml:/etc/promtail/config.yaml:ro
-      - /srv/homelab/ryzen/promtail/data:/data
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
-    command: -config.file=/etc/promtail/config.yaml
-    networks:
-      - ryzen-observability-net
 
 networks:
   ryzen-observability-net:

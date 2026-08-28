@@ -1,0 +1,87 @@
+# Fase 4 (docs/31-docker-swarm.md): open-webui migrado al swarm.
+# `constraints: node.hostname==retaco` -- los datos (uploads/caché en
+# /app/backend/data, 890M) siguen en el mismo bind-mount, sin mover. La BD
+# real (chat/usuarios) ya vive en postgres-main desde antes -- ya usa IP
+# real (192.168.1.174), no alias Docker, igual que QDRANT_URI -- confirmado
+# antes de migrar qdrant. Backup previo de /data (805M comprimido).
+version: "3.8"
+
+services:
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    environment:
+      ENABLE_OLLAMA_API: "false"
+      # Mejora 41 (2026-08-28): bifrost.404labo.net usa cert real de Let's
+      # Encrypt -- certifi (Python) ya lo valida sin más. El binario CLI de
+      # Infisical (Go), en cambio, SIGUE necesitando SSL_CERT_FILE explícito
+      # (hallazgo real, ver apikey-service) -- se mantiene el combinado con
+      # certifi en el entrypoint solo por si acaso alguna librería Python
+      # mira SSL_CERT_FILE en vez de su propio bundle, ya no hace falta
+      # añadir la CA interna al combinado (era eso lo único que sobra).
+      OPENAI_API_BASE_URLS: https://bifrost.404labo.net/v1
+      VECTOR_DB: qdrant
+      QDRANT_URI: http://192.168.1.174:6333
+      INFISICAL_DOMAIN: https://infisical.404labo.net/api
+    volumes:
+      - /srv/homelab/retaco/open-webui/data:/app/backend/data
+      - /srv/homelab/retaco/open-webui/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
+      - /srv/homelab/retaco/infisical-cli/infisical:/usr/local/bin/infisical:ro
+    secrets:
+      - source: open-webui-infisical-client-id-v1
+        target: open-webui-infisical-client-id
+      - source: open-webui-infisical-client-secret-v1
+        target: open-webui-infisical-client-secret
+      - source: open-webui-infisical-project-id-v1
+        target: open-webui-infisical-project-id
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        CERTIFI_BUNDLE=$$(python3 -c "import certifi; print(certifi.where())") &&
+        cat "$$CERTIFI_BUNDLE" /etc/ssl/certs/homelab-ca.crt > /tmp/combined-ca.pem &&
+        export SSL_CERT_FILE=/tmp/combined-ca.pem &&
+        CLIENT_ID=$$(cat /run/secrets/open-webui-infisical-client-id) &&
+        CLIENT_SECRET=$$(cat /run/secrets/open-webui-infisical-client-secret) &&
+        PROJECT_ID=$$(cat /run/secrets/open-webui-infisical-project-id) &&
+        TOKEN=$$(infisical login --method=universal-auth \
+          --client-id="$$CLIENT_ID" \
+          --client-secret="$$CLIENT_SECRET" \
+          --plain --silent) &&
+        exec infisical run --token="$$TOKEN" --projectId="$$PROJECT_ID" --env=prod --path=/open-webui/ -- \
+          bash start.sh
+    ports:
+      # mode: host, no ingress -- mismo motivo que sonarqube/authentik/
+      # bifrost: en modo ingress el puerto se reserva en TODO el swarm
+      # (necesario para la routing mesh), lo que choca con cualquier otro
+      # servicio que use ese mismo puerto en `mode: host` en cualquier nodo
+      # -- aquí, bifrost (pi-sonar, también 8080).
+      - target: 8080
+        published: 8080
+        mode: host
+    networks:
+      - open-webui-net
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        mode: non-blocking
+        max-buffer-size: 4m
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname==retaco
+      restart_policy:
+        condition: on-failure
+
+networks:
+  open-webui-net:
+    driver: overlay
+    attachable: true
+
+secrets:
+  open-webui-infisical-client-id-v1:
+    external: true
+  open-webui-infisical-client-secret-v1:
+    external: true
+  open-webui-infisical-project-id-v1:
+    external: true

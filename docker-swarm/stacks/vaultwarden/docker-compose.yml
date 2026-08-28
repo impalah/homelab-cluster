@@ -1,0 +1,84 @@
+# Fase 4 (docs/31-docker-swarm.md): sexto servicio con estado migrado al
+# swarm -- el más sensible en cuanto a pérdida de datos de todo el clúster
+# (gestor de contraseñas). `constraints: node.hostname==pi-utils` -- los
+# datos (SQLite + adjuntos + clave RSA de sesión) siguen en el mismo
+# bind-mount de siempre, NUNCA se mueven de nodo. Reutiliza directamente las
+# rutas ya preparadas en pi-utils (infisical-cli, CA, datos).
+#
+# Backup obligatorio ejecutado antes de migrar (shared/scripts/
+# backup-vaultwarden.sh) -- ver docs/31-docker-swarm.md para la referencia
+# exacta del fichero. SQLite local, autocontenido, sin dependencias
+# cruzadas con otros servicios del nodo (confirmado por grep antes de
+# migrar, igual que n8n-aux).
+version: "3.8"
+
+services:
+  vaultwarden:
+    image: vaultwarden/server:1.37.0
+    environment:
+      # Mejora 41 (2026-08-28): backup previo (vaultwarden_20260827-2222.tar.gz)
+      # + auditada la tabla `twofactor` -- CERO credenciales WebAuthn/2FA
+      # registradas hoy, sin riesgo real de invalidar un passkey existente.
+      DOMAIN: https://vaultwarden.404labo.net
+      SIGNUPS_ALLOWED: "false"
+      WEBSOCKET_ENABLED: "true"
+      LOG_LEVEL: warn
+      # SSL_CERT_FILE hace falta -- esta imagen no trae un almacén de CAs del
+      # sistema (hallazgo real, ver apikey-service). homelab-ca.crt es un
+      # bundle combinado (CA interna + almacén público estándar).
+      INFISICAL_DOMAIN: https://infisical.404labo.net/api
+      SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
+    volumes:
+      - /srv/homelab/pi-utils/vaultwarden/data:/data
+      - /srv/homelab/pi-utils/vaultwarden/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
+      - /srv/homelab/pi-utils/infisical-cli/infisical:/usr/local/bin/infisical:ro
+    secrets:
+      - source: vaultwarden-infisical-client-id-v1
+        target: vaultwarden-infisical-client-id
+      - source: vaultwarden-infisical-client-secret-v1
+        target: vaultwarden-infisical-client-secret
+      - source: vaultwarden-infisical-project-id-v1
+        target: vaultwarden-infisical-project-id
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        CLIENT_ID=$$(cat /run/secrets/vaultwarden-infisical-client-id) &&
+        CLIENT_SECRET=$$(cat /run/secrets/vaultwarden-infisical-client-secret) &&
+        PROJECT_ID=$$(cat /run/secrets/vaultwarden-infisical-project-id) &&
+        TOKEN=$$(infisical login --method=universal-auth \
+          --client-id="$$CLIENT_ID" \
+          --client-secret="$$CLIENT_SECRET" \
+          --plain --silent) &&
+        exec infisical run --token="$$TOKEN" --projectId="$$PROJECT_ID" --env=prod --path=/vaultwarden/ -- \
+          /start.sh
+    ports:
+      - "8222:80"
+    networks:
+      - vaultwarden-net
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        mode: non-blocking
+        max-buffer-size: 4m
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname==pi-utils
+      restart_policy:
+        condition: on-failure
+
+networks:
+  vaultwarden-net:
+    driver: overlay
+    attachable: true
+
+secrets:
+  vaultwarden-infisical-client-id-v1:
+    external: true
+  vaultwarden-infisical-client-secret-v1:
+    external: true
+  vaultwarden-infisical-project-id-v1:
+    external: true

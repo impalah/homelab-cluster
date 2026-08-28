@@ -1,0 +1,43 @@
+# Fase 4 (docs/31-docker-swarm.md): pdf2chunks-service migrado al swarm.
+# `constraints: node.hostname==retaco` -- OBLIGATORIO, mismo motivo que
+# epub2pdf-service (montaje NFS del NAS, solo existe en retaco). Sin
+# secretos (nunca los tuvo).
+version: "3.8"
+
+services:
+  pdf2chunks-service:
+    image: registry.404labo.net/pdf2chunks-service:latest
+    environment:
+      PDF2CHUNKS_LOG_LEVEL: INFO
+      PDF2CHUNKS_LOG_FORMAT: json
+      PDF2CHUNKS_OCR_CHAR_THRESHOLD: "20"
+      PDF2CHUNKS_OCR_LANGUAGE: eng
+      PDF2CHUNKS_CHUNK_SIZE_TOKENS: "400"
+      PDF2CHUNKS_CHUNK_OVERLAP_RATIO: "0.15"
+      PDF2CHUNKS_CHUNKING_STRATEGY: fixed_size
+      PDF2CHUNKS_OUTPUT_FORMAT: json
+    volumes:
+      - /mnt/nfs-data/pdf2chunks/input:/data/input:ro
+      - /mnt/nfs-data/pdf2chunks/output:/data/output
+    ports:
+      - "8004:8004"
+    networks:
+      - pdf2chunks-net
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        mode: non-blocking
+        max-buffer-size: 4m
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname==retaco
+      restart_policy:
+        condition: on-failure
+
+networks:
+  pdf2chunks-net:
+    driver: overlay
+    attachable: true

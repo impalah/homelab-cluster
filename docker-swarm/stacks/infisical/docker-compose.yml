@@ -1,0 +1,135 @@
+# Fase 4 (docs/31-docker-swarm.md): infisical + postgres-infisical migrados
+# al swarm JUNTOS, en un solo stack -- infisical alcanza a postgres-infisical
+# por el ALIAS de red Docker "postgres-infisical" (DB_CONNECTION_URI, ver
+# .env real), igual que grafana/prometheus en el stack de pi-obs o
+# authentik-server/worker -- necesitan compartir la misma red overlay para
+# que ese alias siga resolviendo SIN tocar el secreto (a diferencia de
+# postgres-main/open-webui, aquí no hace falta cambiar ningún connection
+# string). REDIS_URL usa el hostname real de Valkey, renombrado a
+# valkey.404labo.net en la mejora 41 (2026-08-28, secret rotado a
+# infisical-redis-url-v2).
+#
+# Ambos `constraints: node.hostname==retaco` -- los datos de
+# postgres-infisical (153M, la base de secretos de TODO el clúster) siguen
+# en el mismo bind-mount, sin mover. Backup físico completo ejecutado antes
+# de migrar (20M comprimido).
+#
+# ⚠️ Es la infraestructura de secretos de la que depende el resto de
+# servicios ya migrados (todos los wrappers `infisical login`/`infisical
+# run`) -- una parada breve aquí no tumba nada YA EN MARCHA (cada contenedor
+# solo llama a Infisical una vez, al arrancar, no de forma continua), pero
+# bloquearía cualquier `docker service update --force`/redeploy de otro
+# stack mientras dure. Migrado el último de los servicios de retaco a
+# propósito, con más experiencia acumulada del resto de la fase.
+#
+# Contraseñas/claves (antes en retaco/.env en texto plano) como Docker
+# secrets nativos -- mismo criterio que postgres-main/registry (infisical
+# en sí no está gestionado por Infisical, problema de bootstrap evidente).
+version: "3.8"
+
+services:
+  postgres-infisical:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: infisical
+      POSTGRES_PASSWORD_FILE: /run/secrets/infisical-postgres-password
+      POSTGRES_DB: infisical
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - /srv/homelab/retaco/postgres-infisical/data:/var/lib/postgresql/data
+    secrets:
+      - source: infisical-postgres-password-v1
+        target: infisical-postgres-password
+    networks:
+      - infisical-net
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        mode: non-blocking
+        max-buffer-size: 4m
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname==retaco
+      restart_policy:
+        condition: on-failure
+
+  infisical:
+    image: infisical/infisical:v0.162.18
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "8080"
+      # Mejora 41 (2026-08-28): SITE_URL con el cert real de Let's Encrypt.
+      # NODE_EXTRA_CA_CERTS SIGUE haciendo falta: REDIS_URL apunta a
+      # valkey.404labo.net, que sigue con un cert AUTOFIRMADO por la CA
+      # interna (el intento de pasar Valkey al wildcard real se revirtió,
+      # ver docker-swarm/stacks/valkey/docker-compose.yml) -- sin esto,
+      # Infisical no arranca ("self-signed certificate in certificate
+      # chain", incidente real en el propio redeploy de esta fase).
+      SITE_URL: https://infisical.404labo.net
+      TRUSTED_PROXY_CIDRS: 192.168.1.170/32
+      NODE_EXTRA_CA_CERTS: /etc/ssl/certs/homelab-ca.crt
+      TELEMETRY_ENABLED: "false"
+      DISABLE_UPDATE_CHECK: "true"
+    volumes:
+      - /srv/homelab/retaco/infisical/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
+    secrets:
+      - source: infisical-db-connection-uri-v1
+        target: infisical-db-connection-uri
+      - source: infisical-redis-url-v2
+        target: infisical-redis-url
+      - source: infisical-encryption-key-v1
+        target: infisical-encryption-key
+      - source: infisical-auth-secret-v1
+        target: infisical-auth-secret
+    # Entrypoint/CMD reales de la imagen: "docker-entrypoint.sh" +
+    # "./standalone-entrypoint.sh" (confirmado con docker inspect antes de
+    # desplegar) -- el wrapper tiene que encadenar los dos, no sustituir
+    # solo el entrypoint.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        export DB_CONNECTION_URI=$$(cat /run/secrets/infisical-db-connection-uri)
+        export REDIS_URL=$$(cat /run/secrets/infisical-redis-url)
+        export ENCRYPTION_KEY=$$(cat /run/secrets/infisical-encryption-key)
+        export AUTH_SECRET=$$(cat /run/secrets/infisical-auth-secret)
+        exec docker-entrypoint.sh ./standalone-entrypoint.sh
+    ports:
+      - target: 8080
+        published: 8006
+        mode: host
+    networks:
+      - infisical-net
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        mode: non-blocking
+        max-buffer-size: 4m
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname==retaco
+      restart_policy:
+        condition: on-failure
+
+networks:
+  infisical-net:
+    driver: overlay
+    attachable: true
+
+secrets:
+  infisical-postgres-password-v1:
+    external: true
+  infisical-db-connection-uri-v1:
+    external: true
+  infisical-redis-url-v2:
+    external: true
+  infisical-encryption-key-v1:
+    external: true
+  infisical-auth-secret-v1:
+    external: true

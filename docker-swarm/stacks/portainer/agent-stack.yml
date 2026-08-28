@@ -1,0 +1,32 @@
+# Patrón oficial de Portainer para gestionar un Docker Swarm (docs/31-docker-swarm.md,
+# Fase 1) — sustituye las copias sueltas de `portainer-agent` en cada
+# docker-compose.yml de nodo. El servidor Portainer (pi-utils, sigue en
+# Compose puro, no se migra) pasa a gestionar el swarm como UN ÚNICO entorno
+# en vez de 5 separados — decisión confirmada con el usuario: "es un clúster,
+# no me importa saber en qué nodo corre cada aplicación".
+#
+# El servidor Portainer necesita estar conectado a `agent_network` (overlay,
+# attachable) para resolver `tcp://agent:9001` como nuevo endpoint de tipo
+# "Docker Swarm" en su UI (Environments → Add environment) — ver
+# pi-utils/docker-compose.yml, servicio `portainer`.
+version: "3.8"
+
+services:
+  agent:
+    image: portainer/agent:2.42.0
+    environment:
+      AGENT_CLUSTER_ADDR: tasks.agent
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/docker/volumes:/var/lib/docker/volumes
+    networks:
+      - agent_network
+    deploy:
+      mode: global
+      restart_policy:
+        condition: on-failure
+
+networks:
+  agent_network:
+    driver: overlay
+    attachable: true

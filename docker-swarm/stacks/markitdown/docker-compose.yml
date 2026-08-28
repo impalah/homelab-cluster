@@ -1,0 +1,91 @@
+# Fase 2 (docs/31-docker-swarm.md): primer servicio de aplicación real dentro
+# del swarm — sin estado (la caché es scratch, se puede perder sin problema).
+#
+# Migración completa y verificada (2026-08-24): probado en paralelo en el
+# puerto 8091, confirmado que la routing mesh de Swarm responde igual desde
+# los 5 nodos (incluidos los que nunca alojan el contenedor), contenedor
+# Compose antiguo retirado de pi-utils. Puerto real 8001 -- nginx (pi-dns)
+# sigue apuntando a pi-utils:8001 sin cambios, la routing mesh lo resuelve
+# igual esté el contenedor físicamente en cualquiera de los 5 nodos.
+#
+# Sin `constraints` de rol a propósito (decisión revisada el mismo día): los
+# labels role=stateful/stateless (mejora 33) están pensados para guiar dónde
+# aterrizan servicios CON estado nuevos, no para vetar nodos a servicios sin
+# estado y realmente intercambiables como este -- se deja que el scheduler
+# por defecto de Swarm (reparto por nº de tareas) elija libremente entre los
+# 5 nodos. `retaco`/`pinchi` ya tienen login preparado para esto (retaco lo
+# tenía por alojar el propio registry; pinchi se preparó expresamente el
+# mismo día). Mejora 41 (2026-08-28): `registry.404labo.net` usa el cert real
+# de Let's Encrypt -- ya no hace falta instalar ninguna CA por nodo para que
+# `dockerd` confíe en él, solo el `docker login` de siempre.
+version: "3.8"
+
+services:
+  markitdown-service:
+    image: registry.404labo.net/markitdown-service:latest
+    environment:
+      MARKITDOWN_PORT: 8001
+      MARKITDOWN_LOG_LEVEL: INFO
+      MARKITDOWN_LOG_FORMAT: json
+    volumes:
+      - /srv/homelab/markitdown-cache:/tmp/markitdown-cache
+    ports:
+      - "8001:8001"
+    networks:
+      - markitdown-net
+      # Fase 3a (docs/31-docker-swarm.md): red compartida con el stack de
+      # Traefik (PoC, puertos de prueba) -- necesaria para que Traefik pueda
+      # enrutar hacia este servicio.
+      - traefik-public
+    # Sin loki-external-labels con "node=<fijo>" -- el driver ya añade
+    # automáticamente el label "host" con el nodo real donde aterriza cada
+    # réplica (confirmado en el PoC de la Fase 1); fijar un nodo aquí sería
+    # además incorrecto, Swarm puede reprogramarlo a cualquiera de los 5 nodos.
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        mode: non-blocking
+        max-buffer-size: 4m
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      # Labels de descubrimiento de Traefik van en "deploy:", no en el nivel
+      # superior -- en modo Swarm, Traefik lee las labels del objeto Service,
+      # no del contenedor (confirmado en la documentación de Traefik v3 antes
+      # de escribir esto). PoC de la Fase 3a: hostname de prueba, sin DNS
+      # real todavía -- se prueba con la cabecera Host a mano.
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.markitdown-test.rule=Host(`markitdown-test.local`)"
+        - "traefik.http.routers.markitdown-test.entrypoints=web"
+        - "traefik.http.routers.markitdown-test.service=markitdown-test"
+        - "traefik.http.services.markitdown-test.loadbalancer.server.port=8001"
+        # Fase 3b (docs/31-docker-swarm.md): hostname real, puerto de prueba
+        # 8443 -- mismo backend, protegido con el middleware apikey-auth
+        # definido en el proveedor `file` de Traefik (docker-swarm/stacks/
+        # traefik/dynamic/routes.yml) -- "@file" es obligatorio para
+        # referenciar un middleware de OTRO proveedor desde labels de Swarm.
+        # ".service=" en AMBOS routers es obligatorio en cuanto hay más de un
+        # traefik.http.services.* en el mismo Swarm Service -- sin esto,
+        # Traefik no sabe a qué service asignar cada router y descarta los
+        # dos con "cannot be linked automatically with multiple Services"
+        # (encontrado en vivo al añadir este segundo router).
+        # Cierre de la mejora 41 (2026-08-28): retirado el router
+        # `markitdown` (Host `markitdown.home.arpa`) que vivía aquí -- solo
+        # queda el gemelo 404labo.net de abajo, único hostname vigente.
+        - "traefik.http.routers.markitdown-404labo-net.rule=Host(`markitdown.404labo.net`)"
+        - "traefik.http.routers.markitdown-404labo-net.entrypoints=websecure"
+        - "traefik.http.routers.markitdown-404labo-net.tls=true"
+        - "traefik.http.routers.markitdown-404labo-net.middlewares=apikey-auth@file"
+        - "traefik.http.routers.markitdown-404labo-net.service=markitdown"
+        - "traefik.http.services.markitdown.loadbalancer.server.port=8001"
+
+networks:
+  markitdown-net:
+    driver: overlay
+    attachable: true
+  traefik-public:
+    external: true
+    name: traefik_traefik-public

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # registry-prune-tags.sh
-# Política de retención de tags para registry.home.arpa — mejora 8 de
+# Política de retención de tags para registry.404labo.net — mejora 8 de
 # docs/22-mejoras-futuras.md ("Registry — limpieza y garbage collection").
 #
 # Por cada repositorio (imagen), conserva SIEMPRE "latest" más las KEEP
@@ -21,7 +21,7 @@
 #
 # Requiere credenciales del registry (usuario compartido, ver
 # docs/05-instalacion-retaco.md sección 5.3 y Vaultwarden "Docker Registry
-# (registry.home.arpa)") vía variables de entorno — NUNCA hardcodeadas:
+# (registry.404labo.net)") vía variables de entorno — NUNCA hardcodeadas:
 #   REGISTRY_USER=admin REGISTRY_PASSWORD=xxx bash registry-prune-tags.sh
 #
 # Uso:
@@ -32,7 +32,7 @@
 # =============================================================================
 set -euo pipefail
 
-REGISTRY_URL="${REGISTRY_URL:-https://registry.home.arpa}"
+REGISTRY_URL="${REGISTRY_URL:-https://registry.404labo.net}"
 REGISTRY_USER="${REGISTRY_USER:?Debes exportar REGISTRY_USER}"
 REGISTRY_PASSWORD="${REGISTRY_PASSWORD:?Debes exportar REGISTRY_PASSWORD}"
 
