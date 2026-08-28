@@ -130,8 +130,7 @@ El script: `docker compose pull` → `docker compose up -d` → `docker image pr
 
 ### Actualizar todos los nodos (secuencial, requiere SSH)
 
-Cada nodo tiene su propio usuario SSH dedicado (`docs/01-topologia.md`, sin usuario genérico
-compartido) — no hay un único bucle de una línea, ejecutar por nodo:
+Cada nodo tiene su propio usuario SSH dedicado (`docs/01-topologia.md`, sin usuario genérico compartido) — no hay un único bucle de una línea, ejecutar por nodo:
 
 ```bash
 ssh u-dns@192.168.1.170   "bash /srv/homelab/shared/scripts/update-stack.sh pi-dns"
@@ -143,8 +142,7 @@ ssh u-utils@192.168.1.173 "bash /srv/homelab/shared/scripts/update-stack.sh pi-u
 ssh linus@192.168.1.150   "bash /srv/homelab/shared/scripts/update-stack.sh ryzen"
 ```
 
-Servicios en el Swarm (la mayoría) no se actualizan así — ver `docs/16-mantenimiento-actualizaciones.md`
-y `docker-swarm/README.md`.
+Servicios en el Swarm (la mayoría) no se actualizan así — ver `docs/16-mantenimiento-actualizaciones.md` y `docker-swarm/README.md`.
 
 > Actualizar `pi-dns` primero para garantizar resolución DNS durante el resto del proceso.
 

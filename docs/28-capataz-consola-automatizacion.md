@@ -9,7 +9,9 @@ Fecha: 2026-08-15
 - `index.home.arpa` sirve ahora el frontend compilado de Capataz. El panel estático original se movió a `old.index.home.arpa` (mismo contenido, sin cambios).
 - `capataz-api`, `capataz-runner` y (desde 2026-08-22) `capataz-frontend` corren en `pi-utils` (`192.168.1.173:8000`/`8090`), como **servicios del `pi-utils/docker-compose.yml` de este repo** — no como stack separado. `pi-dns` ya no sirve ningún fichero estático de Capataz: es proxy puro hacia `capataz-frontend` para `index.home.arpa`/`home.404labo.net` (ver "Frontend" más abajo). Imágenes publicadas en `registry.home.arpa` (ver "Origen del código" más abajo); la config no sensible vive en `pi-utils/.env` junto al resto de servicios del nodo, y las credenciales en `secrets:` (Compose, no Swarm) — ver "Secrets" más abajo.
 
-  ⚠️ Historial de correcciones sobre la primera versión de este despliegue, ambas a petición expresa: (1) se montó al principio como proyecto Compose **independiente** (`docker compose` suelto dentro de `/srv/homelab/pi-utils/capataz/`, con su propio nombre de proyecto y redes) — en este repo todo servicio que vive en un nodo se declara en el `docker-compose.yml`/`.env` de ESE nodo, sin excepciones por venir de un repo externo; (2) después de integrarlo, seguía construyéndose con `build:` local en vez de tirar de `registry.home.arpa/capataz-api:latest` / `capataz-runner:latest`, que ya existían — corregido publicando ambas imágenes multi-arch, ver "Origen del código".
+⚠️ **Ya no es así** — migrado a `docker-swarm/stacks/capataz/` (2026-08-27, mejora 33), combinado en un único stack con `constraints: node.hostname==pi-utils` (mismo nodo de siempre, sin mover datos). Las credenciales pasaron de `secrets:` de Compose a **Docker secrets nativos de Swarm** (versionados, `capataz-database-url-v2`/`capataz-redis-url-v2`/etc. — inmutables, hace falta subir de versión + `docker stack deploy` para rotar una). El resto de este apartado describe el despliegue Compose original tal y como se hizo entonces — sigue siendo válido como relato histórico de las decisiones tomadas (por qué no un proyecto Compose independiente, por qué `registry.home.arpa`/multi-arch...), pero **la ruta y el mecanismo de despliegue reales de hoy están en "Cómo actualizar Capataz (Swarm)" más abajo**, no aquí.
+
+⚠️ Historial de correcciones sobre la primera versión de este despliegue, ambas a petición expresa: (1) se montó al principio como proyecto Compose **independiente** (`docker compose` suelto dentro de `/srv/homelab/pi-utils/capataz/`, con su propio nombre de proyecto y redes) — en este repo todo servicio que vive en un nodo se declara en el `docker-compose.yml`/`.env` de ESE nodo, sin excepciones por venir de un repo externo; (2) después de integrarlo, seguía construyéndose con `build:` local en vez de tirar de `registry.home.arpa/capataz-api:latest` / `capataz-runner:latest`, que ya existían — corregido publicando ambas imágenes multi-arch, ver "Origen del código".
 - `capataz-postgres`/`capataz-redis` (los contenedores que trae el `docker-compose.yml` propio de Capataz para un quickstart local) **no se levantan en ningún caso**: `api`/`runner` apuntan a la infraestructura ya compartida del clúster (`postgres-main` en `retaco`, `valkey` en `retaco`).
 
 ## Origen del código: `image:` de `registry.home.arpa`, multi-arch
@@ -18,9 +20,37 @@ Igual que `apikey-service`/`markitdown-service`/`whisper-service` (dentro de est
 
 **Gotcha real encontrado**: la máquina de build (este puesto de trabajo, `ryzen`/`mole`) ya tenía un builder `docker-container` (`mybuilder`) de una sesión anterior, pero sin el emulador QEMU de `arm64` registrado (`docker buildx inspect` solo listaba `linux/amd64`) — el primer `make build` con `PLATFORMS=linux/amd64,linux/arm64` habría fallado o (peor) publicado silenciosamente solo `amd64` de nuevo. Se resolvió con `docker run --privileged --rm tonistiigi/binfmt --install all` (mismo comando que documenta `CLAUDE.md` para el setup inicial de este repo) antes de construir. Confirmado con `docker manifest inspect registry.home.arpa/capataz-api:latest` que el manifest list final incluye `amd64` y `arm64`.
 
-`catalog/`, `api/alembic.ini`, `api/alembic/` y `certs/` (bind-mounts en `pi-utils/docker-compose.yml`) siguen viniendo de un checkout parcial del repo Capataz en `/srv/homelab/pi-utils/capataz/` — no se empaquetan en la imagen (el propio `Dockerfile` de Capataz no los `COPY`a), así que ese checkout sigue haciendo falta aunque ya no se construya nada localmente en el nodo.
+`catalog/`, `api/alembic.ini`, `api/alembic/` y `certs/` (bind-mounts, ver `docker-swarm/stacks/capataz/docker-compose.yml`) siguen viniendo de un checkout parcial del repo Capataz en `/srv/homelab/pi-utils/capataz/` — no se empaquetan en la imagen (el propio `Dockerfile` de Capataz no los `COPY`a), así que ese checkout sigue haciendo falta aunque ya no se construya nada localmente en el nodo. `catalog/` es un bind-mount de **directorio** (no de fichero suelto), así que un `rsync` normal ya deja el fichero nuevo visible dentro del contenedor al instante — no aplica el gotcha de inode-swap de los bind-mounts de un único fichero (`CLAUDE.md`).
 
-Para actualizar Capataz: `make build` en `api/` y en `runner/` del repo `capataz` (puesto de desarrollo, requiere `REGISTRY_USER`/`REGISTRY_PASSWORD` en `api/.env`/`runner/.env` — ya configurados), luego en `pi-utils`: `docker compose pull capataz-api capataz-runner && docker compose up -d capataz-api capataz-runner`. Si cambia `catalog/services.example.yaml` o las migraciones Alembic, repetir además el export+rsync del checkout parcial a `/srv/homelab/pi-utils/capataz/`.
+### Cómo actualizar Capataz (Swarm, procedimiento vigente)
+
+**Cambio de código** (`api/`/`runner`/`frontend`): sin cambios respecto a antes — `make build` en el directorio correspondiente del repo `capataz` (puesto de desarrollo, publica en `registry.404labo.net`), y luego en un nodo manager del Swarm:
+
+```bash
+docker service update --image registry.404labo.net/capataz-api:latest capataz_capataz-api
+docker service update --image registry.404labo.net/capataz-runner:latest capataz_capataz-runner
+```
+
+**Cambio en `catalog/services.example.yaml` o en las migraciones Alembic** (sin cambio de imagen):
+
+```bash
+# 1. Desplegar el fichero al checkout parcial real del nodo (bind-mount de directorio)
+rsync -av catalog/services.example.yaml u-utils@192.168.1.173:/srv/homelab/pi-utils/capataz/catalog/services.example.yaml
+
+# 2. Forzar una tarea nueva -- el catálogo solo se reimporta al arrancar
+#    (import_startup_catalog, en el lifespan de la app). Es un upsert
+#    idempotente (por id/clave), así que repetir el import no duplica ni
+#    corrompe nada -- ver capataz_api/application/services/catalog.py.
+docker service update --force capataz_capataz-api
+```
+
+Alternativa que no necesita reiniciar nada, ya presente en el propio código de Capataz pero sin usar todavía en este despliegue: `POST /api/v1/catalog/import` (rol `ADMIN`, JWT de Authentik), con el YAML en el cuerpo de la petición — recarga en caliente. Preferible a la vía de arriba en cuanto haga falta automatizar esto (p. ej. desde un pipeline), pero exige resolver primero cómo obtener un token de administrador de forma no interactiva.
+
+Si cambia solo `catalog/`/Alembic sin tocar código, **no** hace falta `make build` ni `docker service update --image` — el checkout parcial y el reimport/las migraciones son independientes del ciclo de build de la imagen.
+
+### Cómo se hacía antes de la migración a Swarm (histórico, ya no aplica)
+
+`make build` en `api/` y en `runner/` del repo `capataz` (puesto de desarrollo, requiere `REGISTRY_USER`/`REGISTRY_PASSWORD` en `api/.env`/`runner/.env`), luego en `pi-utils`: `docker compose pull capataz-api capataz-runner && docker compose up -d capataz-api capataz-runner`. Si cambiaba `catalog/services.example.yaml` o las migraciones Alembic, había que repetir además el export+rsync del checkout parcial a `/srv/homelab/pi-utils/capataz/` y luego el mismo `docker compose up -d` (el reimport del catálogo pasaba igual por el arranque del proceso, ya entonces era la misma función `import_startup_catalog` — lo único que cambió con Swarm es el comando para forzar ese reinicio, `docker service update --force` en vez de `docker compose up -d`).
 
 ## Por qué `pi-utils`
 
@@ -32,7 +62,9 @@ Comparado en vivo (`free -h`, 2026-08-15): `retaco` tenía 7,8 GiB disponibles p
 
 Capataz lee sus credenciales sensibles (DSN de Postgres/Redis, token de Portainer, clave SSH del runner, contraseña del vault de Ansible) de ficheros bajo `/run/secrets/<nombre>` — así lo exige su propio código (`file_secret_reader.py` en `api`, `config.py` en `runner`), nunca variables de entorno para eso. `pi-utils/docker-compose.yml` usa el `secrets:` de Compose v2 (funciona sin Swarm, solo bind-mounts los ficheros) apuntando a `./capataz/secrets/<nombre>` — ficheros reales en `/srv/homelab/pi-utils/capataz/secrets/`, `chmod 644` (no `600`: los contenedores corren como uid `10001`, no como el usuario del host — documentado así por el propio Capataz). Es la única diferencia real de patrón frente al resto de servicios de este nodo (que llevan toda su config, sensible o no, por variables de entorno desde `.env`).
 
-La config NO sensible (`CAPATAZ_ENV`, `CAPATAZ_AUTH_MODE`, URLs de Portainer/Grafana...) sí sigue el patrón habitual: bloque `x-capataz-env` en `docker-compose.yml`, valores reales en `pi-utils/.env`, plantilla en `pi-utils/.env.example`.
+⚠️ **Ya no es así** — migrado a Docker secrets nativos de Swarm (`docker-swarm/stacks/capataz/docker-compose.yml`, mejora 33): `capataz-database-url-v2`, `capataz-redis-url-v2`, `capataz-portainer-token-v1`, `capataz-runner-ssh-private-key-v1`, `capataz-runner-known-hosts-v1`, `capataz-ansible-vault-password-v1`, `capataz-cognito-client-secret-v1` — creados con `docker secret create` (nunca desde un fichero en git), montados por Swarm en `/run/secrets/<target>` igual que antes desde el punto de vista de la app (mismo `file_secret_reader.py`/`config.py`, cero cambios de código). Son inmutables: rotar uno exige crear una versión nueva (`-vN+1`) y `docker stack deploy` con la referencia actualizada, no se puede editar en sitio. El párrafo de arriba describe el mecanismo Compose original, conservado como referencia histórica.
+
+La config NO sensible (`CAPATAZ_ENV`, `CAPATAZ_AUTH_MODE`, URLs de Portainer/Grafana...) sí sigue el patrón habitual: bloque `x-capataz-env` en `docker-compose.yml`, valores reales antes en `pi-utils/.env`, ahora en las variables `environment:` del propio stack de Swarm.
 
 ⚠️ **Gotcha real con `CAPATAZ_LOKI_URL`**: el campo correspondiente en el código de Capataz es `AnyHttpUrl | None`. Si la variable de entorno está **presente pero vacía** (`CAPATAZ_LOKI_URL=` en `.env`, interpolada a `CAPATAZ_LOKI_URL: ${CAPATAZ_LOKI_URL:-}` en el compose), Pydantic intenta parsear `""` como URL y el arranque de `capataz-api` falla (`ValidationError: Input should be a valid URL, input is empty`) — visto en real, causó que el contenedor quedara en crash-loop tras la primera integración. Solo con la variable **totalmente ausente** del entorno del contenedor cae al valor por defecto `None` del propio código. Por eso `CAPATAZ_LOKI_URL` no aparece en absoluto en `x-capataz-env` (ni con default vacío) ni en `pi-utils/.env` — `loki.home.arpa` no está expuesto en este clúster de todos modos (se consulta vía Grafana).
 
@@ -43,7 +75,7 @@ La config NO sensible (`CAPATAZ_ENV`, `CAPATAZ_AUTH_MODE`, URLs de Portainer/Gra
   ```
   user capataz on >{contraseña} ~* &* +@all -@admin -@dangerous +info
   ```
-  **Sin restringir por prefijo de key** (`~*`, no `~capataz:*`) — Celery/kombu no usa un prefijo fijo por defecto, mismo motivo ya documentado para Infisical/BullMQ en `docs/25-valkey-cache.md` y `docs/26-infisical-secretos.md` (restringir por prefijo ahí causó fallos reales). Desplegado con el patrón `/tmp` + `sudo cp`, aplicado recreando el contenedor `valkey` (`docker compose up -d --force-recreate valkey`) en vez de `ACL LOAD` — evita necesitar la contraseña de `valkey-admin`, a costa de un pequeño corte del caché para el resto de consumidores (Infisical/Authentik), aceptable en un homelab.
+**Sin restringir por prefijo de key** (`~*`, no `~capataz:*`) — Celery/kombu no usa un prefijo fijo por defecto, mismo motivo ya documentado para Infisical/BullMQ en `docs/25-valkey-cache.md` y `docs/26-infisical-secretos.md` (restringir por prefijo ahí causó fallos reales). Desplegado con el patrón `/tmp` + `sudo cp`, aplicado recreando el contenedor `valkey` (`docker compose up -d --force-recreate valkey`) en vez de `ACL LOAD` — evita necesitar la contraseña de `valkey-admin`, a costa de un pequeño corte del caché para el resto de consumidores (Infisical/Authentik), aceptable en un homelab.
   - Secreto `redis_url`: `rediss://capataz:<password>@valkey.home.arpa:6379/0?ssl_cert_reqs=required&ssl_ca_certs=/run/ca-certs/ca-bundle.pem` — TLS obligatorio (Valkey tiene `--port 0`), CA montada vía `./certs:/run/ca-certs:ro` (`make trust-ca`, `CA_URL` por defecto ya apunta a `http://pi-dns.home.arpa/ca.crt` en el propio repo de Capataz).
 
 ## Cuenta SSH dedicada del runner: `capataz_automation`
@@ -59,70 +91,17 @@ El `runner` trae por defecto (`runner/inventories/homelab.yml`) `ansible_user: c
 
 ## Frontend: contenedor propio en pi-utils (desde 2026-08-22)
 
-Desplegado inicialmente como build estático servido a mano por el `nginx` de `pi-dns` (ver histórico
-más abajo); migrado el 2026-08-22 al contenedor `frontend/Dockerfile` propio del repo de Capataz,
-corriendo como servicio `capataz-frontend` en `pi-utils/docker-compose.yml`, junto a `capataz-api`/
-`capataz-runner`. `pi-dns` pasa a ser proxy puro para `index.home.arpa`/`home.404labo.net` — ver
-`pi-dns/config/nginx/nginx.conf`.
+Desplegado inicialmente como build estático servido a mano por el `nginx` de `pi-dns` (ver histórico más abajo); migrado el 2026-08-22 al contenedor `frontend/Dockerfile` propio del repo de Capataz, corriendo como servicio `capataz-frontend` en `pi-utils/docker-compose.yml`, junto a `capataz-api`/ `capataz-runner`. `pi-dns` pasa a ser proxy puro para `index.home.arpa`/`home.404labo.net` — ver `pi-dns/config/nginx/nginx.conf`.
 
-- **Imagen**: `registry.home.arpa/capataz-frontend`, multi-arch (`linux/amd64,linux/arm64` —
-  `pi-utils` es arm64), build/push con `frontend/Makefile` (`make docker-build`), mismo patrón que
-  `capataz-api`/`capataz-runner`. `frontend/.env` (puesto de desarrollo) tenía `PLATFORMS=linux/amd64`
-  únicamente — cambiado a `linux/amd64,linux/arm64` al integrarlo aquí; el builder `docker-container`
-  (`mybuilder`) necesitó reinstalar los emuladores QEMU (`docker run --privileged --rm
-  tonistiigi/binfmt --install all` + reiniciar el contenedor `buildx_buildkit_mybuilder0` para que
-  recogiera el registro `binfmt_misc` nuevo) — la CA interna ya estaba confiada dentro del builder
-  de un build anterior (`capataz-api`/`capataz-runner`), así que el push no necesitó ese paso de
-  nuevo.
-- **`/api/` del nginx propio del contenedor**: `frontend/nginx/default.conf` (horneado en la imagen)
-  trae `proxy_pass http://api:8000;` fijo — **no** se resolvió con `extra_hosts: api:host-gateway`
-  (primer intento, descartado): ese mecanismo da por hecho que `capataz-api` corre en el mismo nodo
-  físico que `capataz-frontend`, algo que deja de estar garantizado en cuanto ambos entren en Docker
-  Swarm (mejora 33/39, `docs/22-mejoras-futuras.md` — el scheduler puede colocarlos en nodos
-  distintos). En su lugar: `capataz-api` se expuso con hostname propio (`capataz-api.home.arpa` +
-  `capataz-api.404labo.net`, ver bloques nuevos en `pi-dns/config/nginx/nginx.conf` y
-  `shared/dns/dns-records.md`) — mismo patrón que ya usa el propio `capataz-api` para referenciar
-  OTROS servicios del clúster (`CAPATAZ_PORTAINER_URL`, `CAPATAZ_GRAFANA_URL`... todas `*.home.arpa`,
-  nunca IP:puerto ni alias de red Docker). `default.conf` se sobreescribe con un bind-mount propio
-  (`pi-utils/config/capataz-frontend/default.conf`) que reenvía `/api/` a
-  `https://capataz-api.home.arpa` en vez del `http://api:8000` horneado en la imagen. Sobrevive sin
-  cambios el día que `capataz-api`/`capataz-frontend` acaben en nodos Swarm distintos, gracias al
-  routing mesh de Swarm sobre el mismo hostname.
+- **Imagen**: `registry.home.arpa/capataz-frontend`, multi-arch (`linux/amd64,linux/arm64` — `pi-utils` es arm64), build/push con `frontend/Makefile` (`make docker-build`), mismo patrón que `capataz-api`/`capataz-runner`. `frontend/.env` (puesto de desarrollo) tenía `PLATFORMS=linux/amd64` únicamente — cambiado a `linux/amd64,linux/arm64` al integrarlo aquí; el builder `docker-container` (`mybuilder`) necesitó reinstalar los emuladores QEMU (`docker run --privileged --rm tonistiigi/binfmt --install all` + reiniciar el contenedor `buildx_buildkit_mybuilder0` para que recogiera el registro `binfmt_misc` nuevo) — la CA interna ya estaba confiada dentro del builder de un build anterior (`capataz-api`/`capataz-runner`), así que el push no necesitó ese paso de nuevo.
+- **`/api/` del nginx propio del contenedor**: `frontend/nginx/default.conf` (horneado en la imagen) trae `proxy_pass http://api:8000;` fijo — **no** se resolvió con `extra_hosts: api:host-gateway` (primer intento, descartado): ese mecanismo da por hecho que `capataz-api` corre en el mismo nodo físico que `capataz-frontend`, algo que deja de estar garantizado en cuanto ambos entren en Docker Swarm (mejora 33/39, `docs/22-mejoras-futuras.md` — el scheduler puede colocarlos en nodos distintos). En su lugar: `capataz-api` se expuso con hostname propio (`capataz-api.home.arpa` + `capataz-api.404labo.net`, ver bloques nuevos en `pi-dns/config/nginx/nginx.conf` y `shared/dns/dns-records.md`) — mismo patrón que ya usa el propio `capataz-api` para referenciar OTROS servicios del clúster (`CAPATAZ_PORTAINER_URL`, `CAPATAZ_GRAFANA_URL`... todas `*.home.arpa`, nunca IP:puerto ni alias de red Docker). `default.conf` se sobreescribe con un bind-mount propio (`pi-utils/config/capataz-frontend/default.conf`) que reenvía `/api/` a `https://capataz-api.home.arpa` en vez del `http://api:8000` horneado en la imagen. Sobrevive sin cambios el día que `capataz-api`/`capataz-frontend` acaben en nodos Swarm distintos, gracias al routing mesh de Swarm sobre el mismo hostname.
 
-  Sin apikey-auth en `capataz-api.home.arpa`/`capataz-api.404labo.net`: `capataz-api` ya exige su
-  propio JWT de Authentik (`CAPATAZ_AUTH_MODE=oidc`) — mismo criterio que `authentik.home.arpa`/
-  `infisical.home.arpa`.
+Sin apikey-auth en `capataz-api.home.arpa`/`capataz-api.404labo.net`: `capataz-api` ya exige su propio JWT de Authentik (`CAPATAZ_AUTH_MODE=oidc`) — mismo criterio que `authentik.home.arpa`/ `infisical.home.arpa`.
 
-  ⚠️ **Tres detalles no obvios en el `default.conf` sobreescrito**, los tres necesarios para que la
-  petición llegue al bloque correcto de `pi-dns` (que sirve varios hostnames por el mismo puerto 443
-  vía SNI): (1) `resolver 127.0.0.11` + variable en vez de un `proxy_pass` estático, mismo motivo que
-  `pihole.home.arpa`/`apikey.home.arpa` en el propio `nginx.conf` de `pi-dns` — evita que el
-  contenedor se niegue a arrancar si la resolución DNS falla en el instante exacto del arranque; (2)
-  `proxy_ssl_server_name on` — nginx NO manda SNI en conexiones `proxy_pass https://` salientes por
-  defecto, así que sin esto `pi-dns` no sabe qué certificado ni qué `server{}` servir y cae al primer
-  `listen 443 ssl` del fichero (`old.index.home.arpa`) — probado en real, rompía la llamada
-  silenciosamente con contenido equivocado; (3) `proxy_set_header Host capataz-api.home.arpa` fijo
-  (NO `$host`) — `pi-dns` vuelve a mirar el header `Host` ya dentro de la conexión TLS para elegir el
-  `server{}` final, aunque el SNI ya haya sido correcto; propagar el `Host` original de la petición
-  del navegador (`index.home.arpa`/`home.404labo.net`) habría enrutado al bloque equivocado pese a
-  tener el SNI bien.
-- **Config en tiempo de ejecución** (`CAPATAZ_FRONTEND_*`, ver `docs/adr/007-runtime-frontend-config.es.md`
-  del repo de Capataz): ahora se renderiza por el propio `/docker-entrypoint.d/40-render-runtime-config.sh`
-  de la imagen en cada arranque — ya **no** hace falta re-renderizar `config.js` a mano y redesplegar
-  un fichero tras cada cambio (ver limitación del patrón anterior, más abajo). Valores desplegados:
-  mismos que ya estaban en vivo (`API_BASE_URL=/api/v1`, `USE_MSW=false`, `OIDC_ISSUER=https://
-  authentik.home.arpa/application/o/capataz/`, `OIDC_CLIENT_ID=capataz`, `OIDC_SCOPE=openid profile
-  email groups`) — sin cambios de comportamiento para el usuario, solo de mecanismo de despliegue.
-- **Hostname sin cambios**: el navegador sigue viendo `index.home.arpa` (proxy puro en `pi-dns` hacia
-  `192.168.1.173:8090`), así que el `redirect_uri` ya registrado en Authentik
-  (`https://index.home.arpa/auth/callback`) sigue siendo válido sin tocar nada allí. `home.404labo.net`
-  también se proxifica al mismo contenedor — su `redirect_uri` propio se añadió el 2026-08-22 (ver
-  "Estado actual — login real con Authentik" más abajo).
-- Verificado en vivo: `capataz-frontend` sano (`docker inspect --format='{{.State.Health.Status}}'`),
-  sobrevive a un `--force-recreate`, `config.js` se renderiza correctamente, `/api/v1/auth/me` sin
-  token devuelve `403` a través del proxy del contenedor (igual que antes), y login OIDC completo
-  contra Authentik probado en navegador real (`index.home.arpa` → redirect a Authentik → callback →
-  panel de Servicios cargado con datos reales).
+⚠️ **Tres detalles no obvios en el `default.conf` sobreescrito**, los tres necesarios para que la petición llegue al bloque correcto de `pi-dns` (que sirve varios hostnames por el mismo puerto 443 vía SNI): (1) `resolver 127.0.0.11` + variable en vez de un `proxy_pass` estático, mismo motivo que `pihole.home.arpa`/`apikey.home.arpa` en el propio `nginx.conf` de `pi-dns` — evita que el contenedor se niegue a arrancar si la resolución DNS falla en el instante exacto del arranque; (2) `proxy_ssl_server_name on` — nginx NO manda SNI en conexiones `proxy_pass https://` salientes por defecto, así que sin esto `pi-dns` no sabe qué certificado ni qué `server{}` servir y cae al primer `listen 443 ssl` del fichero (`old.index.home.arpa`) — probado en real, rompía la llamada silenciosamente con contenido equivocado; (3) `proxy_set_header Host capataz-api.home.arpa` fijo (NO `$host`) — `pi-dns` vuelve a mirar el header `Host` ya dentro de la conexión TLS para elegir el `server{}` final, aunque el SNI ya haya sido correcto; propagar el `Host` original de la petición del navegador (`index.home.arpa`/`home.404labo.net`) habría enrutado al bloque equivocado pese a tener el SNI bien.
+- **Config en tiempo de ejecución** (`CAPATAZ_FRONTEND_*`, ver `docs/adr/007-runtime-frontend-config.es.md` del repo de Capataz): ahora se renderiza por el propio `/docker-entrypoint.d/40-render-runtime-config.sh` de la imagen en cada arranque — ya **no** hace falta re-renderizar `config.js` a mano y redesplegar un fichero tras cada cambio (ver limitación del patrón anterior, más abajo). Valores desplegados: mismos que ya estaban en vivo (`API_BASE_URL=/api/v1`, `USE_MSW=false`, `OIDC_ISSUER=https://authentik.home.arpa/application/o/capataz/`, `OIDC_CLIENT_ID=capataz`, `OIDC_SCOPE=openid profile email groups`) — sin cambios de comportamiento para el usuario, solo de mecanismo de despliegue.
+- **Hostname sin cambios**: el navegador sigue viendo `index.home.arpa` (proxy puro en `pi-dns` hacia `192.168.1.173:8090`), así que el `redirect_uri` ya registrado en Authentik (`https://index.home.arpa/auth/callback`) sigue siendo válido sin tocar nada allí. `home.404labo.net` también se proxifica al mismo contenedor — su `redirect_uri` propio se añadió el 2026-08-22 (ver "Estado actual — login real con Authentik" más abajo).
+- Verificado en vivo: `capataz-frontend` sano (`docker inspect --format='{{.State.Health.Status}}'`), sobrevive a un `--force-recreate`, `config.js` se renderiza correctamente, `/api/v1/auth/me` sin token devuelve `403` a través del proxy del contenedor (igual que antes), y login OIDC completo contra Authentik probado en navegador real (`index.home.arpa` → redirect a Authentik → callback → panel de Servicios cargado con datos reales).
 
 ### Despliegue anterior (build estático en pi-dns, hasta 2026-08-22)
 

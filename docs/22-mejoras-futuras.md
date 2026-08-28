@@ -138,12 +138,7 @@ Medio-alto — por volumen, no por dificultad. Abordar incrementalmente.
 
 Todo el código vive en GitHub. Intención: migrar a Forgejo autoalojado como sistema principal, GitHub como espejo mientras haga falta.
 
-**Decisión de secuenciación (2026-08-24)**: se planteó abordar Forgejo como parte de la
-migración a Docker Swarm (mejora 33, `docs/31-docker-swarm.md`) — servicio nuevo, sin legado
-Compose, buena validación de bajo riesgo del patrón `constraints`+bind-mount. El usuario decidió
-sacarlo de esa migración explícitamente: Forgejo se aborda en su propio esfuerzo, **después** de
-que el clúster esté migrado a Swarm por completo y el DNS esté resuelto — no antes, no mezclado
-con la migración a Swarm. Sin dependencia técnica añadida hacia la mejora 33 más allá de esto.
+**Decisión de secuenciación (2026-08-24)**: se planteó abordar Forgejo como parte de la migración a Docker Swarm (mejora 33, `docs/31-docker-swarm.md`) — servicio nuevo, sin legado Compose, buena validación de bajo riesgo del patrón `constraints`+bind-mount. El usuario decidió sacarlo de esa migración explícitamente: Forgejo se aborda en su propio esfuerzo, **después** de que el clúster esté migrado a Swarm por completo y el DNS esté resuelto — no antes, no mezclado con la migración a Swarm. Sin dependencia técnica añadida hacia la mejora 33 más allá de esto.
 
 ### Qué haría falta
 
@@ -939,8 +934,7 @@ Motivación explícita de esta mejora, más allá de la necesidad técnica: usar
 - **Combinación de proxies ligeros, uno por ecosistema**, en vez de un todo-en-uno:
   - [devpi](https://github.com/devpi/devpi) (Python) — proxy/cache de PyPI + índice privado.
   - [Verdaccio](https://github.com/verdaccio/verdaccio) (Node.js, MIT) — proxy/cache de npm + registry privado, muy ligero.
-  - [Zot](https://github.com/project-zot/zot) (Go, Apache-2.0, sandbox de CNCF) — registry OCI/Docker moderno, binario único, huella mínima; candidato a sustituir `registry:2` (mejora 8) si se revisita esa pieza más adelante.
-  Cada componente consume una fracción del heap mínimo de Nexus y se actualiza/reinicia de forma independiente — más "filosofía Unix", pero más piezas sueltas que mantener (el trade-off inverso a Nexus).
+  - [Zot](https://github.com/project-zot/zot) (Go, Apache-2.0, sandbox de CNCF) — registry OCI/Docker moderno, binario único, huella mínima; candidato a sustituir `registry:2` (mejora 8) si se revisita esa pieza más adelante. Cada componente consume una fracción del heap mínimo de Nexus y se actualiza/reinicia de forma independiente — más "filosofía Unix", pero más piezas sueltas que mantener (el trade-off inverso a Nexus).
 - **Harbor** — Apache-2.0, proyecto graduado de la CNCF. Solo OCI/Docker de forma nativa (no npm/pip). Trae de serie escaneo de vulnerabilidades con Trivy, RBAC granular y replicación entre registries — si el objetivo prioritario fuera específicamente "controlar la seguridad" vía escaneo automático, Harbor lo cubre gratis y Nexus OSS no. Más pesado que Zot (varios componentes: core, base de datos, Redis, Trivy) pero más moderno y ligero que Nexus.
 
 Para el objetivo declarado — repositorio centralizado + proxy pip/npm + experimento fiel a cómo se haría en un proyecto real con presupuesto de infraestructura — **Nexus OSS sigue siendo razonablemente la opción más representativa**, pero conviene comprobar la memoria libre real de `retaco` en el momento de desplegarlo (mismo ejercicio que en la mejora 30) antes de comprometerse, y no descartar devpi+Verdaccio si el consumo de Nexus resulta problemático en la práctica.
@@ -1237,26 +1231,13 @@ Medio — el mecanismo de certificados y el enrutado en Traefik ya están resuel
 
 ### Cierre (2026-08-28)
 
-Completada de punta a punta, sin excepciones. Los ~26 hostnames de Traefik pasaron por un periodo de
-coexistencia (ambos dominios en paralelo, verificados uno a uno) antes del corte final; ver
-`docs/31-docker-swarm.md` para el detalle completo del cierre y los dos incidentes reales encontrados
-en el proceso (carrera de arranque en Swarm con puertos publicados, y falta de almacén de CAs de
-sistema en varias imágenes base). Resumen de las decisiones tomadas en los 3 hostnames excluidos
-(punto 5) y el resto de puntos abiertos:
+Completada de punta a punta, sin excepciones. Los ~26 hostnames de Traefik pasaron por un periodo de coexistencia (ambos dominios en paralelo, verificados uno a uno) antes del corte final; ver `docs/31-docker-swarm.md` para el detalle completo del cierre y los dos incidentes reales encontrados en el proceso (carrera de arranque en Swarm con puertos publicados, y falta de almacén de CAs de sistema en varias imágenes base). Resumen de las decisiones tomadas en los 3 hostnames excluidos (punto 5) y el resto de puntos abiertos:
 
-- **`pihole.home.arpa`** — sin sustituto de hostname, tal y como se apuntaba como candidato natural:
-  panel publicado directo en la LAN por IP:puerto (`http://192.168.1.170:8053`), sin proxy delante.
-- **`apikey.home.arpa`** — retirado; acceso administrativo directo por IP:puerto a la instancia
-  canónica del propio Swarm (`http://192.168.1.175:8091`). La copia de `apikey-service` que vivía en
-  `pi-dns` para servir a `nginx` se retiró también (mejora 39 quedó cerrada de paso).
+- **`pihole.home.arpa`** — sin sustituto de hostname, tal y como se apuntaba como candidato natural: panel publicado directo en la LAN por IP:puerto (`http://192.168.1.170:8053`), sin proxy delante.
+- **`apikey.home.arpa`** — retirado; acceso administrativo directo por IP:puerto a la instancia canónica del propio Swarm (`http://192.168.1.175:8091`). La copia de `apikey-service` que vivía en `pi-dns` para servir a `nginx` se retiró también (mejora 39 quedó cerrada de paso).
 - **`old.index.home.arpa`** — retirado sin sustituto, superseded por Capataz (mejora 15) desde antes.
-- **CA interna** (punto 6) — NO retirada de los dispositivos cliente: Valkey (mejora 24) sigue
-  firmando su certificado TLS con ella (un bug real de Swarm con bind-mounts `:ro` y claves TLS obligó
-  a revertir el plan de reutilizar el wildcard real ahí, ver `docs/31`) — es el único consumidor que
-  queda. `generate-ca.sh` se conserva activo; `generate-cert.sh` (el cert de `*.home.arpa`) sí quedó
-  retirado, junto con el resto de `nginx`.
-- **Subdominio propio** (punto 7) — no se adoptó; `404labo.net`/`*.404labo.net` a secas, sigue
-  pareciendo dedicado solo a este clúster.
+- **CA interna** (punto 6) — NO retirada de los dispositivos cliente: Valkey (mejora 24) sigue firmando su certificado TLS con ella (un bug real de Swarm con bind-mounts `:ro` y claves TLS obligó a revertir el plan de reutilizar el wildcard real ahí, ver `docs/31`) — es el único consumidor que queda. `generate-ca.sh` se conserva activo; `generate-cert.sh` (el cert de `*.home.arpa`) sí quedó retirado, junto con el resto de `nginx`.
+- **Subdominio propio** (punto 7) — no se adoptó; `404labo.net`/`*.404labo.net` a secas, sigue pareciendo dedicado solo a este clúster.
 - **Decomisión de `nginx`** (punto 8) — hecha en este mismo cierre, junto con el resto.
 
 ---

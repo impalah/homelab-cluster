@@ -2,8 +2,7 @@
 
 ## Imagen recomendada
 
-Ubuntu Server 24.04 LTS para Raspberry Pi (arm64):  
-https://ubuntu.com/download/raspberry-pi
+Ubuntu Server 24.04 LTS para Raspberry Pi (arm64): https://ubuntu.com/download/raspberry-pi
 
 Se graba con Raspberry Pi Imager o con balenaEtcher.
 

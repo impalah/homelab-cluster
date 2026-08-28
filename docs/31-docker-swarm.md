@@ -2,172 +2,55 @@
 
 Fecha de inicio: 2026-08-24
 
-Runbook operativo de la migración a Docker Swarm (`docs/22-mejoras-futuras.md`, mejora 33).
-Este documento se actualiza fase a fase — la tabla de progreso al final es la fuente de verdad de
-qué está migrado y qué no en cada momento. Los ficheros nuevos (compose de stacks, scripts de
-bootstrap) viven en `docker-swarm/` en la raíz del repo, no aquí.
+Runbook operativo de la migración a Docker Swarm (`docs/22-mejoras-futuras.md`, mejora 33). Este documento se actualiza fase a fase — la tabla de progreso al final es la fuente de verdad de qué está migrado y qué no en cada momento. Los ficheros nuevos (compose de stacks, scripts de bootstrap) viven en `docker-swarm/` en la raíz del repo, no aquí.
 
 ## Decisión de arquitectura
 
-- **Nodos del swarm**: `retaco`, `pi-obs`, `pi-sonar`, `pi-utils`, `pinchi` — los 5 como
-  **manager**. Se descarta un esquema de managers/workers separados: con 5 managers se tolera
-  la caída simultánea de 2 sin perder quórum de escritura Raft, y ningún nodo queda "de segunda"
-  cargando solo con el scheduler sin voz en el consenso.
-- **`ryzen`/`mole` y `pi-dns` quedan fuera del swarm por completo**, ni siquiera como worker —
-  decisión ya fijada y documentada en las mejoras 37 y 39 respectivamente, sin cambios aquí.
+- **Nodos del swarm**: `retaco`, `pi-obs`, `pi-sonar`, `pi-utils`, `pinchi` — los 5 como **manager**. Se descarta un esquema de managers/workers separados: con 5 managers se tolera la caída simultánea de 2 sin perder quórum de escritura Raft, y ningún nodo queda "de segunda" cargando solo con el scheduler sin voz en el consenso.
+- **`ryzen`/`mole` y `pi-dns` quedan fuera del swarm por completo**, ni siquiera como worker — decisión ya fijada y documentada en las mejoras 37 y 39 respectivamente, sin cambios aquí.
 - **Node labels de rol** (`docker-swarm/init/label-nodes.sh`):
-  - `role=stateful` → `retaco`, `pinchi` (16 GB RAM, 500 GB SSD) — destino por defecto de
-    cualquier servicio con estado **nuevo** que se despliegue directamente como stack Swarm.
+  - `role=stateful` → `retaco`, `pinchi` (16 GB RAM, 500 GB SSD) — destino por defecto de cualquier servicio con estado **nuevo** que se despliegue directamente como stack Swarm.
   - `role=stateless` → `pi-obs`, `pi-sonar`, `pi-utils`.
-  - Los servicios con estado que **ya existen hoy** en `pi-obs` (Loki, Tempo, Prometheus,
-    Grafana) y `pi-sonar` (SonarQube) no se mueven — se quedan pinnados a su nodo actual vía
-    `constraints: node.hostname==<nodo>` en su propio stack cuando les toque migrar, sin
-    depender de este label. El label solo gobierna la colocación por defecto de algo nuevo, no
-    fuerza una reubicación de datos que ya existen.
-- **Volúmenes con estado: siempre bind-mount local, nunca NFS del NAS (`ketekasko`)** —
-  descartado explícitamente. Cada servicio con estado fija su nodo con `constraints:
-  node.hostname==<nodo>` para que el scheduler nunca lo reprograme perdiendo acceso a sus
-  propios datos. El NFS de solo lectura del NAS sigue reservado únicamente para el almacén de
-  certificados de Traefik (ya decidido en la mejora 39), no para bases de datos.
-- **`watchtower` no se migra a ningún stack Swarm** — pelea contra el propio reconciliador de
-  Swarm (mejora 33, punto 7 de `docs/22`). Se retira sin reemplazo directo hasta que la mejora 36
-  resuelva el mecanismo nativo (`docker service update --image` / Shepherd).
-- **Traefik (mejoras 35/39)**: `mode: global` en los 5 nodos del swarm (no 4 — la mejora 39 se
-  escribió antes de que existiera `pinchi`, ver nota más abajo), publicación `ingress`,
-  certificados en NFS de solo lectura del NAS, un único proceso ACME desacoplado como escritor.
-- **Forgejo (mejora 7) queda FUERA de esta migración** — decisión explícita del usuario
-  (2026-08-24): se abordará en su propio esfuerzo separado, una vez el clúster esté migrado a
-  Swarm por completo y el DNS esté resuelto (no antes). Sigue en backlog en
-  `docs/22-mejoras-futuras.md`, sin ninguna dependencia añadida de esta migración.
+  - Los servicios con estado que **ya existen hoy** en `pi-obs` (Loki, Tempo, Prometheus, Grafana) y `pi-sonar` (SonarQube) no se mueven — se quedan pinnados a su nodo actual vía `constraints: node.hostname==<nodo>` en su propio stack cuando les toque migrar, sin depender de este label. El label solo gobierna la colocación por defecto de algo nuevo, no fuerza una reubicación de datos que ya existen.
+- **Volúmenes con estado: siempre bind-mount local, nunca NFS del NAS (`ketekasko`)** — descartado explícitamente. Cada servicio con estado fija su nodo con `constraints: node.hostname==<nodo>` para que el scheduler nunca lo reprograme perdiendo acceso a sus propios datos. El NFS de solo lectura del NAS sigue reservado únicamente para el almacén de certificados de Traefik (ya decidido en la mejora 39), no para bases de datos.
+- **`watchtower` no se migra a ningún stack Swarm** — pelea contra el propio reconciliador de Swarm (mejora 33, punto 7 de `docs/22`). Se retira sin reemplazo directo hasta que la mejora 36 resuelva el mecanismo nativo (`docker service update --image` / Shepherd).
+- **Traefik (mejoras 35/39)**: `mode: global` en los 5 nodos del swarm (no 4 — la mejora 39 se escribió antes de que existiera `pinchi`, ver nota más abajo), publicación `ingress`, certificados en NFS de solo lectura del NAS, un único proceso ACME desacoplado como escritor.
+- **Forgejo (mejora 7) queda FUERA de esta migración** — decisión explícita del usuario (2026-08-24): se abordará en su propio esfuerzo separado, una vez el clúster esté migrado a Swarm por completo y el DNS esté resuelto (no antes). Sigue en backlog en `docs/22-mejoras-futuras.md`, sin ninguna dependencia añadida de esta migración.
 
 ### Correcciones pendientes en `docs/22-mejoras-futuras.md`
 
-- Mejora 33, punto 2: donde dice "3 de esos 4 nodos como managers... el cuarto como worker",
-  pasa a: los 5 nodos (incluido `pinchi`) como manager, sin worker.
+- Mejora 33, punto 2: donde dice "3 de esos 4 nodos como managers... el cuarto como worker", pasa a: los 5 nodos (incluido `pinchi`) como manager, sin worker.
 - Mejora 39: donde dice "uno de los 4 nodos candidatos" / "4 nodos", pasa a 5 (incluye `pinchi`).
 
-Se actualizan al cerrar la Fase 5 de este documento, no antes — mientras la migración esté en
-marcha, `docs/22` sigue describiendo el diseño previo a `pinchi` y este documento es la fuente
-viva.
+Se actualizan al cerrar la Fase 5 de este documento, no antes — mientras la migración esté en marcha, `docs/22` sigue describiendo el diseño previo a `pinchi` y este documento es la fuente viva.
 
 ## Riesgos técnicos identificados (auditoría en vivo, 2026-08-24)
 
-Ninguno de los `docker-compose.yml` actuales usa `network_mode`, `extra_hosts`, `build:` ni
-ninguna clave `deploy:` — buen punto de partida. Pero:
+Ninguno de los `docker-compose.yml` actuales usa `network_mode`, `extra_hosts`, `build:` ni ninguna clave `deploy:` — buen punto de partida. Pero:
 
-1. **✅ Verificado en el PoC (2026-08-24, swarm de un nodo en `pinchi`)**: `cgroup: host` hace
-   fallar `docker stack deploy` de plano (`Additional property cgroup is not allowed` — error de
-   validación de esquema, ni siquiera llega a desplegar). Quitando esa clave, `devices:`,
-   `pid: host` y `privileged: true` **no dan error, pero Swarm los ignora en silencio**
-   (`Ignoring unsupported options: devices, pid, privileged`) — el contenedor arranca sin
-   namespace de PID del host, sin modo privilegiado y sin `/dev/kmsg`.
-   - **node-exporter**: funciona igual — sus colectores por defecto leen `/host/proc`/`/host/sys`
-     vía los bind-mounts ya presentes, no dependen del namespace de PID del host salvo con
-     `--collector.processes` (no usado aquí). `/metrics` responde con normalidad.
-   - **cadvisor**: sorpresa positiva — en `pinchi` (Ubuntu 26.04, cgroup v2 unificado) sigue
-     viendo métricas por-contenedor completas de **todo el host** (no solo de sí mismo),
-     incluidos contenedores de otro stack, gracias a los bind-mounts de `/var/run`, `/sys` y
-     `/var/lib/docker/` que ya tenía — sin necesitar `privileged`/`devices`/`cgroup: host`. Se
-     pierde monitorización de mensajes del kernel (`/dev/kmsg`, eventos OOM vía dmesg), una
-     degradación menor, no bloqueante.
-   - **Pendiente de reconfirmar en las Raspberry Pi** (`pi-obs`/`pi-sonar`/`pi-utils`) antes de
-     generalizar — cgroup v1 vs v2 y el kernel de Raspberry Pi OS pueden comportarse distinto al
-     x86_64 de `pinchi`. Si se confirma igual, `cadvisor`/`node-exporter` sí pueden pasar a
-     `mode: global` en la Fase 1 (con `cgroup: host` eliminado del compose, obviamente); si no,
-     se documenta como excepción nodo a nodo.
-2. `container_name:` y `restart:` están presentes en **todos** los servicios de **todos** los
-   nodos — se eliminan/traducen a `deploy:` servicio a servicio, según le toque su fase. Ningún
-   script que dependa de un nombre de contenedor fijo (`docker logs <nombre>`) sigue funcionando
-   igual una vez migrado — pasa a `docker service logs <stack>_<servicio>`.
-3. `depends_on: condition: service_healthy` aparece en varios servicios (`n8n-main`,
-   `open-webui`, `authentik-server/worker`, `grafana`, `otel-collector` en `pi-obs`) — Swarm no
-   soporta ese arranque ordenado. Verificar servicio a servicio si el propio reintento de
-   conexión de la aplicación basta (la mayoría de estas imágenes ya reintentan la conexión a su
-   base de datos al arrancar) antes de asumir que hace falta un mecanismo sustituto.
-4. `sonarqube`/`bifrost` (pi-sonar) ya usan el wrapper de Infisical (`entrypoint:` propio +
-   bind-mount del binario CLI) — debería funcionar igual bajo Swarm (los bind-mounts de host no
-   cambian de comportamiento), pero se verifica igual que el resto al migrarlos.
-5. `capataz-api`/`capataz-runner` (pi-utils) usan `secrets:` nativos de Compose (ficheros) — bajo
-   `docker stack deploy` esto se traduce automáticamente a objetos `docker secret` reales, así
-   que este servicio ya está "listo para Swarm" sin cambios de fondo cuando le toque su fase.
-6. **✅ Resuelto (2026-08-24)**: el mecanismo existente (`setup-firewall.sh`/
-   `toggle-direct-access.sh`) solo gestiona la cadena `DOCKER-USER` (tráfico DNAT de puertos
-   publicados por contenedores, unidireccional desde `pi-dns`) — el tráfico de control de Swarm
-   (TCP 2377 gestión, TCP+UDP 7946 gossip, UDP 4789 VXLAN overlay) lo escucha `dockerd`
-   directamente en el host, filtrado por la cadena `INPUT` normal. Auditoría en vivo: la política
-   `INPUT` en los 5 nodos era `ACCEPT` sin ninguna regla — estos puertos no estaban bloqueados,
-   estaban expuestos a toda la LAN por defecto. Nuevo script
-   `docker-swarm/init/setup-swarm-firewall.sh` (`apply`/`status`) restringe estos 3 puertos a
-   solo los otros 4 nodos del swarm (ACCEPT por IP de origen + DROP general al final),
-   persistido con `netfilter-persistent save`. Aplicado en los 5 nodos, verificado.
-7. **Sin backup real de `vaultwarden`** (pi-utils, SQLite) — bloqueante explícito antes de
-   tocarlo en producción (Fase 4). Un volcado manual puntual basta como gate mínimo; no hace
-   falta esperar a que la mejora 1 (backups automatizados) esté resuelta.
-8. **✅ Corregido — `grafana/loki-docker-driver:latest` no tiene build arm64, pero SÍ hay
-   versiones arm64 explícitas.** Primer hallazgo (2026-08-24): con el tag `:latest` el plugin se
-   queda `ENABLED: false` en las 4 Raspberry Pi — el binario dentro trae `ld-musl-x86_64.so.1`
-   (linker x86_64) en un host `aarch64` (`:latest` no es un manifest multi-arch real para este
-   repo). Corrección posterior el mismo día: Grafana publica versiones arm64 explícitas desde
-   noviembre 2024 (`grafana/loki-docker-driver#9247`) — tags con sufijo `-arm64`
-   (`3.7.2-arm64`, confirmado con `docker plugin ls`/prueba real de logs). Instalado y validado
-   en los 4 nodos arm64 — Promtail retirado de los 6 nodos del clúster, sin infraestructura
-   híbrida.
-9. **Dependencia circular al recrear `apikey-service`+`nginx` a la vez en `pi-dns`**: `nginx`
-   tiene `depends_on: apikey-service: condition: service_healthy`, pero `apikey-service`
-   necesita `https://infisical.home.arpa` para autenticarse — y ese hostname resuelve al propio
-   `nginx` de `pi-dns` (es la puerta de entrada única del clúster). Si ambos se recrean a la vez
-   (mass recreate), ninguno puede arrancar: `nginx` espera a `apikey-service` sano, y
-   `apikey-service` no puede alcanzar Infisical porque `nginx` no está sirviendo. No rompe
-   nunca en despliegues normales (solo se toca un servicio cada vez, el otro ya está corriendo)
-   — solo aparece con un recreate simultáneo de ambos, como el de esta migración. Solución
-   aplicada: `docker start nginx` manual (ya estaba `Created`, solo bloqueado por la
-   dependencia) rompe el ciclo — `apikey-service` reintenta solo (su propio cliente HTTP ya
-   reintenta con backoff) y se recupera en segundos. DNS (unbound/pihole) nunca se vio afectado
-   — no dependen de `apikey-service`. Nada que arreglar de fondo, es una dependencia circular
-   real del diseño (nginx protege con apikey-service, apikey-service vive detrás de nginx) — solo
-   documentar el procedimiento de desbloqueo manual para la próxima vez.
+1. **✅ Verificado en el PoC (2026-08-24, swarm de un nodo en `pinchi`)**: `cgroup: host` hace fallar `docker stack deploy` de plano (`Additional property cgroup is not allowed` — error de validación de esquema, ni siquiera llega a desplegar). Quitando esa clave, `devices:`, `pid: host` y `privileged: true` **no dan error, pero Swarm los ignora en silencio** (`Ignoring unsupported options: devices, pid, privileged`) — el contenedor arranca sin namespace de PID del host, sin modo privilegiado y sin `/dev/kmsg`.
+   - **node-exporter**: funciona igual — sus colectores por defecto leen `/host/proc`/`/host/sys` vía los bind-mounts ya presentes, no dependen del namespace de PID del host salvo con `--collector.processes` (no usado aquí). `/metrics` responde con normalidad.
+   - **cadvisor**: sorpresa positiva — en `pinchi` (Ubuntu 26.04, cgroup v2 unificado) sigue viendo métricas por-contenedor completas de **todo el host** (no solo de sí mismo), incluidos contenedores de otro stack, gracias a los bind-mounts de `/var/run`, `/sys` y `/var/lib/docker/` que ya tenía — sin necesitar `privileged`/`devices`/`cgroup: host`. Se pierde monitorización de mensajes del kernel (`/dev/kmsg`, eventos OOM vía dmesg), una degradación menor, no bloqueante.
+   - **Pendiente de reconfirmar en las Raspberry Pi** (`pi-obs`/`pi-sonar`/`pi-utils`) antes de generalizar — cgroup v1 vs v2 y el kernel de Raspberry Pi OS pueden comportarse distinto al x86_64 de `pinchi`. Si se confirma igual, `cadvisor`/`node-exporter` sí pueden pasar a `mode: global` en la Fase 1 (con `cgroup: host` eliminado del compose, obviamente); si no, se documenta como excepción nodo a nodo.
+2. `container_name:` y `restart:` están presentes en **todos** los servicios de **todos** los nodos — se eliminan/traducen a `deploy:` servicio a servicio, según le toque su fase. Ningún script que dependa de un nombre de contenedor fijo (`docker logs <nombre>`) sigue funcionando igual una vez migrado — pasa a `docker service logs <stack>_<servicio>`.
+3. `depends_on: condition: service_healthy` aparece en varios servicios (`n8n-main`, `open-webui`, `authentik-server/worker`, `grafana`, `otel-collector` en `pi-obs`) — Swarm no soporta ese arranque ordenado. Verificar servicio a servicio si el propio reintento de conexión de la aplicación basta (la mayoría de estas imágenes ya reintentan la conexión a su base de datos al arrancar) antes de asumir que hace falta un mecanismo sustituto.
+4. `sonarqube`/`bifrost` (pi-sonar) ya usan el wrapper de Infisical (`entrypoint:` propio + bind-mount del binario CLI) — debería funcionar igual bajo Swarm (los bind-mounts de host no cambian de comportamiento), pero se verifica igual que el resto al migrarlos.
+5. `capataz-api`/`capataz-runner` (pi-utils) usan `secrets:` nativos de Compose (ficheros) — bajo `docker stack deploy` esto se traduce automáticamente a objetos `docker secret` reales, así que este servicio ya está "listo para Swarm" sin cambios de fondo cuando le toque su fase.
+6. **✅ Resuelto (2026-08-24)**: el mecanismo existente (`setup-firewall.sh`/ `toggle-direct-access.sh`) solo gestiona la cadena `DOCKER-USER` (tráfico DNAT de puertos publicados por contenedores, unidireccional desde `pi-dns`) — el tráfico de control de Swarm (TCP 2377 gestión, TCP+UDP 7946 gossip, UDP 4789 VXLAN overlay) lo escucha `dockerd` directamente en el host, filtrado por la cadena `INPUT` normal. Auditoría en vivo: la política `INPUT` en los 5 nodos era `ACCEPT` sin ninguna regla — estos puertos no estaban bloqueados, estaban expuestos a toda la LAN por defecto. Nuevo script `docker-swarm/init/setup-swarm-firewall.sh` (`apply`/`status`) restringe estos 3 puertos a solo los otros 4 nodos del swarm (ACCEPT por IP de origen + DROP general al final), persistido con `netfilter-persistent save`. Aplicado en los 5 nodos, verificado.
+7. **Sin backup real de `vaultwarden`** (pi-utils, SQLite) — bloqueante explícito antes de tocarlo en producción (Fase 4). Un volcado manual puntual basta como gate mínimo; no hace falta esperar a que la mejora 1 (backups automatizados) esté resuelta.
+8. **✅ Corregido — `grafana/loki-docker-driver:latest` no tiene build arm64, pero SÍ hay versiones arm64 explícitas.** Primer hallazgo (2026-08-24): con el tag `:latest` el plugin se queda `ENABLED: false` en las 4 Raspberry Pi — el binario dentro trae `ld-musl-x86_64.so.1` (linker x86_64) en un host `aarch64` (`:latest` no es un manifest multi-arch real para este repo). Corrección posterior el mismo día: Grafana publica versiones arm64 explícitas desde noviembre 2024 (`grafana/loki-docker-driver#9247`) — tags con sufijo `-arm64` (`3.7.2-arm64`, confirmado con `docker plugin ls`/prueba real de logs). Instalado y validado en los 4 nodos arm64 — Promtail retirado de los 6 nodos del clúster, sin infraestructura híbrida.
+9. **Dependencia circular al recrear `apikey-service`+`nginx` a la vez en `pi-dns`**: `nginx` tiene `depends_on: apikey-service: condition: service_healthy`, pero `apikey-service` necesita `https://infisical.home.arpa` para autenticarse — y ese hostname resuelve al propio `nginx` de `pi-dns` (es la puerta de entrada única del clúster). Si ambos se recrean a la vez (mass recreate), ninguno puede arrancar: `nginx` espera a `apikey-service` sano, y `apikey-service` no puede alcanzar Infisical porque `nginx` no está sirviendo. No rompe nunca en despliegues normales (solo se toca un servicio cada vez, el otro ya está corriendo) — solo aparece con un recreate simultáneo de ambos, como el de esta migración. Solución aplicada: `docker start nginx` manual (ya estaba `Created`, solo bloqueado por la dependencia) rompe el ciclo — `apikey-service` reintenta solo (su propio cliente HTTP ya reintenta con backoff) y se recupera en segundos. DNS (unbound/pihole) nunca se vio afectado — no dependen de `apikey-service`. Nada que arreglar de fondo, es una dependencia circular real del diseño (nginx protege con apikey-service, apikey-service vive detrás de nginx) — solo documentar el procedimiento de desbloqueo manual para la próxima vez.
 
 ### Incidente real: red bridge de `retaco` rota tras recrear 14 contenedores a la vez (2026-08-24)
 
-Al desplegar el driver `loki` en `retaco` (14 servicios, todos necesitan `logging:` nuevo →
-recreate simultáneo de todo el nodo), `qdrant`/`n8n-main`/`open-terminal-mcp`/
-`authentik-server`/`authentik-worker` entraron en crash-loop y `open-webui` se quedó en
-`Created` sin arrancar. Causa raíz, diagnosticada en vivo:
+Al desplegar el driver `loki` en `retaco` (14 servicios, todos necesitan `logging:` nuevo → recreate simultáneo de todo el nodo), `qdrant`/`n8n-main`/`open-terminal-mcp`/ `authentik-server`/`authentik-worker` entraron en crash-loop y `open-webui` se quedó en `Created` sin arrancar. Causa raíz, diagnosticada en vivo:
 
-1. **Síntoma inicial engañoso**: los 5 servicios con wrapper de Infisical fallaban con
-   `unable to authenticate with universal auth... status-code=502` — parecía una simple carrera
-   de arranque contra el propio contenedor `infisical` (también recreado a la vez). Cierto en
-   parte, pero no era la causa de fondo.
-2. **Causa real**: `infisical` a su vez no podía conectar con `postgres-infisical`
-   (`KnexTimeoutError: Timeout acquiring a connection`) — y esto no era un problema de la
-   aplicación. Pruebas de red directas (`pg_isready`, `ping`) confirmaron que **ningún**
-   contenedor de `retaco-net` podía alcanzar a **ningún otro**, ni siquiera entre dos ya sanos
-   (`registry` ↔ `valkey`), aunque el bridge, los veth y `br_netfilter` estaban correctos.
-3. **Causa de fondo, confirmada con `iptables -t raw -L -n -v`**: la tabla `raw`,
-   `PREROUTING`, tenía 7 reglas `DROP` **obsoletas** generadas automáticamente por Docker en
-   algún momento anterior de la vida de este nodo, referenciando un bridge antiguo
-   (`br-86fd3fc4059d`) que ya no existe — `retaco-net` se había recreado en algún punto con un
-   ID de bridge nuevo (`br-51a195cc327a`) y Docker nunca limpió las reglas anti-spoofing
-   asociadas al bridge viejo. Cualquier paquete a esas IPs, al llegar por el bridge *correcto*
-   (`br-51a195cc327a`, que no es `br-86fd3fc4059d`), cumplía la condición `! -i
-   br-86fd3fc4059d` y se descartaba en `raw`/`PREROUTING` — **antes** de llegar siquiera a la
-   cadena `FORWARD`, por eso una regla de prueba en `DOCKER-USER` no veía ni un paquete.
-4. **No es un problema introducido por esta migración** — es un fallo latente de Docker Engine
-   (`29.6.2` en este nodo) que solo se manifiesta cuando un contenedor con esa IP concreta se
-   recrea o cuando el nodo se reinicia; el recreate masivo de 14 servicios a la vez fue lo que lo
-   expuso hoy, pero podría haber aparecido en cualquier reinicio futuro sin relación con Swarm.
-5. **Fix aplicado** (con confirmación explícita del usuario en ambos pasos): borradas las 7
-   reglas obsoletas (`iptables -t raw -D PREROUTING -d <IP>/32 ! -i br-86fd3fc4059d -j DROP`,
-   una por IP) — las reglas equivalentes correctas ya existían apuntando al bridge real, así que
-   no se pierde ninguna protección. Persistido con `netfilter-persistent save`. Verificado:
-   conectividad restaurada al instante, los 5 servicios en crash-loop y `open-webui` se
-   recuperaron con un `docker restart`/`docker compose up -d` puntual, sin pérdida de datos (todo
-   bind-mount, ningún volumen con nombre de por medio).
-6. **Pendiente de vigilar**: no se ha comprobado si otros nodos arrastran reglas `raw` igual de
-   obsoletas — solo se detectó porque `retaco` sufrió un recreate masivo hoy. Si vuelve a
-   aparecer un problema de conectividad intra-bridge en otro nodo tras un recreate, revisar
-   primero `sudo iptables -t raw -L PREROUTING -n -v` buscando reglas que referencien una
-   interfaz `br-xxxxx` que ya no exista (`ip link show br-xxxxx`).
+1. **Síntoma inicial engañoso**: los 5 servicios con wrapper de Infisical fallaban con `unable to authenticate with universal auth... status-code=502` — parecía una simple carrera de arranque contra el propio contenedor `infisical` (también recreado a la vez). Cierto en parte, pero no era la causa de fondo.
+2. **Causa real**: `infisical` a su vez no podía conectar con `postgres-infisical` (`KnexTimeoutError: Timeout acquiring a connection`) — y esto no era un problema de la aplicación. Pruebas de red directas (`pg_isready`, `ping`) confirmaron que **ningún** contenedor de `retaco-net` podía alcanzar a **ningún otro**, ni siquiera entre dos ya sanos (`registry` ↔ `valkey`), aunque el bridge, los veth y `br_netfilter` estaban correctos.
+3. **Causa de fondo, confirmada con `iptables -t raw -L -n -v`**: la tabla `raw`, `PREROUTING`, tenía 7 reglas `DROP` **obsoletas** generadas automáticamente por Docker en algún momento anterior de la vida de este nodo, referenciando un bridge antiguo (`br-86fd3fc4059d`) que ya no existe — `retaco-net` se había recreado en algún punto con un ID de bridge nuevo (`br-51a195cc327a`) y Docker nunca limpió las reglas anti-spoofing asociadas al bridge viejo. Cualquier paquete a esas IPs, al llegar por el bridge *correcto* (`br-51a195cc327a`, que no es `br-86fd3fc4059d`), cumplía la condición `! -i br-86fd3fc4059d` y se descartaba en `raw`/`PREROUTING` — **antes** de llegar siquiera a la cadena `FORWARD`, por eso una regla de prueba en `DOCKER-USER` no veía ni un paquete.
+4. **No es un problema introducido por esta migración** — es un fallo latente de Docker Engine (`29.6.2` en este nodo) que solo se manifiesta cuando un contenedor con esa IP concreta se recrea o cuando el nodo se reinicia; el recreate masivo de 14 servicios a la vez fue lo que lo expuso hoy, pero podría haber aparecido en cualquier reinicio futuro sin relación con Swarm.
+5. **Fix aplicado** (con confirmación explícita del usuario en ambos pasos): borradas las 7 reglas obsoletas (`iptables -t raw -D PREROUTING -d <IP>/32 ! -i br-86fd3fc4059d -j DROP`, una por IP) — las reglas equivalentes correctas ya existían apuntando al bridge real, así que no se pierde ninguna protección. Persistido con `netfilter-persistent save`. Verificado: conectividad restaurada al instante, los 5 servicios en crash-loop y `open-webui` se recuperaron con un `docker restart`/`docker compose up -d` puntual, sin pérdida de datos (todo bind-mount, ningún volumen con nombre de por medio).
+6. **Pendiente de vigilar**: no se ha comprobado si otros nodos arrastran reglas `raw` igual de obsoletas — solo se detectó porque `retaco` sufrió un recreate masivo hoy. Si vuelve a aparecer un problema de conectividad intra-bridge en otro nodo tras un recreate, revisar primero `sudo iptables -t raw -L PREROUTING -n -v` buscando reglas que referencien una interfaz `br-xxxxx` que ya no exista (`ip link show br-xxxxx`).
 
 ## Scripts de `shared/scripts/` pendientes de actualizar
 
@@ -184,594 +67,93 @@ recreate simultáneo de todo el nodo), `qdrant`/`n8n-main`/`open-terminal-mcp`/
 
 Ver el detalle completo en el plan de esta sesión — resumen:
 
-0. **✅ Completada (2026-08-24)**: swarm de un solo nodo en `pinchi`, PoC con datos sintéticos
-   (`docker-swarm/poc/synthetic-db/`) validando bind-mount + `constraints` y la compatibilidad de
-   `node-exporter`/`cadvisor`; firewall de control de Swarm restringido en los 5 nodos
-   (`docker-swarm/init/setup-swarm-firewall.sh`); `retaco`/`pi-obs`/`pi-sonar`/`pi-utils` unidos
-   como managers; labels de rol aplicados (`role=stateful`: retaco/pinchi,
-   `role=stateless`: pi-obs/pi-sonar/pi-utils). Los 5 nodos en `docker node ls` →
-   `Ready`/`Active`/`Reachable` (o `Leader` en pinchi), quórum Raft sano.
-1. **Servicios comunes** (`node-exporter`/`cadvisor`/`promtail`/`portainer-agent`) como un único
-   stack `mode: global`, sustituyendo las copias sueltas de cada nodo — nunca `watchtower`.
-   **Decisión (2026-08-24)**: `promtail` y `portainer-agent` no se migran tal cual — tienen
-   sustitutos que encajan mejor con Swarm, ambos ya decididos con el usuario:
-   - **`promtail` → driver de logging `loki` nativo de Docker**
-     (`grafana/loki-docker-driver`, `docker plugin install`). Elimina el problema real de
-     Promtail bajo Swarm (fichero de config distinto por nodo, mal encaje con `mode: global`
-     — ver "Riesgos técnicos" más arriba) sin necesitar ningún contenedor agente: cada
-     servicio manda sus logs directo a `pi-obs:3100` vía `logging:` en su propio compose.
-     PoC en `pinchi` (contenedor sintético, `busybox` con logs de prueba) confirmó: `docker
-     logs` en local sigue funcionando con normalidad, y las líneas llegan a Loki con las
-     labels correctas (`job`, `node`, más `host`/`service_name`/`source` que añade el driver
-     automáticamente). Pendiente: instalar el plugin en los otros 4 nodos y migrar
-     servicio a servicio (usar `mode: non-blocking` + `max-buffer-size` para que un corte
-     breve de Loki no bloquee el contenedor). `ryzen`/`pi-dns` se quedan con Promtail
-     (Compose puro, sin cambios).
-   - **`portainer-agent` → patrón oficial `agent-stack.yml` de Portainer para Swarm**
-     (`mode: global`, red overlay dedicada `agent_network`) — el propio Portainer pasa a
-     gestionar el swarm como **un único entorno**, no 5 separados como hoy. Confirmado con el
-     usuario: es el comportamiento deseado ("es un clúster, no me importa saber en qué nodo
-     corre cada aplicación").
-2. **✅ Completada (2026-08-24)**: `markitdown-service` — primer servicio de aplicación real
-   dentro del swarm. Probado en paralelo (puerto 8091) antes de cortar el contenedor Compose de
-   `pi-utils`, cutover final al puerto real 8001 — `nginx` (pi-dns) sigue apuntando a
-   `pi-utils:8001` sin cambios (routing mesh) y sigue protegido por `apikey-service` (401 sin
-   key, como antes).
-   - **Primera versión, con `constraints: node.labels.role == stateless`** — revisado el mismo
-     día a petición del usuario: los labels `role=stateful/stateless` (mejora 33) están
-     pensados para guiar dónde aterrizan servicios **con estado** nuevos, no para vetar nodos a
-     servicios sin estado y realmente intercambiables. **Decisión final: sin `constraints` de
-     rol** — se deja el scheduler por defecto de Swarm (reparto por nº de tareas) elegir
-     libremente entre los 5 nodos. `node.hostname` fijo se reserva para lo que de verdad
-     necesita quedarse pegado a su volumen (bases de datos reales, Fase 4).
-   - **Hallazgo real al abrir a los 5 nodos**: solo `pi-utils` había tirado alguna vez de
-     `registry.home.arpa` — `pi-obs`/`pi-sonar`/`retaco`/`pinchi` fueron necesitando, uno a uno,
-     CA interna a nivel de sistema + `docker login` (con `sudo systemctl restart docker` para
-     que el pool de certificados de Go recoja la CA nueva) y/o el directorio de caché
-     `/srv/homelab/markitdown-cache` (bind-mount, olvidado inicialmente en `retaco`/`pinchi` al
-     preparar solo el pool "stateless"). `retaco` y (tras el arreglo) `pinchi` ya lo tenían
-     parcialmente por alojar servicios previos con el mismo requisito. **Consecuencia
-     generalizable para la Fase 3+**: cualquier servicio nuevo con imagen en
-     `registry.home.arpa` que pueda aterrizar en cualquier nodo necesita este login/CA/pull
-     hecho de antemano en los 5, no solo en el nodo donde vivía antes — añadir como checklist
-     antes de desplegar el siguiente servicio sin `constraints`.
-   - Confirmado de forma determinista (`--constraint-add`/`--constraint-rm` temporales) que el
-     servicio arranca sano en los 5 nodos, y que la routing mesh de Swarm responde igual en
-     `/health` esté el contenedor físicamente donde esté (probado incluso desde nodos que no lo
-     alojan).
-3. **Traefik** (mejoras 35/39) — `mode: global`, en paralelo al nginx de `pi-dns` mientras se
-   valida el descubrimiento por labels de los servicios ya migrados.
-   - **✅ Sub-fase 3a completada (2026-08-25)**: Traefik desplegado en puertos de prueba
-     (8080→80, 8443→443, dashboard en 8090), sin tocar DNS ni el nginx real. Descubrimiento vía
-     el proveedor `swarm` de Traefik v3 validado contra `markitdown-service` (label
-     `traefik.enable=true` + router por `Host`), routing mesh de Swarm probada desde varios
-     nodos. **Certificados TLS: `docker secret`/`docker config` nativos de Swarm** (decisión del
-     usuario, 2026-08-25, revisa mejora 39) en vez de NFS del NAS — mismo motivo que en la Fase 0
-     (NAS con configuración poco fiable), y evita depender de un recurso externo para la puerta
-     de entrada HTTPS de todo el clúster. Sin ACME/Let's Encrypt todavía en esta sub-fase — el
-     certificado real de `*.home.arpa` (el mismo que ya usa nginx) se distribuirá como secret en
-     3b.
+0. **✅ Completada (2026-08-24)**: swarm de un solo nodo en `pinchi`, PoC con datos sintéticos (`docker-swarm/poc/synthetic-db/`) validando bind-mount + `constraints` y la compatibilidad de `node-exporter`/`cadvisor`; firewall de control de Swarm restringido en los 5 nodos (`docker-swarm/init/setup-swarm-firewall.sh`); `retaco`/`pi-obs`/`pi-sonar`/`pi-utils` unidos como managers; labels de rol aplicados (`role=stateful`: retaco/pinchi, `role=stateless`: pi-obs/pi-sonar/pi-utils). Los 5 nodos en `docker node ls` → `Ready`/`Active`/`Reachable` (o `Leader` en pinchi), quórum Raft sano.
+1. **Servicios comunes** (`node-exporter`/`cadvisor`/`promtail`/`portainer-agent`) como un único stack `mode: global`, sustituyendo las copias sueltas de cada nodo — nunca `watchtower`. **Decisión (2026-08-24)**: `promtail` y `portainer-agent` no se migran tal cual — tienen sustitutos que encajan mejor con Swarm, ambos ya decididos con el usuario:
+   - **`promtail` → driver de logging `loki` nativo de Docker** (`grafana/loki-docker-driver`, `docker plugin install`). Elimina el problema real de Promtail bajo Swarm (fichero de config distinto por nodo, mal encaje con `mode: global` — ver "Riesgos técnicos" más arriba) sin necesitar ningún contenedor agente: cada servicio manda sus logs directo a `pi-obs:3100` vía `logging:` en su propio compose. PoC en `pinchi` (contenedor sintético, `busybox` con logs de prueba) confirmó: `docker logs` en local sigue funcionando con normalidad, y las líneas llegan a Loki con las labels correctas (`job`, `node`, más `host`/`service_name`/`source` que añade el driver automáticamente). Pendiente: instalar el plugin en los otros 4 nodos y migrar servicio a servicio (usar `mode: non-blocking` + `max-buffer-size` para que un corte breve de Loki no bloquee el contenedor). `ryzen`/`pi-dns` se quedan con Promtail (Compose puro, sin cambios).
+   - **`portainer-agent` → patrón oficial `agent-stack.yml` de Portainer para Swarm** (`mode: global`, red overlay dedicada `agent_network`) — el propio Portainer pasa a gestionar el swarm como **un único entorno**, no 5 separados como hoy. Confirmado con el usuario: es el comportamiento deseado ("es un clúster, no me importa saber en qué nodo corre cada aplicación").
+2. **✅ Completada (2026-08-24)**: `markitdown-service` — primer servicio de aplicación real dentro del swarm. Probado en paralelo (puerto 8091) antes de cortar el contenedor Compose de `pi-utils`, cutover final al puerto real 8001 — `nginx` (pi-dns) sigue apuntando a `pi-utils:8001` sin cambios (routing mesh) y sigue protegido por `apikey-service` (401 sin key, como antes).
+   - **Primera versión, con `constraints: node.labels.role == stateless`** — revisado el mismo día a petición del usuario: los labels `role=stateful/stateless` (mejora 33) están pensados para guiar dónde aterrizan servicios **con estado** nuevos, no para vetar nodos a servicios sin estado y realmente intercambiables. **Decisión final: sin `constraints` de rol** — se deja el scheduler por defecto de Swarm (reparto por nº de tareas) elegir libremente entre los 5 nodos. `node.hostname` fijo se reserva para lo que de verdad necesita quedarse pegado a su volumen (bases de datos reales, Fase 4).
+   - **Hallazgo real al abrir a los 5 nodos**: solo `pi-utils` había tirado alguna vez de `registry.home.arpa` — `pi-obs`/`pi-sonar`/`retaco`/`pinchi` fueron necesitando, uno a uno, CA interna a nivel de sistema + `docker login` (con `sudo systemctl restart docker` para que el pool de certificados de Go recoja la CA nueva) y/o el directorio de caché `/srv/homelab/markitdown-cache` (bind-mount, olvidado inicialmente en `retaco`/`pinchi` al preparar solo el pool "stateless"). `retaco` y (tras el arreglo) `pinchi` ya lo tenían parcialmente por alojar servicios previos con el mismo requisito. **Consecuencia generalizable para la Fase 3+**: cualquier servicio nuevo con imagen en `registry.home.arpa` que pueda aterrizar en cualquier nodo necesita este login/CA/pull hecho de antemano en los 5, no solo en el nodo donde vivía antes — añadir como checklist antes de desplegar el siguiente servicio sin `constraints`.
+   - Confirmado de forma determinista (`--constraint-add`/`--constraint-rm` temporales) que el servicio arranca sano en los 5 nodos, y que la routing mesh de Swarm responde igual en `/health` esté el contenedor físicamente donde esté (probado incluso desde nodos que no lo alojan).
+3. **Traefik** (mejoras 35/39) — `mode: global`, en paralelo al nginx de `pi-dns` mientras se valida el descubrimiento por labels de los servicios ya migrados.
+   - **✅ Sub-fase 3a completada (2026-08-25)**: Traefik desplegado en puertos de prueba (8080→80, 8443→443, dashboard en 8090), sin tocar DNS ni el nginx real. Descubrimiento vía el proveedor `swarm` de Traefik v3 validado contra `markitdown-service` (label `traefik.enable=true` + router por `Host`), routing mesh de Swarm probada desde varios nodos. **Certificados TLS: `docker secret`/`docker config` nativos de Swarm** (decisión del usuario, 2026-08-25, revisa mejora 39) en vez de NFS del NAS — mismo motivo que en la Fase 0 (NAS con configuración poco fiable), y evita depender de un recurso externo para la puerta de entrada HTTPS de todo el clúster. Sin ACME/Let's Encrypt todavía en esta sub-fase — el certificado real de `*.home.arpa` (el mismo que ya usa nginx) se distribuirá como secret en 3b.
    - **Tres hallazgos técnicos reales, no en la documentación oficial de forma obvia**:
-     1. **Traefik v3 separó el soporte de Swarm en su propio proveedor** — `providers.docker.
-        swarmMode` (v2) ya no existe; hace falta `--providers.swarm.endpoint=...` explícito, o
-        Traefik ni arranca el descubrimiento.
-     2. **Docker Engine 29.x rompe el cliente Docker interno de Traefik**: negocia por defecto la
-        API 1.24 (muy antigua), y el daemon exige mínimo 1.40 — error real:
-        `client version 1.24 is too old`. `DOCKER_API_VERSION` como variable de entorno en el
-        contenedor **no lo arregla** (Traefik no lo respeta). El fix real es del lado del
-        *daemon*: `"min-api-version": "1.24"` en `/etc/docker/daemon.json` de cada nodo +
-        `systemctl restart docker` — aplicado en los 5 nodos del swarm. Afecta a cualquier
-        herramienta con un cliente Docker desactualizado contra Engine 29+, no solo a Traefik —
-        vigilar si aparece en otro sitio.
-     3. **`--providers.swarm.network` necesita el nombre REAL de la red** tal como la ve
-        Docker (con el prefijo del stack, `traefik_traefik-public`), no el alias local usado
-        dentro del propio compose (`traefik-public`) — error real:
-        `Could not find network named "traefik-public"`.
-   - **✅ Sub-fase 3b, primer incremento completado (2026-08-25)**: certificado real
-     `home-arpa.crt`/`home-arpa.key` (CN=home.arpa, CA interna, el mismo que usa nginx hoy)
-     copiado directo por pipe SSH (`pi-dns → pinchi`, sin tocar disco en ningún punto intermedio)
-     a dos `docker secret` (`home-arpa-crt-v1`/`home-arpa-key-v1`, `external: true` en el compose
-     — nunca un fichero de secret real en git). 16 hostnames reales migrados a Traefik vía
-     proveedor `file` (`docker-swarm/stacks/traefik/dynamic/routes.yml`, distribuido como
-     `docker config` versionado a los 5 nodos): `index`, `capataz-api`, `openwebui`, `n8n`,
-     `qdrant`, `infisical`, `authentik`, `registry`, `whisper`, `grafana`, `sonarqube`, `bifrost`,
-     `rsshub`, `n8n-aux`, `portainer`, `vaultwarden` — todos en el puerto de prueba 8443, en
-     paralelo al nginx real de `pi-dns`, sin tocar DNS. Verificado con `curl --resolve`/cabecera
-     `Host` contra el TLS real: certificado correcto (`openssl s_client` confirma CN=home.arpa) y
-     los 16 hostnames devuelven la respuesta esperada de su backend real (los 404 de
-     `capataz-api`/`openwebui` son respuesta genuina de la propia app en `/`, no fallo de
-     enrutado; `whisper.home.arpa` en 502 es esperado — GPU1 de `ryzen` está ahora mismo en
-     `comfyui`, no en `whisper-service`, ver alternancia de GPU).
-     - **Motivo de usar el proveedor `file`, no solo `swarm`**: casi todos estos backends
-       (retaco/ryzen/pi-obs/pi-sonar/pi-utils, IP:puerto fijo) **no son todavía servicios de
-       Swarm** — solo `markitdown-service` lo es (fase 2). El proveedor `file` replica, uno a
-       uno, cada bloque `server{}` de `pi-dns/config/nginx/nginx.conf` que no exige
-       auth_request/forward-auth, igual que nginx hoy pero declarado en YAML.
-     - **Incidente real encontrado y corregido de paso, no causado por este cambio**: el
-       contenedor `portainer` (servidor, Compose puro en `pi-utils`) llevaba **2 horas caído**
-       (`docker inspect` → `failed to set up container networking: ... network
-       portainer-agent_agent_network not found`) — mismo patrón que el incidente de red de
-       `retaco` ya documentado más abajo: la red overlay se recreó con un ID nuevo en algún punto
-       de la Fase 1 y el contenedor clásico se quedó apuntando al ID viejo. Recuperado con
-       `docker compose up -d --force-recreate portainer` (la red ya existe con el mismo nombre,
-       Docker la resuelve fresca al arrancar). Confirmado sano y `portainer.home.arpa` ya
-       responde `200` a través de Traefik.
-     - **Deliberadamente fuera de este incremento** (documentado también en cabecera de
-       `dynamic/routes.yml`):
-       - `old.index.home.arpa` — sirve estático directo, sin backend HTTP; necesitaría un
-         contenedor file-server propio, no vale la pena todavía.
-       - `apikey.home.arpa` / `pihole.home.arpa` — `apikey-service` y `pihole` solo escuchan en
-         la red Docker interna de `pi-dns` (`pihole` ni siquiera publica su panel al LAN, solo
-         `127.0.0.1:8053`), no alcanzables desde Traefik en ningún nodo del swarm tal cual hoy.
-       - `home.404labo.net` / `capataz-api.404labo.net` — certificado distinto
-         (`404labo-net-fullchain.crt`), incremento propio más adelante.
-   - **✅ Sub-fase 3b, segundo incremento completado (2026-08-25)**: los 8 hostnames protegidos
-     con `apikey-service` (`ollama`, `vllm`, `comfyui`, `epub2pdf`, `pdf2chunks`,
-     `open-terminal`, `markitdown.home.arpa` real, `crawl4ai.scraper`) + `prometheus.home.arpa`
-     (Authentik) — **decisión del usuario (2026-08-25)**: adelantar la migración de
-     `apikey-service` al swarm (en vez de publicar un puerto en `pi-dns` o dejarlos en nginx) y
-     resolver Authentik en el mismo incremento.
-     - **`apikey-service` migrado al swarm** (`docker-swarm/stacks/apikey-service/`), en
-       PARALELO a la copia que sigue viva sin cambios en `pi-dns` — ambas comparten la misma
-       tabla `api_keys` en `postgres-main` (retaco), así que una key emitida por cualquiera de
-       las dos sirve en la otra, sin coordinación. Sin `constraints` (mismo criterio que
-       `markitdown-service`, Fase 2). Credenciales de Infisical como `docker secret`
-       (`apikey-infisical-client-id/-secret/-project-id-v1`, `external: true`) en vez de
-       variables de entorno — a diferencia de Compose, `docker service inspect` expone las env
-       vars de un servicio en texto plano a cualquiera con acceso al swarm; los secrets se
-       montan como fichero y no aparecen ahí. El entrypoint pasa de leer `$VAR` directas a
-       `cat /run/secrets/...`.
-       - **Prerrequisitos replicados en los 5 nodos** (mismo patrón que markitdown en la Fase 2):
-         binario del CLI de Infisical + CA interna, en la ruta uniforme `/srv/homelab/
-         apikey-service/{infisical-cli,ca}/` (NO namespaced por nodo como en Compose puro —
-         tiene que ser la MISMA ruta de fichero en los 5 nodos, la ruta del bind-mount es texto
-         fijo en un único compose compartido).
-       - **Hallazgo real, no trivial**: el binario de Infisical NO es multi-arch — el ya
-         desplegado en `pi-dns` es arm64 (pi-dns es una Raspberry Pi), copiarlo tal cual a
-         `retaco`/`pinchi` (x86_64) da `exit 126` (formato de ejecutable incorrecto,
-         confirmado con `file`). Mismo patrón general que el hallazgo del driver `loki` en la
-         Fase 1 — vigilar arquitectura en cualquier binario que se replique entre nodos Pi/x86.
-         Resuelto descargando el build `linux_amd64` oficial (misma versión `0.43.121` ya usada
-         en el resto del clúster, `shared/scripts/deploy-infisical-cli.sh`) para `retaco`/
-         `pinchi` en la misma ruta uniforme.
-       - **Otro hallazgo real**: `docker stack deploy` sin `--with-registry-auth` no propaga las
-         credenciales del registry a los nodos que todavía no tienen la imagen en caché local —
-         `docker service update --force` sin esa flag falla con `no basic auth credentials` en
-         cuanto el scheduler intenta reprogramar la tarea en un nodo distinto al que hizo el
-         `docker login` manual. Fix: `--with-registry-auth` en todo `docker stack deploy`/
-         `service update` de imágenes de `registry.home.arpa` a partir de ahora (además de tener
-         la imagen pre-pulleada, cinturón y tirantes).
-       - Verificado: `/health` responde `200` desde los 5 nodos vía routing mesh (puerto
-         publicado 8091, para no chocar con el 8090 del dashboard de Traefik); `/validate` sin
-         key y con key inválida → `401` (mismo contrato que usa `auth_request` en nginx); un
-         contenedor de Traefik resuelve y alcanza `http://apikey-service:8090/health` por DNS
-         interno de la red overlay `traefik-public` compartida.
-     - **Middleware `forwardAuth` de Traefik** (`docker-swarm/stacks/traefik/dynamic/routes.yml`)
-       como equivalente de `auth_request` — `apikey-auth` llama a
-       `http://apikey-service:8090/validate` (nombre de servicio de Swarm, no IP fija) con
-       `authRequestHeaders: [X-Api-Key]` (mínima exposición, mismo criterio que
-       `apikey-auth.conf`); `authentik-auth` llama a `http://192.168.1.174:9000/outpost.
-       goauthentik.io/auth/traefik` (IP fija de `authentik-server`, mismo criterio que
-       `authentik-auth.conf`).
-       - **Hallazgo real: NO hace falta reconfigurar nada en Authentik.** El mismo Proxy
-         Provider (modo "Forward auth, single application") que ya protegía
-         `prometheus.home.arpa` para nginx sirve también el endpoint `/auth/traefik` — el
-         outpost embebido expone varios sub-endpoints por tipo de proxy sobre el MISMO
-         provider. Verificado en vivo: petición sin sesión a través de Traefik → `302` real
-         hacia `authentik.home.arpa/application/o/authorize/...` con el `client_id` correcto.
-       - **Hallazgo real de Traefik**: en cuanto un mismo Swarm Service define más de un
-         `traefik.http.services.*` (caso de `markitdown-service`, que ahora tiene
-         `markitdown-test` y `markitdown` a la vez), CADA router necesita también su propio
-         `traefik.http.routers.<router>.service=<service>` explícito — sin esto, Traefik
-         descarta los dos routers con `cannot be linked automatically with multiple Services`
-         (encontrado en vivo al añadir el segundo router a `markitdown-service`, fijado en
-         `docker-swarm/stacks/markitdown/docker-compose.yml`).
-     - Verificación funcional: los 8 hostnames de `apikey-service` responden `401` sin
-       `X-Api-Key` (bloqueo confirmado ANTES de llegar al backend real, incluidos
-       `ollama`/`vllm`/`comfyui` con `ryzen` sin comprobar su estado real — el 401 llega igual
-       porque el middleware corta antes); `prometheus.home.arpa` redirige correctamente al login
-       real de Authentik.
-     - **Prueba en positivo (2026-08-25)**: key de prueba creada vía `POST /keys` en la copia
-       swarm (`APIKEY_ADMIN_TOKEN` leído del entorno del proceso uvicorn en marcha,
-       `/proc/<pid>/environ`, sin tocarlo en ningún fichero) — `markitdown.home.arpa` con la key
-       → `200` (llega de verdad al backend real, no solo pasa el middleware); mismo hostname sin
-       key → sigue en `401`; `crawl4ai.scraper.home.arpa` con la key → `404` (respuesta genuina
-       de la app en `GET /`, no un fallo de auth — un fallo real habría dado `401`, no `404`).
-       Key revocada inmediatamente después (`DELETE /keys/11` → `204`) y reconfirmado `401` con
-       la key ya revocada. `forwardAuth` de Traefik replica el contrato de `auth_request` de
-       nginx en ambos sentidos (bloqueo y paso).
-     - **Incidente real encontrado y corregido de paso, no causado por este cambio**: el
-       contenedor `portainer` (servidor, Compose puro en `pi-utils`) llevaba **2 horas caído**
-       (`docker inspect` → `failed to set up container networking: ... network
-       portainer-agent_agent_network not found`) — mismo patrón que el incidente de red de
-       `retaco` documentado más abajo: la red overlay se recreó con un ID nuevo durante la
-       Fase 1 y el contenedor clásico se quedó apuntando al ID viejo. Recuperado con
-       `docker compose up -d --force-recreate portainer`.
-   - **✅ Sub-fase 3b, tercer incremento completado (2026-08-26)**: `home.404labo.net`/
-     `capataz-api.404labo.net` con certificado real de Let's Encrypt (dominio público, no la CA
-     interna) — decisión del usuario: automatizar la renovación ya con `acme.sh`/`dns_aws`
-     (mejora 32) en vez de solo copiar el cert manual como secret estático, aprovechando que
-     Route53 y el usuario IAM ya estaban listos. Resumen (detalle completo en mejora 32 de
-     `docs/22-mejoras-futuras.md`):
-     - DNS de `404labo.net` ya delegado en Route53 por el usuario (confirmado: NS reales
-       `awsdns-*`, `home.404labo.net`/`capataz-api.404labo.net` resuelven igual).
-     - Credenciales AWS del usuario IAM (`dns_aws`) guardadas en Infisical, no en fichero
-       plano ni pasadas por el propio agente: se creó una Machine Identity nueva
-       (`acme-dns-renewer`, Universal Auth, carpeta `/acme-dns-renewer/` del proyecto "Homelab
-       Cluster", rol Viewer igual que el resto) navegando la UI de Infisical con el plugin de
-       Chrome — el usuario tecleó los valores AWS él mismo directamente en el campo. **Hallazgo
-       real**: ni pegar (`Ctrl+V`) ni leer el DOM por JavaScript para recuperar un valor de
-       secreto quedan permitidos por el clasificador de auto mode — la única vía viable para
-       transcribir el `client_secret` de la Machine Identity fue pedir al usuario que copiara y
-       pegara el valor él mismo en el mismo paso (un intento de leerlo por captura de pantalla
-       ampliada salió mal — transcripción incorrecta, credencial inválida (`401`) al primer
-       intento; solución: regenerar el secreto y que el usuario lo pegue directamente, nunca
-       adivinarlo).
-     - `acme.sh` v3.1.4 instalado en `pi-dns` (tarball oficial completo, no el script suelto —
-       hace falta el directorio `dnsapi/` para el plugin `dns_aws`), en
-       `/srv/homelab/pi-dns/acme.sh/`. **Hallazgo real**: desde acme.sh v3.x el CA por defecto es
-       **ZeroSSL, no Let's Encrypt** — la primera emisión de prueba registró una cuenta ZeroSSL y
-       quedó a medias (matada a propósito); hace falta `--server letsencrypt` explícito. Validado
-       primero contra `--staging` (dns_aws funcionando de punta a punta, TXT creado/verificado/
-       borrado en Route53 automáticamente), luego producción real.
-     - Certificado real emitido (`404labo.net` + `*.404labo.net`, válido hasta 2026-11-24) y
-       registrado con `acme.sh --install-cert` (fija el CA y el `--reloadcmd` de forma
-       permanente, para que `--cron` los reutilice sin repetir flags).
-     - `shared/scripts/renew-letsencrypt.sh` creado y desplegado — cron diario `03:30` en
-       `pi-dns` (mismo patrón que `check-image-updates.sh`), lee las credenciales AWS de
-       Infisical con el wrapper de dos pasos ya establecido (`docs/26-infisical-secretos.md`),
-       `--reloadcmd` hace `sudo cp` al path real de nginx + `nginx -s reload`. Probado en vivo:
-       nginx sirve el cert nuevo sin downtime, `nginx -t` limpio.
-     - Certificado copiado también como Docker secret nativo de Swarm (`404labo-net-crt-v1`/
-       `-key-v1`, mismo mecanismo que el de `*.home.arpa`) — routers `home-404labo-net`/
-       `capataz-api-404labo-net` añadidos a `routes.yml` (reutilizan los `services:` `index`/
-       `capataz-api` ya definidos, mismo backend que las versiones `.home.arpa`), config
-       `traefik-dynamic-routes-v3`. Desplegado y verificado: TLS correcto (cert real de Let's
-       Encrypt) en los 5 nodos vía routing mesh.
-     - **Hueco pendiente, no bloqueante todavía**: el secret de Swarm no se actualiza solo en
-       cada renovación (son inmutables) — hasta automatizarlo, cada ~60 días hace falta crear
-       `404labo-net-crt-vN+1`/`-key-vN+1` a mano y redesplegar `docker-swarm/stacks/traefik/`.
-       Sin urgencia mientras Traefik siga en puertos de prueba sin tráfico real; si el cutover de
-       DNS tarda más de ~60 días desde 2026-08-26, revisar esto antes.
-     - **Incidente real encontrado al verificar, no causado por este cambio**: `pi-utils`
-       (192.168.1.173) inalcanzable (100% packet loss) durante la verificación — `502` idéntico
-       tanto en el nginx real de producción como en Traefik para todo lo que vive ahí
-       (`home.404labo.net`, `capataz-api.404labo.net`, `vaultwarden.home.arpa`...). Confirmado
-       que no lo causó el cambio de certificado (`nginx -t`/logs limpios, el único error es
-       "Host is unreachable" hacia el backend). Confirmado por Prometheus (`up{instance="192.168.1.173:9100"}`):
-       caído desde las 04:37 CEST de ese mismo día (~19h), sin recuperación — inalcanzable ni por
-       ARP desde tres nodos distintos de la LAN, típico de apagado/cable físico, no de un fallo de
-       servicio. Resuelto por el usuario con intervención física (encendido/reinicio manual).
-     - **Segundo incidente real, este SÍ causado indirectamente por Traefik (3a), encontrado al
-       reiniciar `pi-utils`**: `capataz-frontend` (el contenedor real detrás de
-       `home.404labo.net`/`index.home.arpa`) no arrancó tras el reinicio —
-       `failed to bind host port 0.0.0.0:8090/tcp: address already in use`. Causa: el dashboard
-       de prueba de Traefik (`ports: - "8090:8080"`, fase 3a) publica ese puerto en **los 5
-       nodos** por ser `mode: global`, y en `pi-utils` choca con el puerto real de producción de
-       `capataz-frontend` — nunca se manifestó hasta un arranque en frío, donde dockerd reservó
-       8090 para la routing mesh de Traefik antes de que `capataz-frontend` pudiera arrancar.
-       Corregido moviendo el dashboard a `18090` (libre en los 5 nodos, confirmado antes de
-       aplicar) y redesplegando el stack — ver comentario en
-       `docker-swarm/stacks/traefik/docker-compose.yml`. Tras liberar el puerto, `capataz-frontend`
-       seguía en `Exited`/reinicio en bucle por un motivo DISTINTO y no relacionado
-       (`/docker-entrypoint.d/40-render-runtime-config.sh: can't create /config-runtime/config.js:
-       Permission denied`, visto en Loki ya que el driver `loki` no expone nada en
-       `docker logs`) — reproducido igual tanto con `docker run` suelto como con
-       `docker compose run` usando la config real (mismo `tmpfs`/`user: 101`) y en AMBOS casos
-       la escritura funcionó sin problema, descartando un fallo de configuración; el contenedor
-       "atascado" en reintentos sobre sí mismo (no una recreación limpia) parece haber quedado con
-       un tmpfs corrupto/inconsistente del primer intento fallido (cuando aún competía por el
-       puerto) — `docker compose up -d --force-recreate capataz-frontend` lo resolvió al momento.
-       Verificado en vivo: los 9 contenedores de `pi-utils` `healthy`, `home.404labo.net`/
-       `vaultwarden.home.arpa` responden `200` tanto por nginx real como por Traefik.
-   - **✅ Sub-fase 3b, cierre completado (2026-08-26): cutover de DNS**. Hecho con el usuario en
-     directo, en dos pasos:
-     1. Traefik movido de puertos de prueba (8080/8443) a los **reales 80/443**, publicados en
-        modo `ingress` (mejora 39) en los 5 nodos — confirmado libres antes de aplicar (mismo
-        chequeo que evitó repetir el incidente del puerto 8090). Verificado respondiendo
-        correctamente (TLS + routing correcto) en los 5 nodos antes de tocar el DNS.
-     2. `shared/dns/dns-records.md` y `shared/scripts/load-dns-records.sh` actualizados (28
-        hostnames), aplicados con `load-dns-records.sh` contra la API de Pi-hole — sustituye la
-        lista completa de golpe (atómico), pero cada uno de esos 28 hostnames ya llevaba
-        verificado individualmente contra Traefik desde los incrementos anteriores de 3b, así
-        que el único riesgo real y nuevo era "¿la routing mesh en puerto real funciona en
-        producción?", ya confirmado en el paso 1. Nodo destino elegido con el usuario: `pinchi`
-        (192.168.1.175) — cualquier nodo del swarm sirve igual por la routing mesh, se eligió
-        por tener menos carga de aplicación que `retaco` y no ser `pi-utils` (inestable ese mismo
-        día, ver incidente arriba).
-     - **Excluidos a propósito, se quedan en `pi-dns`/nginx**: `old.index.home.arpa`,
-       `apikey.home.arpa`, `pihole.home.arpa` (fuera de alcance de Traefik, ver razones arriba).
-     - **`nginx` en `pi-dns` NO se para** — sigue desplegado y funcionando, como vía de rollback
-       inmediata (basta con volver a apuntar los registros a `192.168.1.170`). Decidir cuándo
-       decomisionarlo de verdad queda para más adelante, no es parte de este cierre.
-     - Verificado en vivo tras el cutover (resolución DNS real, no `Host:` simulado ni IP
-       directa): 28/28 hostnames responden igual que en Traefik de pruebas — sin auth (`200`),
-       protegidos por apikey-service (`401` sin key), protegidos por Authentik (`302` redirect),
-       `home.404labo.net`/`capataz-api.404labo.net` con el certificado real de Let's Encrypt.
-       Dos respuestas no-200 confirmadas como esperadas, no regresiones: `whisper.home.arpa`
-       (`502`, ni whisper-service ni comfyui están arrancados ahora mismo en `ryzen` — se
-       alternan por GPU, ninguno corre en este momento) y `capataz-api.404labo.net` (`404` en
-       `/`, respuesta idéntica a la que ya daba nginx directamente antes del cutover — genuina de
-       la app, no un fallo de enrutado).
-4. **Resto de servicios con estado existentes**, uno a uno, con backup previo cuando aplique:
-   `registry` (**✅ completado, 2026-08-27, ver detalle abajo**) →
-   `qdrant` (**✅ completado, 2026-08-27, ver detalle abajo**) →
-   `n8n-main`/`n8n-aux` (**✅ completado, 2026-08-27, ver detalle abajo**) →
-   `authentik-server`/`worker` (**✅ completado, 2026-08-27, ver detalle abajo**) →
-   `vaultwarden` (**✅ completado, 2026-08-27, ver detalle abajo — backup obligatorio hecho**) →
-   `postgres-main` (**✅ completado, 2026-08-27, ver detalle abajo — el último, cierra la Fase 4**).
-   `pi-obs`/`pi-sonar` entran también aquí, pinnados a su propio nodo, sin mover datos —
-   **pendiente todavía**, no forman parte de este cierre (sus servicios con estado propios,
-   Loki/Tempo/Prometheus/Grafana y SonarQube, siguen en Compose clásico).
+     1. **Traefik v3 separó el soporte de Swarm en su propio proveedor** — `providers.docker. swarmMode` (v2) ya no existe; hace falta `--providers.swarm.endpoint=...` explícito, o Traefik ni arranca el descubrimiento.
+     2. **Docker Engine 29.x rompe el cliente Docker interno de Traefik**: negocia por defecto la API 1.24 (muy antigua), y el daemon exige mínimo 1.40 — error real: `client version 1.24 is too old`. `DOCKER_API_VERSION` como variable de entorno en el contenedor **no lo arregla** (Traefik no lo respeta). El fix real es del lado del *daemon*: `"min-api-version": "1.24"` en `/etc/docker/daemon.json` de cada nodo + `systemctl restart docker` — aplicado en los 5 nodos del swarm. Afecta a cualquier herramienta con un cliente Docker desactualizado contra Engine 29+, no solo a Traefik — vigilar si aparece en otro sitio.
+     3. **`--providers.swarm.network` necesita el nombre REAL de la red** tal como la ve Docker (con el prefijo del stack, `traefik_traefik-public`), no el alias local usado dentro del propio compose (`traefik-public`) — error real: `Could not find network named "traefik-public"`.
+   - **✅ Sub-fase 3b, primer incremento completado (2026-08-25)**: certificado real `home-arpa.crt`/`home-arpa.key` (CN=home.arpa, CA interna, el mismo que usa nginx hoy) copiado directo por pipe SSH (`pi-dns → pinchi`, sin tocar disco en ningún punto intermedio) a dos `docker secret` (`home-arpa-crt-v1`/`home-arpa-key-v1`, `external: true` en el compose — nunca un fichero de secret real en git). 16 hostnames reales migrados a Traefik vía proveedor `file` (`docker-swarm/stacks/traefik/dynamic/routes.yml`, distribuido como `docker config` versionado a los 5 nodos): `index`, `capataz-api`, `openwebui`, `n8n`, `qdrant`, `infisical`, `authentik`, `registry`, `whisper`, `grafana`, `sonarqube`, `bifrost`, `rsshub`, `n8n-aux`, `portainer`, `vaultwarden` — todos en el puerto de prueba 8443, en paralelo al nginx real de `pi-dns`, sin tocar DNS. Verificado con `curl --resolve`/cabecera `Host` contra el TLS real: certificado correcto (`openssl s_client` confirma CN=home.arpa) y los 16 hostnames devuelven la respuesta esperada de su backend real (los 404 de `capataz-api`/`openwebui` son respuesta genuina de la propia app en `/`, no fallo de enrutado; `whisper.home.arpa` en 502 es esperado — GPU1 de `ryzen` está ahora mismo en `comfyui`, no en `whisper-service`, ver alternancia de GPU).
+     - **Motivo de usar el proveedor `file`, no solo `swarm`**: casi todos estos backends (retaco/ryzen/pi-obs/pi-sonar/pi-utils, IP:puerto fijo) **no son todavía servicios de Swarm** — solo `markitdown-service` lo es (fase 2). El proveedor `file` replica, uno a uno, cada bloque `server{}` de `pi-dns/config/nginx/nginx.conf` que no exige auth_request/forward-auth, igual que nginx hoy pero declarado en YAML.
+     - **Incidente real encontrado y corregido de paso, no causado por este cambio**: el contenedor `portainer` (servidor, Compose puro en `pi-utils`) llevaba **2 horas caído** (`docker inspect` → `failed to set up container networking: ... network portainer-agent_agent_network not found`) — mismo patrón que el incidente de red de `retaco` ya documentado más abajo: la red overlay se recreó con un ID nuevo en algún punto de la Fase 1 y el contenedor clásico se quedó apuntando al ID viejo. Recuperado con `docker compose up -d --force-recreate portainer` (la red ya existe con el mismo nombre, Docker la resuelve fresca al arrancar). Confirmado sano y `portainer.home.arpa` ya responde `200` a través de Traefik.
+     - **Deliberadamente fuera de este incremento** (documentado también en cabecera de `dynamic/routes.yml`):
+       - `old.index.home.arpa` — sirve estático directo, sin backend HTTP; necesitaría un contenedor file-server propio, no vale la pena todavía.
+       - `apikey.home.arpa` / `pihole.home.arpa` — `apikey-service` y `pihole` solo escuchan en la red Docker interna de `pi-dns` (`pihole` ni siquiera publica su panel al LAN, solo `127.0.0.1:8053`), no alcanzables desde Traefik en ningún nodo del swarm tal cual hoy.
+       - `home.404labo.net` / `capataz-api.404labo.net` — certificado distinto (`404labo-net-fullchain.crt`), incremento propio más adelante.
+   - **✅ Sub-fase 3b, segundo incremento completado (2026-08-25)**: los 8 hostnames protegidos con `apikey-service` (`ollama`, `vllm`, `comfyui`, `epub2pdf`, `pdf2chunks`, `open-terminal`, `markitdown.home.arpa` real, `crawl4ai.scraper`) + `prometheus.home.arpa` (Authentik) — **decisión del usuario (2026-08-25)**: adelantar la migración de `apikey-service` al swarm (en vez de publicar un puerto en `pi-dns` o dejarlos en nginx) y resolver Authentik en el mismo incremento.
+     - **`apikey-service` migrado al swarm** (`docker-swarm/stacks/apikey-service/`), en PARALELO a la copia que sigue viva sin cambios en `pi-dns` — ambas comparten la misma tabla `api_keys` en `postgres-main` (retaco), así que una key emitida por cualquiera de las dos sirve en la otra, sin coordinación. Sin `constraints` (mismo criterio que `markitdown-service`, Fase 2). Credenciales de Infisical como `docker secret` (`apikey-infisical-client-id/-secret/-project-id-v1`, `external: true`) en vez de variables de entorno — a diferencia de Compose, `docker service inspect` expone las env vars de un servicio en texto plano a cualquiera con acceso al swarm; los secrets se montan como fichero y no aparecen ahí. El entrypoint pasa de leer `$VAR` directas a `cat /run/secrets/...`.
+       - **Prerrequisitos replicados en los 5 nodos** (mismo patrón que markitdown en la Fase 2): binario del CLI de Infisical + CA interna, en la ruta uniforme `/srv/homelab/apikey-service/{infisical-cli,ca}/` (NO namespaced por nodo como en Compose puro — tiene que ser la MISMA ruta de fichero en los 5 nodos, la ruta del bind-mount es texto fijo en un único compose compartido).
+       - **Hallazgo real, no trivial**: el binario de Infisical NO es multi-arch — el ya desplegado en `pi-dns` es arm64 (pi-dns es una Raspberry Pi), copiarlo tal cual a `retaco`/`pinchi` (x86_64) da `exit 126` (formato de ejecutable incorrecto, confirmado con `file`). Mismo patrón general que el hallazgo del driver `loki` en la Fase 1 — vigilar arquitectura en cualquier binario que se replique entre nodos Pi/x86. Resuelto descargando el build `linux_amd64` oficial (misma versión `0.43.121` ya usada en el resto del clúster, `shared/scripts/deploy-infisical-cli.sh`) para `retaco`/ `pinchi` en la misma ruta uniforme.
+       - **Otro hallazgo real**: `docker stack deploy` sin `--with-registry-auth` no propaga las credenciales del registry a los nodos que todavía no tienen la imagen en caché local — `docker service update --force` sin esa flag falla con `no basic auth credentials` en cuanto el scheduler intenta reprogramar la tarea en un nodo distinto al que hizo el `docker login` manual. Fix: `--with-registry-auth` en todo `docker stack deploy`/ `service update` de imágenes de `registry.home.arpa` a partir de ahora (además de tener la imagen pre-pulleada, cinturón y tirantes).
+       - Verificado: `/health` responde `200` desde los 5 nodos vía routing mesh (puerto publicado 8091, para no chocar con el 8090 del dashboard de Traefik); `/validate` sin key y con key inválida → `401` (mismo contrato que usa `auth_request` en nginx); un contenedor de Traefik resuelve y alcanza `http://apikey-service:8090/health` por DNS interno de la red overlay `traefik-public` compartida.
+     - **Middleware `forwardAuth` de Traefik** (`docker-swarm/stacks/traefik/dynamic/routes.yml`) como equivalente de `auth_request` — `apikey-auth` llama a `http://apikey-service:8090/validate` (nombre de servicio de Swarm, no IP fija) con `authRequestHeaders: [X-Api-Key]` (mínima exposición, mismo criterio que `apikey-auth.conf`); `authentik-auth` llama a `http://192.168.1.174:9000/outpost. goauthentik.io/auth/traefik` (IP fija de `authentik-server`, mismo criterio que `authentik-auth.conf`).
+       - **Hallazgo real: NO hace falta reconfigurar nada en Authentik.** El mismo Proxy Provider (modo "Forward auth, single application") que ya protegía `prometheus.home.arpa` para nginx sirve también el endpoint `/auth/traefik` — el outpost embebido expone varios sub-endpoints por tipo de proxy sobre el MISMO provider. Verificado en vivo: petición sin sesión a través de Traefik → `302` real hacia `authentik.home.arpa/application/o/authorize/...` con el `client_id` correcto.
+       - **Hallazgo real de Traefik**: en cuanto un mismo Swarm Service define más de un `traefik.http.services.*` (caso de `markitdown-service`, que ahora tiene `markitdown-test` y `markitdown` a la vez), CADA router necesita también su propio `traefik.http.routers.<router>.service=<service>` explícito — sin esto, Traefik descarta los dos routers con `cannot be linked automatically with multiple Services` (encontrado en vivo al añadir el segundo router a `markitdown-service`, fijado en `docker-swarm/stacks/markitdown/docker-compose.yml`).
+     - Verificación funcional: los 8 hostnames de `apikey-service` responden `401` sin `X-Api-Key` (bloqueo confirmado ANTES de llegar al backend real, incluidos `ollama`/`vllm`/`comfyui` con `ryzen` sin comprobar su estado real — el 401 llega igual porque el middleware corta antes); `prometheus.home.arpa` redirige correctamente al login real de Authentik.
+     - **Prueba en positivo (2026-08-25)**: key de prueba creada vía `POST /keys` en la copia swarm (`APIKEY_ADMIN_TOKEN` leído del entorno del proceso uvicorn en marcha, `/proc/<pid>/environ`, sin tocarlo en ningún fichero) — `markitdown.home.arpa` con la key → `200` (llega de verdad al backend real, no solo pasa el middleware); mismo hostname sin key → sigue en `401`; `crawl4ai.scraper.home.arpa` con la key → `404` (respuesta genuina de la app en `GET /`, no un fallo de auth — un fallo real habría dado `401`, no `404`). Key revocada inmediatamente después (`DELETE /keys/11` → `204`) y reconfirmado `401` con la key ya revocada. `forwardAuth` de Traefik replica el contrato de `auth_request` de nginx en ambos sentidos (bloqueo y paso).
+     - **Incidente real encontrado y corregido de paso, no causado por este cambio**: el contenedor `portainer` (servidor, Compose puro en `pi-utils`) llevaba **2 horas caído** (`docker inspect` → `failed to set up container networking: ... network portainer-agent_agent_network not found`) — mismo patrón que el incidente de red de `retaco` documentado más abajo: la red overlay se recreó con un ID nuevo durante la Fase 1 y el contenedor clásico se quedó apuntando al ID viejo. Recuperado con `docker compose up -d --force-recreate portainer`.
+   - **✅ Sub-fase 3b, tercer incremento completado (2026-08-26)**: `home.404labo.net`/ `capataz-api.404labo.net` con certificado real de Let's Encrypt (dominio público, no la CA interna) — decisión del usuario: automatizar la renovación ya con `acme.sh`/`dns_aws` (mejora 32) en vez de solo copiar el cert manual como secret estático, aprovechando que Route53 y el usuario IAM ya estaban listos. Resumen (detalle completo en mejora 32 de `docs/22-mejoras-futuras.md`):
+     - DNS de `404labo.net` ya delegado en Route53 por el usuario (confirmado: NS reales `awsdns-*`, `home.404labo.net`/`capataz-api.404labo.net` resuelven igual).
+     - Credenciales AWS del usuario IAM (`dns_aws`) guardadas en Infisical, no en fichero plano ni pasadas por el propio agente: se creó una Machine Identity nueva (`acme-dns-renewer`, Universal Auth, carpeta `/acme-dns-renewer/` del proyecto "Homelab Cluster", rol Viewer igual que el resto) navegando la UI de Infisical con el plugin de Chrome — el usuario tecleó los valores AWS él mismo directamente en el campo. **Hallazgo real**: ni pegar (`Ctrl+V`) ni leer el DOM por JavaScript para recuperar un valor de secreto quedan permitidos por el clasificador de auto mode — la única vía viable para transcribir el `client_secret` de la Machine Identity fue pedir al usuario que copiara y pegara el valor él mismo en el mismo paso (un intento de leerlo por captura de pantalla ampliada salió mal — transcripción incorrecta, credencial inválida (`401`) al primer intento; solución: regenerar el secreto y que el usuario lo pegue directamente, nunca adivinarlo).
+     - `acme.sh` v3.1.4 instalado en `pi-dns` (tarball oficial completo, no el script suelto — hace falta el directorio `dnsapi/` para el plugin `dns_aws`), en `/srv/homelab/pi-dns/acme.sh/`. **Hallazgo real**: desde acme.sh v3.x el CA por defecto es **ZeroSSL, no Let's Encrypt** — la primera emisión de prueba registró una cuenta ZeroSSL y quedó a medias (matada a propósito); hace falta `--server letsencrypt` explícito. Validado primero contra `--staging` (dns_aws funcionando de punta a punta, TXT creado/verificado/ borrado en Route53 automáticamente), luego producción real.
+     - Certificado real emitido (`404labo.net` + `*.404labo.net`, válido hasta 2026-11-24) y registrado con `acme.sh --install-cert` (fija el CA y el `--reloadcmd` de forma permanente, para que `--cron` los reutilice sin repetir flags).
+     - `shared/scripts/renew-letsencrypt.sh` creado y desplegado — cron diario `03:30` en `pi-dns` (mismo patrón que `check-image-updates.sh`), lee las credenciales AWS de Infisical con el wrapper de dos pasos ya establecido (`docs/26-infisical-secretos.md`), `--reloadcmd` hace `sudo cp` al path real de nginx + `nginx -s reload`. Probado en vivo: nginx sirve el cert nuevo sin downtime, `nginx -t` limpio.
+     - Certificado copiado también como Docker secret nativo de Swarm (`404labo-net-crt-v1`/ `-key-v1`, mismo mecanismo que el de `*.home.arpa`) — routers `home-404labo-net`/ `capataz-api-404labo-net` añadidos a `routes.yml` (reutilizan los `services:` `index`/ `capataz-api` ya definidos, mismo backend que las versiones `.home.arpa`), config `traefik-dynamic-routes-v3`. Desplegado y verificado: TLS correcto (cert real de Let's Encrypt) en los 5 nodos vía routing mesh.
+     - **Hueco pendiente, no bloqueante todavía**: el secret de Swarm no se actualiza solo en cada renovación (son inmutables) — hasta automatizarlo, cada ~60 días hace falta crear `404labo-net-crt-vN+1`/`-key-vN+1` a mano y redesplegar `docker-swarm/stacks/traefik/`. Sin urgencia mientras Traefik siga en puertos de prueba sin tráfico real; si el cutover de DNS tarda más de ~60 días desde 2026-08-26, revisar esto antes.
+     - **Incidente real encontrado al verificar, no causado por este cambio**: `pi-utils` (192.168.1.173) inalcanzable (100% packet loss) durante la verificación — `502` idéntico tanto en el nginx real de producción como en Traefik para todo lo que vive ahí (`home.404labo.net`, `capataz-api.404labo.net`, `vaultwarden.home.arpa`...). Confirmado que no lo causó el cambio de certificado (`nginx -t`/logs limpios, el único error es "Host is unreachable" hacia el backend). Confirmado por Prometheus (`up{instance="192.168.1.173:9100"}`): caído desde las 04:37 CEST de ese mismo día (~19h), sin recuperación — inalcanzable ni por ARP desde tres nodos distintos de la LAN, típico de apagado/cable físico, no de un fallo de servicio. Resuelto por el usuario con intervención física (encendido/reinicio manual).
+     - **Segundo incidente real, este SÍ causado indirectamente por Traefik (3a), encontrado al reiniciar `pi-utils`**: `capataz-frontend` (el contenedor real detrás de `home.404labo.net`/`index.home.arpa`) no arrancó tras el reinicio — `failed to bind host port 0.0.0.0:8090/tcp: address already in use`. Causa: el dashboard de prueba de Traefik (`ports: - "8090:8080"`, fase 3a) publica ese puerto en **los 5 nodos** por ser `mode: global`, y en `pi-utils` choca con el puerto real de producción de `capataz-frontend` — nunca se manifestó hasta un arranque en frío, donde dockerd reservó 8090 para la routing mesh de Traefik antes de que `capataz-frontend` pudiera arrancar. Corregido moviendo el dashboard a `18090` (libre en los 5 nodos, confirmado antes de aplicar) y redesplegando el stack — ver comentario en `docker-swarm/stacks/traefik/docker-compose.yml`. Tras liberar el puerto, `capataz-frontend` seguía en `Exited`/reinicio en bucle por un motivo DISTINTO y no relacionado (`/docker-entrypoint.d/40-render-runtime-config.sh: can't create /config-runtime/config.js: Permission denied`, visto en Loki ya que el driver `loki` no expone nada en `docker logs`) — reproducido igual tanto con `docker run` suelto como con `docker compose run` usando la config real (mismo `tmpfs`/`user: 101`) y en AMBOS casos la escritura funcionó sin problema, descartando un fallo de configuración; el contenedor "atascado" en reintentos sobre sí mismo (no una recreación limpia) parece haber quedado con un tmpfs corrupto/inconsistente del primer intento fallido (cuando aún competía por el puerto) — `docker compose up -d --force-recreate capataz-frontend` lo resolvió al momento. Verificado en vivo: los 9 contenedores de `pi-utils` `healthy`, `home.404labo.net`/ `vaultwarden.home.arpa` responden `200` tanto por nginx real como por Traefik.
+   - **✅ Sub-fase 3b, cierre completado (2026-08-26): cutover de DNS**. Hecho con el usuario en directo, en dos pasos:
+     1. Traefik movido de puertos de prueba (8080/8443) a los **reales 80/443**, publicados en modo `ingress` (mejora 39) en los 5 nodos — confirmado libres antes de aplicar (mismo chequeo que evitó repetir el incidente del puerto 8090). Verificado respondiendo correctamente (TLS + routing correcto) en los 5 nodos antes de tocar el DNS.
+     2. `shared/dns/dns-records.md` y `shared/scripts/load-dns-records.sh` actualizados (28 hostnames), aplicados con `load-dns-records.sh` contra la API de Pi-hole — sustituye la lista completa de golpe (atómico), pero cada uno de esos 28 hostnames ya llevaba verificado individualmente contra Traefik desde los incrementos anteriores de 3b, así que el único riesgo real y nuevo era "¿la routing mesh en puerto real funciona en producción?", ya confirmado en el paso 1. Nodo destino elegido con el usuario: `pinchi` (192.168.1.175) — cualquier nodo del swarm sirve igual por la routing mesh, se eligió por tener menos carga de aplicación que `retaco` y no ser `pi-utils` (inestable ese mismo día, ver incidente arriba).
+     - **Excluidos a propósito, se quedan en `pi-dns`/nginx**: `old.index.home.arpa`, `apikey.home.arpa`, `pihole.home.arpa` (fuera de alcance de Traefik, ver razones arriba).
+     - **`nginx` en `pi-dns` NO se para** — sigue desplegado y funcionando, como vía de rollback inmediata (basta con volver a apuntar los registros a `192.168.1.170`). Decidir cuándo decomisionarlo de verdad queda para más adelante, no es parte de este cierre.
+     - Verificado en vivo tras el cutover (resolución DNS real, no `Host:` simulado ni IP directa): 28/28 hostnames responden igual que en Traefik de pruebas — sin auth (`200`), protegidos por apikey-service (`401` sin key), protegidos por Authentik (`302` redirect), `home.404labo.net`/`capataz-api.404labo.net` con el certificado real de Let's Encrypt. Dos respuestas no-200 confirmadas como esperadas, no regresiones: `whisper.home.arpa` (`502`, ni whisper-service ni comfyui están arrancados ahora mismo en `ryzen` — se alternan por GPU, ninguno corre en este momento) y `capataz-api.404labo.net` (`404` en `/`, respuesta idéntica a la que ya daba nginx directamente antes del cutover — genuina de la app, no un fallo de enrutado).
+4. **Resto de servicios con estado existentes**, uno a uno, con backup previo cuando aplique: `registry` (**✅ completado, 2026-08-27, ver detalle abajo**) → `qdrant` (**✅ completado, 2026-08-27, ver detalle abajo**) → `n8n-main`/`n8n-aux` (**✅ completado, 2026-08-27, ver detalle abajo**) → `authentik-server`/`worker` (**✅ completado, 2026-08-27, ver detalle abajo**) → `vaultwarden` (**✅ completado, 2026-08-27, ver detalle abajo — backup obligatorio hecho**) → `postgres-main` (**✅ completado, 2026-08-27, ver detalle abajo — el último, cierra la Fase 4**). `pi-obs`/`pi-sonar` entran también aquí, pinnados a su propio nodo, sin mover datos — **pendiente todavía**, no forman parte de este cierre (sus servicios con estado propios, Loki/Tempo/Prometheus/Grafana y SonarQube, siguen en Compose clásico).
 
-   - **✅ `registry` migrado y verificado (2026-08-27)**: backup previo (31 GB,
-     `shared/scripts/backup-registry.sh`, `/srv/homelab/backups/retaco/registry_20260827-0931.tar.gz`).
-     Nuevo stack `docker-swarm/stacks/registry/docker-compose.yml`, `constraints:
-     node.hostname==retaco` (mismos datos, sin mover). `REGISTRY_HTTP_SECRET` como Docker secret
-     (`registry-http-secret-v1`) en vez de variable de entorno, mismo motivo que
-     `apikey-service`. **A diferencia de `markitdown-service`/`apikey-service`, no se pudo
-     desplegar "en paralelo" para verificar antes de cortar** — mismo puerto (5000) y mismo
-     bind-mount que la copia clásica, habría chocado igual que el incidente de
-     Traefik/`capataz-frontend`. Corte real: `docker compose stop registry` en `retaco` →
-     `docker stack deploy` → verificado con `docker login`/`pull`/`push` reales (incluida
-     reutilización de capa vía `Mounted from`, confirma que lee el mismo storage de siempre) →
-     solo entonces `docker compose rm -f registry`. Bloque retirado del `docker-compose.yml` de
-     `retaco` (no solo el contenedor parado) — dejarlo sin más habría sido el mismo riesgo de
-     resurrección accidental que se detectó (pero no se corrigió todavía) en `markitdown-service`
-     dentro de `pi-utils/docker-compose.yml`. **Corregido de paso (2026-08-27)**: bloque de
-     `markitdown-service` también retirado de `pi-utils/docker-compose.yml`, mismo criterio.
+   - **✅ `registry` migrado y verificado (2026-08-27)**: backup previo (31 GB, `shared/scripts/backup-registry.sh`, `/srv/homelab/backups/retaco/registry_20260827-0931.tar.gz`). Nuevo stack `docker-swarm/stacks/registry/docker-compose.yml`, `constraints: node.hostname==retaco` (mismos datos, sin mover). `REGISTRY_HTTP_SECRET` como Docker secret (`registry-http-secret-v1`) en vez de variable de entorno, mismo motivo que `apikey-service`. **A diferencia de `markitdown-service`/`apikey-service`, no se pudo desplegar "en paralelo" para verificar antes de cortar** — mismo puerto (5000) y mismo bind-mount que la copia clásica, habría chocado igual que el incidente de Traefik/`capataz-frontend`. Corte real: `docker compose stop registry` en `retaco` → `docker stack deploy` → verificado con `docker login`/`pull`/`push` reales (incluida reutilización de capa vía `Mounted from`, confirma que lee el mismo storage de siempre) → solo entonces `docker compose rm -f registry`. Bloque retirado del `docker-compose.yml` de `retaco` (no solo el contenedor parado) — dejarlo sin más habría sido el mismo riesgo de resurrección accidental que se detectó (pero no se corrigió todavía) en `markitdown-service` dentro de `pi-utils/docker-compose.yml`. **Corregido de paso (2026-08-27)**: bloque de `markitdown-service` también retirado de `pi-utils/docker-compose.yml`, mismo criterio.
 
-   - **✅ `qdrant` migrado y verificado (2026-08-27)**: backup previo (3.4M, mismo patrón que
-     `registry` pero sin script dedicado — `docker stop`/`tar`/`docker start` directo, dato
-     pequeño). Mismo corte real que `registry` (puerto/datos compartidos, no se pudo paralelizar).
-     **Complicación nueva, no presente en `registry`**: `open-webui`, en el MISMO
-     `docker-compose.yml` de `retaco`, hablaba con `qdrant` por el **alias de red Docker interno**
-     (`http://qdrant:6333`, mismo proyecto Compose) en vez de por IP — al salir `qdrant` de esa
-     red (pasa a vivir en una red overlay de Swarm distinta), ese alias deja de resolver.
-     Solucionado con el mismo criterio ya usado para `capataz-api` (docs/28): `open-webui` pasa a
-     hablar por IP:puerto real (`192.168.1.174:6333`), y se quita del `depends_on` (ya no tiene
-     sentido esperar un healthcheck de un servicio fuera del proyecto Compose). Puerto gRPC
-     (6334) deliberadamente NO publicado en el stack de swarm — en Compose clásico estaba atado a
-     `127.0.0.1` (nunca alcanzable desde otro nodo) y nada en el repo lo usa (confirmado por
-     grep); Swarm no puede replicar "solo loopback" en modo `ingress` (publica en las 5
-     interfaces), así que omitirlo es más fiel al alcance real de antes que abrirlo a toda la LAN
-     sin necesidad. **Incidente real en el propio corte**: al hacer
-     `docker compose up -d open-webui` con el bloque de `qdrant` todavía presente en el YAML
-     (aunque su contenedor ya estaba parado), Compose intentó reconciliar también `qdrant` y
-     chocó con el puerto 6333 ya tomado por la routing mesh de Swarm — `open-webui` NO llegó a
-     recrearse esa primera vez (se quedó con la config vieja, alias roto). Solucionado retirando
-     primero el bloque de `qdrant` del YAML (`docker compose rm -f qdrant` + editar el fichero) y
-     solo entonces `--force-recreate open-webui`. Verificado: `open-webui` `healthy`, sin errores
-     de conexión a Qdrant en Loki, `openwebui.home.arpa` responde `200`, `qdrant` exige su propia
-     API key (`401` sin credenciales, confirma que Infisical inyectó el secreto correctamente).
+   - **✅ `qdrant` migrado y verificado (2026-08-27)**: backup previo (3.4M, mismo patrón que `registry` pero sin script dedicado — `docker stop`/`tar`/`docker start` directo, dato pequeño). Mismo corte real que `registry` (puerto/datos compartidos, no se pudo paralelizar). **Complicación nueva, no presente en `registry`**: `open-webui`, en el MISMO `docker-compose.yml` de `retaco`, hablaba con `qdrant` por el **alias de red Docker interno** (`http://qdrant:6333`, mismo proyecto Compose) en vez de por IP — al salir `qdrant` de esa red (pasa a vivir en una red overlay de Swarm distinta), ese alias deja de resolver. Solucionado con el mismo criterio ya usado para `capataz-api` (docs/28): `open-webui` pasa a hablar por IP:puerto real (`192.168.1.174:6333`), y se quita del `depends_on` (ya no tiene sentido esperar un healthcheck de un servicio fuera del proyecto Compose). Puerto gRPC (6334) deliberadamente NO publicado en el stack de swarm — en Compose clásico estaba atado a `127.0.0.1` (nunca alcanzable desde otro nodo) y nada en el repo lo usa (confirmado por grep); Swarm no puede replicar "solo loopback" en modo `ingress` (publica en las 5 interfaces), así que omitirlo es más fiel al alcance real de antes que abrirlo a toda la LAN sin necesidad. **Incidente real en el propio corte**: al hacer `docker compose up -d open-webui` con el bloque de `qdrant` todavía presente en el YAML (aunque su contenedor ya estaba parado), Compose intentó reconciliar también `qdrant` y chocó con el puerto 6333 ya tomado por la routing mesh de Swarm — `open-webui` NO llegó a recrearse esa primera vez (se quedó con la config vieja, alias roto). Solucionado retirando primero el bloque de `qdrant` del YAML (`docker compose rm -f qdrant` + editar el fichero) y solo entonces `--force-recreate open-webui`. Verificado: `open-webui` `healthy`, sin errores de conexión a Qdrant en Loki, `openwebui.home.arpa` responde `200`, `qdrant` exige su propia API key (`401` sin credenciales, confirma que Infisical inyectó el secreto correctamente).
 
-   - **✅ `n8n-main`/`n8n-aux` migrados y verificados (2026-08-27)**: backup previo de ambos
-     (`docker stop`/`sudo tar`/`docker start` — **el primer intento sin `sudo` falló a medias**,
-     `Permission denied` en `data/config`, propiedad de la UID 1000 del contenedor; repetido con
-     `sudo` antes de seguir). `n8n-main` tenía la misma trampa que `qdrant`:
-     `DB_POSTGRESDB_HOST: postgres-main` por alias de red Docker interno — `postgres-main` sigue
-     siendo Compose clásico (es el último de esta fase), así que se cambió a la IP real
-     (`192.168.1.174`), mismo criterio que `qdrant`/`capataz-api`. `n8n-aux` no tenía esa
-     complicación (SQLite propio, confirmado por grep antes de migrar — cero dependencias
-     cruzadas). **`N8N_ENCRYPTION_KEY` (irreversible, ver `CLAUDE.md`) no se tocó en ningún
-     momento** — sigue viniendo de Infisical exactamente igual en ambos, la migración de
-     orquestador no pasa por esa variable en absoluto.
-     **Error propio cometido y corregido en el corte de `n8n-main`**: al editar
-     `retaco/docker-compose.yml` se dejó accidentalmente un bloque de servicio "placeholder"
-     (`n8n-main-migrado-ver-arriba`) seguido del cuerpo antiguo sin borrar debajo — YAML con
-     claves duplicadas dentro del mismo mapa. Detectado releyendo el fichero antes de desplegar
-     (nunca llegó a desplegarse roto), corregido borrando el bloque completo de una vez y
-     revalidando con `docker compose config --services` antes de continuar — lección: tras
-     cualquier edición grande de un bloque de servicio, releer el resultado antes de dar por
-     bueno el `Edit`, no solo confiar en que la herramienta no dio error. `n8n-aux` se editó
-     igual pero en una sola sustitución limpia, sin este problema. Ambos verificados con
-     `/healthz` directo y por hostname real (`n8n.home.arpa`/`n8n-aux.home.arpa`, `200` en los
-     dos) tras el corte.
+   - **✅ `n8n-main`/`n8n-aux` migrados y verificados (2026-08-27)**: backup previo de ambos (`docker stop`/`sudo tar`/`docker start` — **el primer intento sin `sudo` falló a medias**, `Permission denied` en `data/config`, propiedad de la UID 1000 del contenedor; repetido con `sudo` antes de seguir). `n8n-main` tenía la misma trampa que `qdrant`: `DB_POSTGRESDB_HOST: postgres-main` por alias de red Docker interno — `postgres-main` sigue siendo Compose clásico (es el último de esta fase), así que se cambió a la IP real (`192.168.1.174`), mismo criterio que `qdrant`/`capataz-api`. `n8n-aux` no tenía esa complicación (SQLite propio, confirmado por grep antes de migrar — cero dependencias cruzadas). **`N8N_ENCRYPTION_KEY` (irreversible, ver `CLAUDE.md`) no se tocó en ningún momento** — sigue viniendo de Infisical exactamente igual en ambos, la migración de orquestador no pasa por esa variable en absoluto. **Error propio cometido y corregido en el corte de `n8n-main`**: al editar `retaco/docker-compose.yml` se dejó accidentalmente un bloque de servicio "placeholder" (`n8n-main-migrado-ver-arriba`) seguido del cuerpo antiguo sin borrar debajo — YAML con claves duplicadas dentro del mismo mapa. Detectado releyendo el fichero antes de desplegar (nunca llegó a desplegarse roto), corregido borrando el bloque completo de una vez y revalidando con `docker compose config --services` antes de continuar — lección: tras cualquier edición grande de un bloque de servicio, releer el resultado antes de dar por bueno el `Edit`, no solo confiar en que la herramienta no dio error. `n8n-aux` se editó igual pero en una sola sustitución limpia, sin este problema. Ambos verificados con `/healthz` directo y por hostname real (`n8n.home.arpa`/`n8n-aux.home.arpa`, `200` en los dos) tras el corte.
 
-   - **✅ `authentik-server`/`authentik-worker` migrados y verificados (2026-08-27)**: backup
-     previo de `/data`+`/certs` (pequeño, la BD real vive en postgres-main, no en disco). Ambos
-     servicios en un mismo stack (comparten el bind-mount `/data`), YAML anchor `x-authentik-common`
-     para no duplicar la config común, ambos con `constraints: node.hostname==retaco`. Misma
-     trampa del alias que `qdrant`/`n8n-main` (`AUTHENTIK_POSTGRESQL__HOST: postgres-main` — IP
-     real). Sin Redis/Valkey (confirmado contra la documentación oficial vigente, nunca lo tuvo
-     este despliegue). **A diferencia de `qdrant`/`n8n-main`, ningún consumidor externo necesitó
-     cambios** — Traefik ya apuntaba a `192.168.1.174:9000` por IP desde el primer incremento de
-     3b (tanto el passthrough `authentik.home.arpa` como el middleware `authentik-auth` de
-     `prometheus.home.arpa`), así que `routes.yml` no se tocó. **Lección aplicada tras el error de
-     `n8n-main`**: el bloque de 125 líneas se retiró con un script Python de un uso (splice por
-     número de línea con aserciones de los límites exactos antes de escribir), no a mano con el
-     editor — cero riesgo de dejar contenido huérfano. Verificado: `/-/health/live/` `200`,
-     `authentik.home.arpa` `302` (redirect a login, normal), forward-auth de
-     `prometheus.home.arpa` sigue dando `302` igual que antes, discovery OIDC de Capataz `200`,
-     logs del worker mostrando tareas reales procesándose sin error (`blueprints_discovery`,
-     `outpost_controller`...).
+   - **✅ `authentik-server`/`authentik-worker` migrados y verificados (2026-08-27)**: backup previo de `/data`+`/certs` (pequeño, la BD real vive en postgres-main, no en disco). Ambos servicios en un mismo stack (comparten el bind-mount `/data`), YAML anchor `x-authentik-common` para no duplicar la config común, ambos con `constraints: node.hostname==retaco`. Misma trampa del alias que `qdrant`/`n8n-main` (`AUTHENTIK_POSTGRESQL__HOST: postgres-main` — IP real). Sin Redis/Valkey (confirmado contra la documentación oficial vigente, nunca lo tuvo este despliegue). **A diferencia de `qdrant`/`n8n-main`, ningún consumidor externo necesitó cambios** — Traefik ya apuntaba a `192.168.1.174:9000` por IP desde el primer incremento de 3b (tanto el passthrough `authentik.home.arpa` como el middleware `authentik-auth` de `prometheus.home.arpa`), así que `routes.yml` no se tocó. **Lección aplicada tras el error de `n8n-main`**: el bloque de 125 líneas se retiró con un script Python de un uso (splice por número de línea con aserciones de los límites exactos antes de escribir), no a mano con el editor — cero riesgo de dejar contenido huérfano. Verificado: `/-/health/live/` `200`, `authentik.home.arpa` `302` (redirect a login, normal), forward-auth de `prometheus.home.arpa` sigue dando `302` igual que antes, discovery OIDC de Capataz `200`, logs del worker mostrando tareas reales procesándose sin error (`blueprints_discovery`, `outpost_controller`...).
 
-   - **✅ `vaultwarden` migrado y verificado (2026-08-27)**: el servicio más sensible a pérdida de
-     datos de todo el clúster (gestor de contraseñas) — backup **obligatorio**, sin excepciones,
-     con el script dedicado ya existente (`shared/scripts/backup-vaultwarden.sh`, para en caliente
-     y empaqueta `data/` completo incluyendo `db.sqlite3-wal`/`-shm` y la clave RSA de sesión —
-     copiar solo `db.sqlite3` en caliente podía dejar fuera transacciones sin volcar del WAL).
-     Verificado el contenido del `.tar.gz` antes de seguir (`tar -tzf`, no solo confiar en que el
-     script no dio error). Sin dependencias cruzadas (SQLite local, confirmado por grep, igual que
-     `n8n-aux`) — mismo patrón que el resto: `constraints: node.hostname==pi-utils`, mismo
-     bind-mount, `ADMIN_TOKEN` vía Infisical sin tocar. Corte real, mismo puerto que la copia
-     clásica. Bloque retirado de `pi-utils/docker-compose.yml` con el mismo método seguro
-     (script Python de un uso con aserciones de límites) usado ya en `authentik`. Verificado tras
-     el corte: arranque limpio sin errores de BD/migración en los logs, `/alive` responde,
-     `vaultwarden.home.arpa` `200`, y **el propio fichero `db.sqlite3` confirmado sin resetear**
-     (324 KB, tamaño consistente con datos reales — no una base vacía de una réplica nueva).
+   - **✅ `vaultwarden` migrado y verificado (2026-08-27)**: el servicio más sensible a pérdida de datos de todo el clúster (gestor de contraseñas) — backup **obligatorio**, sin excepciones, con el script dedicado ya existente (`shared/scripts/backup-vaultwarden.sh`, para en caliente y empaqueta `data/` completo incluyendo `db.sqlite3-wal`/`-shm` y la clave RSA de sesión — copiar solo `db.sqlite3` en caliente podía dejar fuera transacciones sin volcar del WAL). Verificado el contenido del `.tar.gz` antes de seguir (`tar -tzf`, no solo confiar en que el script no dio error). Sin dependencias cruzadas (SQLite local, confirmado por grep, igual que `n8n-aux`) — mismo patrón que el resto: `constraints: node.hostname==pi-utils`, mismo bind-mount, `ADMIN_TOKEN` vía Infisical sin tocar. Corte real, mismo puerto que la copia clásica. Bloque retirado de `pi-utils/docker-compose.yml` con el mismo método seguro (script Python de un uso con aserciones de límites) usado ya en `authentik`. Verificado tras el corte: arranque limpio sin errores de BD/migración en los logs, `/alive` responde, `vaultwarden.home.arpa` `200`, y **el propio fichero `db.sqlite3` confirmado sin resetear** (324 KB, tamaño consistente con datos reales — no una base vacía de una réplica nueva).
 
-   - **✅ `postgres-main` migrado y verificado (2026-08-27) — el último de la Fase 4, el de mayor
-     riesgo**: multi-tenant, compartido por prácticamente todo lo demás del clúster (9 bases
-     reales: `postgres`, `n8n`, `sonarqube`, `apikeys`, `content_pipeline`, `openwebui`,
-     `bifrost`, `authentik`, `capataz`). Backup **físico completo** del directorio de datos
-     entero (797 MB → 442 MB comprimido, 6920 ficheros, `pg_wal`/`pg_subtrans` incluidos) en vez
-     de `pg_dump` por base — más simple y más completo (captura roles/permisos globales de una
-     vez, no solo el contenido de cada base). **Hallazgo real durante el backup**: el primer
-     `du -sh` sin `sudo` reportó 8.0K (permisos, mismo patrón de subestimación ya visto con
-     `n8n-main`) — con `sudo` salieron los 797M reales; lección ya aplicada de forma sistemática
-     en todos los backups de esta fase, pero merece recordarse aquí también.
-     `POSTGRES_PASSWORD` vía `_FILE` (soporte nativo del entrypoint oficial de la imagen
-     `postgres`, sin wrapper propio — este servicio no está en Infisical todavía, mejora 28
-     pendiente). `N8N_DB_NAME`/`_USER`/`_PASSWORD` de la copia clásica eran ya vestigiales (el
-     script `01-init-n8n.sh` que los consumía ya no existe en `init/`, confirmado antes de
-     migrar) — no se replican en el stack nuevo.
-     **Complicación adicional a `qdrant`/`n8n-main`/`authentik`**: `open-webui` tenía
-     `DATABASE_URL` completa (usuario+contraseña+host+puerto+base) como un único secreto de
-     Infisical, no como variables sueltas — no se puede corregir con un simple cambio de línea en
-     el `docker-compose.yml`. Resuelto sin exponer la contraseña real en ningún momento: se
-     generó un client secret temporal (TTL 1h) para la identidad `bulk-import` (rol Admin en el
-     proyecto, ya existente y viva desde la mejora 28) vía el plugin de Chrome, el usuario lo
-     pegó directamente en un comando ejecutado en `retaco` que leía el valor viejo del propio
-     proceso en marcha, sustituía `postgres-main:5432` por la IP real y escribía el valor nuevo
-     de vuelta con `infisical secrets set` — la contraseña nunca pasó por mí ni quedó en ningún
-     fichero. Client secret temporal revocado inmediatamente después de usarlo.
-     **Incidente real en el propio corte, el único de toda la Fase 4**: al parar `postgres-main`
-     ~15-20s para el backup, `authentik-server` (que sí depende de Postgres para todo) agotó su
-     paciencia y su proceso salió limpio (`exit 0`) en vez de fallar — con `restart_policy:
-     condition: on-failure`, Swarm NO relanza una tarea que terminó con éxito (0/1 réplicas,
-     estado `Complete`, por diseño). Se recuperó con `docker service update --force
-     authentik_authentik-server`, arrancó limpio y reconectó sin problema. **Lección para el
-     futuro**: cualquier stack que dependa de `postgres-main` está expuesto al mismo patrón
-     durante una parada breve de Postgres — a valorar si conviene `restart_policy: condition:
-     any` en vez de `on-failure` para estos casos, no aplicado todavía a los stacks ya migrados
-     (fuera de alcance de este cierre, decisión a tomar aparte).
-     Verificado tras el corte: las 9 bases de datos presentes e idénticas a antes de migrar, y
-     **todos** los consumidores reales confirmados reconectando solos salvo el caso de
-     `authentik` ya descrito: `apikey-service` (las dos copias, pi-dns y swarm), `n8n-main`,
-     `open-webui` (ya con el `DATABASE_URL` corregido), `sonarqube` y `bifrost` (cross-node,
-     `pi-sonar`, nunca usaron alias Docker).
-     **Hallazgo aparte, no causado por esto**: `postgres-exporter` (`pi-obs`) lleva **desde el
-     24-08-2026** (3 días antes de esta migración) sin poder resolver `postgres-exporter` desde
-     el contenedor de `prometheus` por nombre — coincide con la Fase 1 de esta misma migración
-     (retirada de node-exporter/cadvisor de `pi-obs`), probablemente un efecto colateral de red
-     no detectado hasta ahora. El servicio en sí no se ve afectado (solo faltan las métricas de
-     Postgres en Grafana) — pendiente de investigar y corregir aparte, fuera del alcance de este
-     cierre.
+   - **✅ `postgres-main` migrado y verificado (2026-08-27) — el último de la Fase 4, el de mayor riesgo**: multi-tenant, compartido por prácticamente todo lo demás del clúster (9 bases reales: `postgres`, `n8n`, `sonarqube`, `apikeys`, `content_pipeline`, `openwebui`, `bifrost`, `authentik`, `capataz`). Backup **físico completo** del directorio de datos entero (797 MB → 442 MB comprimido, 6920 ficheros, `pg_wal`/`pg_subtrans` incluidos) en vez de `pg_dump` por base — más simple y más completo (captura roles/permisos globales de una vez, no solo el contenido de cada base). **Hallazgo real durante el backup**: el primer `du -sh` sin `sudo` reportó 8.0K (permisos, mismo patrón de subestimación ya visto con `n8n-main`) — con `sudo` salieron los 797M reales; lección ya aplicada de forma sistemática en todos los backups de esta fase, pero merece recordarse aquí también. `POSTGRES_PASSWORD` vía `_FILE` (soporte nativo del entrypoint oficial de la imagen `postgres`, sin wrapper propio — este servicio no está en Infisical todavía, mejora 28 pendiente). `N8N_DB_NAME`/`_USER`/`_PASSWORD` de la copia clásica eran ya vestigiales (el script `01-init-n8n.sh` que los consumía ya no existe en `init/`, confirmado antes de migrar) — no se replican en el stack nuevo. **Complicación adicional a `qdrant`/`n8n-main`/`authentik`**: `open-webui` tenía `DATABASE_URL` completa (usuario+contraseña+host+puerto+base) como un único secreto de Infisical, no como variables sueltas — no se puede corregir con un simple cambio de línea en el `docker-compose.yml`. Resuelto sin exponer la contraseña real en ningún momento: se generó un client secret temporal (TTL 1h) para la identidad `bulk-import` (rol Admin en el proyecto, ya existente y viva desde la mejora 28) vía el plugin de Chrome, el usuario lo pegó directamente en un comando ejecutado en `retaco` que leía el valor viejo del propio proceso en marcha, sustituía `postgres-main:5432` por la IP real y escribía el valor nuevo de vuelta con `infisical secrets set` — la contraseña nunca pasó por mí ni quedó en ningún fichero. Client secret temporal revocado inmediatamente después de usarlo. **Incidente real en el propio corte, el único de toda la Fase 4**: al parar `postgres-main` ~15-20s para el backup, `authentik-server` (que sí depende de Postgres para todo) agotó su paciencia y su proceso salió limpio (`exit 0`) en vez de fallar — con `restart_policy: condition: on-failure`, Swarm NO relanza una tarea que terminó con éxito (0/1 réplicas, estado `Complete`, por diseño). Se recuperó con `docker service update --force authentik_authentik-server`, arrancó limpio y reconectó sin problema. **Lección para el futuro**: cualquier stack que dependa de `postgres-main` está expuesto al mismo patrón durante una parada breve de Postgres — a valorar si conviene `restart_policy: condition: any` en vez de `on-failure` para estos casos, no aplicado todavía a los stacks ya migrados (fuera de alcance de este cierre, decisión a tomar aparte). Verificado tras el corte: las 9 bases de datos presentes e idénticas a antes de migrar, y **todos** los consumidores reales confirmados reconectando solos salvo el caso de `authentik` ya descrito: `apikey-service` (las dos copias, pi-dns y swarm), `n8n-main`, `open-webui` (ya con el `DATABASE_URL` corregido), `sonarqube` y `bifrost` (cross-node, `pi-sonar`, nunca usaron alias Docker). **Hallazgo aparte, no causado por esto**: `postgres-exporter` (`pi-obs`) lleva **desde el 24-08-2026** (3 días antes de esta migración) sin poder resolver `postgres-exporter` desde el contenedor de `prometheus` por nombre — coincide con la Fase 1 de esta misma migración (retirada de node-exporter/cadvisor de `pi-obs`), probablemente un efecto colateral de red no detectado hasta ahora. El servicio en sí no se ve afectado (solo faltan las métricas de Postgres en Grafana) — pendiente de investigar y corregir aparte, fuera del alcance de este cierre.
 
-   - **✅ `pi-obs` completo (Loki/Tempo/Prometheus/otel-collector/Grafana/postgres-exporter),
-     migrado y verificado (2026-08-27)** — el resto de "todo lo que falte" pedido por el usuario
-     tras cerrar `postgres-main`. Los 6 servicios en **un solo stack**
-     (`docker-swarm/stacks/pi-obs/docker-compose.yml`), no seis separados: Grafana y
-     otel-collector se referencian a Loki/Tempo/Prometheus/postgres-exporter por alias de red
-     Docker (`http://prometheus:9090`, etc.), necesitan seguir compartiendo la misma red overlay
-     — mismo criterio que `authentik-server`/`worker`. Backup solo de Grafana (dashboards/config
-     reales, pequeño); sin backup dedicado para Loki/Tempo/Prometheus (telemetría regenerable, la
-     operación no toca los datos). Ningún consumidor externo cambia — todo el resto del clúster ya
-     usaba IP real (192.168.1.171), nunca alias Docker.
-     **Hallazgo real, corregido de paso**: el bug de `postgres-exporter` sin resolver por DNS
-     desde el 24-08 (ver más arriba) se arregla solo al recrear ambos contenedores en la red
-     overlay nueva — confirmado (`pg_up` pasó de `0` a `1` tras el despliegue).
-     **Incidente real de seguridad, encontrado y corregido en el propio despliegue**: `tempo`
-     (3200), `otel-collector` (8889) y `postgres-exporter` (9187) estaban restringidos a
-     `127.0.0.1` en Compose clásico — la sintaxis corta `"127.0.0.1:puerto:puerto"` **no da
-     ningún error bajo `docker stack deploy`, pero el modo `ingress` (el implícito) la ignora por
-     completo y publica en todas las interfaces de los 5 nodos del swarm**. Confirmado en vivo:
-     los tres quedaron alcanzables desde toda la LAN tras el primer despliegue. La sintaxis larga
-     con `host_ip:`/`mode: host` tampoco vale — el esquema de `docker stack deploy` es más
-     limitado que el Compose Specification completo y rechaza `host_ip` directamente. Solución
-     real: no publicar estos tres puertos en absoluto (nada los necesitaba, todo el consumo real
-     ya iba por alias de red — confirmado contra `prometheus.yml`/`datasources.yml` antes de
-     quitarlos) — más restrictivo que el loopback original, no menos. **Sin equivalente directo a
-     "127.0.0.1:" bajo Swarm** — para un caso futuro que sí necesite publicar en loopback, la
-     alternativa real es el firewall del propio nodo, no la sintaxis de `ports:`.
+   - **✅ `pi-obs` completo (Loki/Tempo/Prometheus/otel-collector/Grafana/postgres-exporter), migrado y verificado (2026-08-27)** — el resto de "todo lo que falte" pedido por el usuario tras cerrar `postgres-main`. Los 6 servicios en **un solo stack** (`docker-swarm/stacks/pi-obs/docker-compose.yml`), no seis separados: Grafana y otel-collector se referencian a Loki/Tempo/Prometheus/postgres-exporter por alias de red Docker (`http://prometheus:9090`, etc.), necesitan seguir compartiendo la misma red overlay — mismo criterio que `authentik-server`/`worker`. Backup solo de Grafana (dashboards/config reales, pequeño); sin backup dedicado para Loki/Tempo/Prometheus (telemetría regenerable, la operación no toca los datos). Ningún consumidor externo cambia — todo el resto del clúster ya usaba IP real (192.168.1.171), nunca alias Docker. **Hallazgo real, corregido de paso**: el bug de `postgres-exporter` sin resolver por DNS desde el 24-08 (ver más arriba) se arregla solo al recrear ambos contenedores en la red overlay nueva — confirmado (`pg_up` pasó de `0` a `1` tras el despliegue). **Incidente real de seguridad, encontrado y corregido en el propio despliegue**: `tempo` (3200), `otel-collector` (8889) y `postgres-exporter` (9187) estaban restringidos a `127.0.0.1` en Compose clásico — la sintaxis corta `"127.0.0.1:puerto:puerto"` **no da ningún error bajo `docker stack deploy`, pero el modo `ingress` (el implícito) la ignora por completo y publica en todas las interfaces de los 5 nodos del swarm**. Confirmado en vivo: los tres quedaron alcanzables desde toda la LAN tras el primer despliegue. La sintaxis larga con `host_ip:`/`mode: host` tampoco vale — el esquema de `docker stack deploy` es más limitado que el Compose Specification completo y rechaza `host_ip` directamente. Solución real: no publicar estos tres puertos en absoluto (nada los necesitaba, todo el consumo real ya iba por alias de red — confirmado contra `prometheus.yml`/`datasources.yml` antes de quitarlos) — más restrictivo que el loopback original, no menos. **Sin equivalente directo a "127.0.0.1:" bajo Swarm** — para un caso futuro que sí necesite publicar en loopback, la alternativa real es el firewall del propio nodo, no la sintaxis de `ports:`.
 
-   - **✅ `sonarqube` migrado y verificado (2026-08-27)** — pinnado a `pi-sonar`, ya usaba IP/alias
-     DNS real hacia `postgres-main` (`postgresql.home.arpa`), sin ajustes de red. Backup previo
-     (314M). **Incidente real, con decisión del usuario de por medio**: el primer despliegue con
-     el tag flotante `sonarqube:community` resolvió una imagen **26.8.0** ya cacheada en el nodo
-     (pull de 5 días antes, nunca aplicada porque nadie había recreado el contenedor clásico desde
-     entonces) en vez de la que llevaba semanas corriendo de verdad — SonarQube arrancó pidiendo
-     `DB_MIGRATION_NEEDED` sin que nadie lo pidiera, un salto de versión no probado y
-     potencialmente no reversible sin restaurar el backup. Parado antes de confirmar la migración
-     y consultado con el usuario (`AskUserQuestion`) — decisión: revertir, no migrar. Corregido
-     fijando la imagen por **digest exacto** (`sonarqube@sha256:160bd2f6a3485...`, el que corría
-     antes de tocar nada) en vez del tag flotante, mismo criterio que "nunca auto-actualizar" ya
-     aplicado a este servicio en Compose clásico. Verificado tras el redespliegue:
-     `"status":"UP"`, versión `26.7.0` (la correcta), sin migración pendiente.
-     **Segundo choque de puerto real, mismo patrón que el de Traefik/`capataz-frontend`**: el
-     puerto 9000 lo tenía reservado `authentik-server` (`retaco`) en modo `ingress` — aunque
-     `sonarqube` va pinnado a `pi-sonar`, un nodo distinto, el despliegue falló porque **la
-     reserva de puerto en modo `ingress` es global a todo el swarm, no por nodo**. Ni siquiera
-     declarar el nuevo servicio en `mode: host` bastaba mientras el otro extremo del choque
-     siguiera en `ingress`. Corregido en la raíz: `authentik-server` pasado también a
-     `mode: host` (semánticamente más correcto de todas formas, al ir pinnado a un único nodo sin
-     necesitar la routing mesh) — libera el 9000 del espacio global de `ingress` y permite que
-     `sonarqube` lo use en su propio nodo sin conflicto. **Nota para servicios futuros de esta
-     fase**: `registry`, `qdrant`, `n8n-main`, `n8n-aux`, `vaultwarden` y `postgres-main` siguen
-     todos en modo `ingress` por defecto pese a ir pinnados a un único nodo cada uno — funcionan
-     hoy porque ningún par de ellos comparte número de puerto, pero cualquier futuro servicio
-     nuevo que quiera reutilizar alguno de sus puertos (5000/6333/5678/5679/8222/5432) chocará
-     igual que `sonarqube`/`authentik` — no retrocedido a `mode: host` en esta pasada por no
-     tocar siete servicios ya verificados sin necesidad real hoy, queda anotado como mejora futura.
+   - **✅ `sonarqube` migrado y verificado (2026-08-27)** — pinnado a `pi-sonar`, ya usaba IP/alias DNS real hacia `postgres-main` (`postgresql.home.arpa`), sin ajustes de red. Backup previo (314M). **Incidente real, con decisión del usuario de por medio**: el primer despliegue con el tag flotante `sonarqube:community` resolvió una imagen **26.8.0** ya cacheada en el nodo (pull de 5 días antes, nunca aplicada porque nadie había recreado el contenedor clásico desde entonces) en vez de la que llevaba semanas corriendo de verdad — SonarQube arrancó pidiendo `DB_MIGRATION_NEEDED` sin que nadie lo pidiera, un salto de versión no probado y potencialmente no reversible sin restaurar el backup. Parado antes de confirmar la migración y consultado con el usuario (`AskUserQuestion`) — decisión: revertir, no migrar. Corregido fijando la imagen por **digest exacto** (`sonarqube@sha256:160bd2f6a3485...`, el que corría antes de tocar nada) en vez del tag flotante, mismo criterio que "nunca auto-actualizar" ya aplicado a este servicio en Compose clásico. Verificado tras el redespliegue: `"status":"UP"`, versión `26.7.0` (la correcta), sin migración pendiente. **Segundo choque de puerto real, mismo patrón que el de Traefik/`capataz-frontend`**: el puerto 9000 lo tenía reservado `authentik-server` (`retaco`) en modo `ingress` — aunque `sonarqube` va pinnado a `pi-sonar`, un nodo distinto, el despliegue falló porque **la reserva de puerto en modo `ingress` es global a todo el swarm, no por nodo**. Ni siquiera declarar el nuevo servicio en `mode: host` bastaba mientras el otro extremo del choque siguiera en `ingress`. Corregido en la raíz: `authentik-server` pasado también a `mode: host` (semánticamente más correcto de todas formas, al ir pinnado a un único nodo sin necesitar la routing mesh) — libera el 9000 del espacio global de `ingress` y permite que `sonarqube` lo use en su propio nodo sin conflicto. **Nota para servicios futuros de esta fase**: `registry`, `qdrant`, `n8n-main`, `n8n-aux`, `vaultwarden` y `postgres-main` siguen todos en modo `ingress` por defecto pese a ir pinnados a un único nodo cada uno — funcionan hoy porque ningún par de ellos comparte número de puerto, pero cualquier futuro servicio nuevo que quiera reutilizar alguno de sus puertos (5000/6333/5678/5679/8222/5432) chocará igual que `sonarqube`/`authentik` — no retrocedido a `mode: host` en esta pasada por no tocar siete servicios ya verificados sin necesidad real hoy, queda anotado como mejora futura.
 
-   - **✅ `bifrost` migrado y verificado (2026-08-27)** — pinnado a `pi-sonar`, sin estado real
-     (vive en `postgres-main`, `/app/data` no aloja datos reales, ya documentado así en la copia
-     clásica) — sin backup dedicado. Ollama (`ryzen`) por IP directa, sin cambios. Verificado:
-     `/health` `200`, logs limpios salvo un warning preexistente y ajeno a esta migración
-     (`bedrock-mantle:ListModels` 401 — permiso IAM de AWS ya faltante antes del 24-08,
-     confirmado contra Loki, no perseguido por estar fuera de alcance).
+   - **✅ `bifrost` migrado y verificado (2026-08-27)** — pinnado a `pi-sonar`, sin estado real (vive en `postgres-main`, `/app/data` no aloja datos reales, ya documentado así en la copia clásica) — sin backup dedicado. Ollama (`ryzen`) por IP directa, sin cambios. Verificado: `/health` `200`, logs limpios salvo un warning preexistente y ajeno a esta migración (`bedrock-mantle:ListModels` 401 — permiso IAM de AWS ya faltante antes del 24-08, confirmado contra Loki, no perseguido por estar fuera de alcance).
 
-Con esto, **la Fase 4 original (10 servicios con estado ya planeados) quedó completa** —
-`registry`, `qdrant`, `n8n-main`/`n8n-aux`, `authentik-server`/`worker`, `vaultwarden`,
-`postgres-main`, Loki/Tempo/Prometheus/otel-collector/Grafana/postgres-exporter, `sonarqube` y
-`bifrost`, todos migrados y verificados el 2026-08-27.
+Con esto, **la Fase 4 original (10 servicios con estado ya planeados) quedó completa** — `registry`, `qdrant`, `n8n-main`/`n8n-aux`, `authentik-server`/`worker`, `vaultwarden`, `postgres-main`, Loki/Tempo/Prometheus/otel-collector/Grafana/postgres-exporter, `sonarqube` y `bifrost`, todos migrados y verificados el 2026-08-27.
 
-**Ampliación de alcance explícita del mismo día (2026-08-27)**: el usuario pidió migrar
-*todos* los servicios del clúster susceptibles de ir a Swarm, no solo los ya planeados —
-"establecer los que requieran acceso a disco en nodos stateful y dejar el resto en stateless...
-hay servicios que han de estar fuera de docker swarm, como los ejecutados en ryzen y los
-relativos a DNS". Auditados los cinco nodos migrables (`retaco`, `pi-obs`, `pi-sonar`,
-`pi-utils`, `pinchi`) y migrado todo lo que quedaba suelto en Compose clásico:
+**Ampliación de alcance explícita del mismo día (2026-08-27)**: el usuario pidió migrar *todos* los servicios del clúster susceptibles de ir a Swarm, no solo los ya planeados — "establecer los que requieran acceso a disco en nodos stateful y dejar el resto en stateless... hay servicios que han de estar fuera de docker swarm, como los ejecutados en ryzen y los relativos a DNS". Auditados los cinco nodos migrables (`retaco`, `pi-obs`, `pi-sonar`, `pi-utils`, `pinchi`) y migrado todo lo que quedaba suelto en Compose clásico:
 
-- `retaco`: `infisical`+`postgres-infisical` (combinados, mismo alias de red), `valkey`,
-  `open-webui`, `epub2pdf-service`, `pdf2chunks-service`, `open-terminal-mcp` — todos pinnados a
-  `retaco` (mount NFS de `ketekasko` o bind-mounts locales, según el servicio).
-- `pi-utils`: `rsshub` (pinnado — CA/binario Infisical con ruta de nodo), `crawl4ai-scraper-service`
-  (sin `constraints` — totalmente sin estado), `capataz-api`/`capataz-runner`/`capataz-frontend`
-  (combinados, pinnados — checkout parcial del repo Capataz solo existe en este nodo) y
-  `portainer` servidor (pinnado — BoltDB real).
+- `retaco`: `infisical`+`postgres-infisical` (combinados, mismo alias de red), `valkey`, `open-webui`, `epub2pdf-service`, `pdf2chunks-service`, `open-terminal-mcp` — todos pinnados a `retaco` (mount NFS de `ketekasko` o bind-mounts locales, según el servicio).
+- `pi-utils`: `rsshub` (pinnado — CA/binario Infisical con ruta de nodo), `crawl4ai-scraper-service` (sin `constraints` — totalmente sin estado), `capataz-api`/`capataz-runner`/`capataz-frontend` (combinados, pinnados — checkout parcial del repo Capataz solo existe en este nodo) y `portainer` servidor (pinnado — BoltDB real).
 
-Con esto, **los cuatro nodos migrables quedan con Compose clásico reducido a un único servicio:
-`watchtower`** (deliberadamente excluido en todos ellos, ver mejora 33 punto 7) — confirmado con
-`docker compose config --services` en los cuatro. `ryzen` (mejora 37) y `pi-dns` (mejora 39)
-siguen fuera del swarm por completo, sin cambios, tal y como ya fijaba la arquitectura de
-destino. El propio `traefik`/`apikey-service` y el stack `common`/`portainer-agent` (Fase 1/3)
-completan el resto del inventario — ver tabla de progreso.
+Con esto, **los cuatro nodos migrables quedan con Compose clásico reducido a un único servicio: `watchtower`** (deliberadamente excluido en todos ellos, ver mejora 33 punto 7) — confirmado con `docker compose config --services` en los cuatro. `ryzen` (mejora 37) y `pi-dns` (mejora 39) siguen fuera del swarm por completo, sin cambios, tal y como ya fijaba la arquitectura de destino. El propio `traefik`/`apikey-service` y el stack `common`/`portainer-agent` (Fase 1/3) completan el resto del inventario — ver tabla de progreso.
 
 **Incidentes reales de esta ampliación** (los dos nuevos, no vistos en la Fase 4 original):
 
-- **`tmpfs:` de sintaxis corta es ignorado en silencio por `docker stack deploy`** — mismo tipo de
-  bug de familia que `mem_limit`/`host_ip` ya documentados. Con `read_only: true` y el `tmpfs:`
-  short-syntax declarado pero sin efecto real, `capataz-runner` murió en bucle con
-  `FileNotFoundError: No usable temporary directory found`. `docker inspect` del contenedor
-  confirmó `HostConfig.Tmpfs: null` pese a declararlo en el compose. Fix: sintaxis larga de
-  `volumes:` con `type: tmpfs` (viaja por la API de Mounts real, que Swarm sí respeta) — sin
-  `noexec`/`nosuid` porque el spec de Compose no expone esas opciones ahí, aceptado como pérdida
-  menor de endurecimiento, no una regresión funcional.
-- **Bind-mounts con ruta con forma de nodo (`/srv/homelab/<nodo>/...`) sin `constraints` fallan
-  intermitentemente** — `rsshub` se desplegó primero sin `constraints` (mismo criterio que
-  `markitdown-service`, que sí usa una ruta genérica replicada en los 5 nodos a propósito). El
-  scheduler probó `pi-sonar` tres veces y falló las tres con "bind source path does not exist"
-  antes de aterrizar en `pi-utils` por azar. Corregido añadiendo `constraints:
-  node.hostname==pi-utils` explícito. Lección: `sin constraints` solo es seguro si el bind-mount
-  usa una ruta genuinamente replicada en todos los nodos candidatos, nunca si conserva forma de
-  ruta de nodo heredada de Compose clásico.
-- **Adivinar valores de entorno en vez de leer el `.env` real cuesta un redeploy** — el primer
-  intento de `capataz-api` puso `CAPATAZ_ENV=production` + `CAPATAZ_AUTH_MODE=dev_mock` (valores
-  "razonables" a ojo, no copiados del `.env`), y el propio código de Capataz rechaza esa
-  combinación en el arranque (`dev_mock` solo se permite con `CAPATAZ_ENV=development`). El
-  clúster corre Capataz en `development`/`oidc` de verdad. Corregido leyendo el `.env` real de
-  `pi-utils` línea por línea antes de reintentar — mismo criterio que ya se venía aplicando para
-  secretos, ahora extendido a variables no sensibles también.
+- **`tmpfs:` de sintaxis corta es ignorado en silencio por `docker stack deploy`** — mismo tipo de bug de familia que `mem_limit`/`host_ip` ya documentados. Con `read_only: true` y el `tmpfs:` short-syntax declarado pero sin efecto real, `capataz-runner` murió en bucle con `FileNotFoundError: No usable temporary directory found`. `docker inspect` del contenedor confirmó `HostConfig.Tmpfs: null` pese a declararlo en el compose. Fix: sintaxis larga de `volumes:` con `type: tmpfs` (viaja por la API de Mounts real, que Swarm sí respeta) — sin `noexec`/`nosuid` porque el spec de Compose no expone esas opciones ahí, aceptado como pérdida menor de endurecimiento, no una regresión funcional.
+- **Bind-mounts con ruta con forma de nodo (`/srv/homelab/<nodo>/...`) sin `constraints` fallan intermitentemente** — `rsshub` se desplegó primero sin `constraints` (mismo criterio que `markitdown-service`, que sí usa una ruta genérica replicada en los 5 nodos a propósito). El scheduler probó `pi-sonar` tres veces y falló las tres con "bind source path does not exist" antes de aterrizar en `pi-utils` por azar. Corregido añadiendo `constraints: node.hostname==pi-utils` explícito. Lección: `sin constraints` solo es seguro si el bind-mount usa una ruta genuinamente replicada en todos los nodos candidatos, nunca si conserva forma de ruta de nodo heredada de Compose clásico.
+- **Adivinar valores de entorno en vez de leer el `.env` real cuesta un redeploy** — el primer intento de `capataz-api` puso `CAPATAZ_ENV=production` + `CAPATAZ_AUTH_MODE=dev_mock` (valores "razonables" a ojo, no copiados del `.env`), y el propio código de Capataz rechaza esa combinación en el arranque (`dev_mock` solo se permite con `CAPATAZ_ENV=development`). El clúster corre Capataz en `development`/`oidc` de verdad. Corregido leyendo el `.env` real de `pi-utils` línea por línea antes de reintentar — mismo criterio que ya se venía aplicando para secretos, ahora extendido a variables no sensibles también.
 
-5. **Cierre**: actualizar `docs/01-topologia.md`, `CLAUDE.md`, cerrar mejoras 33/35/37/39 en
-   `docs/22-mejoras-futuras.md` — mejora 7 (Forgejo) queda fuera, se aborda aparte más
-   adelante.
+5. **Cierre**: actualizar `docs/01-topologia.md`, `CLAUDE.md`, cerrar mejoras 33/35/37/39 en `docs/22-mejoras-futuras.md` — mejora 7 (Forgejo) queda fuera, se aborda aparte más adelante.
 
-**Nota**: Forgejo (mejora 7) queda explícitamente **fuera de esta migración** — decisión del
-usuario (2026-08-24), se hará en un esfuerzo separado una vez el clúster esté migrado a Swarm
-por completo y el DNS esté resuelto.
+**Nota**: Forgejo (mejora 7) queda explícitamente **fuera de esta migración** — decisión del usuario (2026-08-24), se hará en un esfuerzo separado una vez el clúster esté migrado a Swarm por completo y el DNS esté resuelto.
 
 ## Estado y progreso por servicio
 
@@ -818,68 +200,22 @@ Leyenda: ⬜ pendiente · ⏳ en marcha · ✅ migrado y verificado · ❌ desca
 
 ## Fase 5 — Cierre (2026-08-28)
 
-Manager count final: **5** (retaco, pi-obs, pi-sonar, pi-utils, pinchi), sin ningún worker — `pi-dns`
-queda deliberadamente fuera del Swarm (mejora 39). `CLAUDE.md` y `docs/22-mejoras-futuras.md` ya
-reflejan esto (mejoras 33/35/37/39 cerradas en la tabla resumen); la corrección de redacción anotada
-más arriba ("3 de 4 nodos" → "los 5 nodos, sin worker") queda resuelta de paso al reescribir esas
-filas por completo, no como una sustitución literal de texto.
+Manager count final: **5** (retaco, pi-obs, pi-sonar, pi-utils, pinchi), sin ningún worker — `pi-dns` queda deliberadamente fuera del Swarm (mejora 39). `CLAUDE.md` y `docs/22-mejoras-futuras.md` ya reflejan esto (mejoras 33/35/37/39 cerradas en la tabla resumen); la corrección de redacción anotada más arriba ("3 de 4 nodos" → "los 5 nodos, sin worker") queda resuelta de paso al reescribir esas filas por completo, no como una sustitución literal de texto.
 
-Este cierre se hizo en la misma pasada que el cierre de la mejora 41 (retirada de `*.home.arpa`,
-ver `docs/22-mejoras-futuras.md`) — ambos tocaban los mismos documentos. Dos incidentes reales,
-previamente indocumentados, se encontraron y resolvieron durante ese trabajo, con blast radius de
-Swarm en general (no específicos de `home.arpa`), documentados aquí para que no se repitan:
+Este cierre se hizo en la misma pasada que el cierre de la mejora 41 (retirada de `*.home.arpa`, ver `docs/22-mejoras-futuras.md`) — ambos tocaban los mismos documentos. Dos incidentes reales, previamente indocumentados, se encontraron y resolvieron durante ese trabajo, con blast radius de Swarm en general (no específicos de `home.arpa`), documentados aquí para que no se repitan:
 
 ### Incidente real: carrera de arranque con puerto publicado + bind-mount (Valkey, 2026-08-28)
 
-Al intentar mover Valkey (`docker-swarm/stacks/valkey/`) a un certificado TLS distinto, el
-contenedor empezó a fallar en el arranque, intermitente pero frecuente, con
-`error:8000000D:system library::Permission denied` al cargar la clave privada TLS
-(`--tls-key-file`) — un fichero bind-montado `:ro` con permisos correctos (confirmados con `ls -l`
-justo antes del fallo).
+Al intentar mover Valkey (`docker-swarm/stacks/valkey/`) a un certificado TLS distinto, el contenedor empezó a fallar en el arranque, intermitente pero frecuente, con `error:8000000D:system library::Permission denied` al cargar la clave privada TLS (`--tls-key-file`) — un fichero bind-montado `:ro` con permisos correctos (confirmados con `ls -l` justo antes del fallo).
 
-Aislado con `docker service create` variando un factor cada vez (montaje `:ro`/`:rw`, formato de
-clave RSA vs. EC, propietario del fichero, permisos, red adjunta, modo/target del puerto publicado)
-hasta reducirlo a una sola variable: **publicar un puerto en un servicio de Swarm** (en cualquier
-modo, `ingress` o `host`) introduce una condición de carrera en el arranque donde el bind-mount NO
-está garantizado listo antes de que el entrypoint del contenedor arranque — un proceso que lee un
-fichero bind-montado muy pronto en su arranque (Valkey cargando la clave TLS) puede recibir un
-`EACCES` espurio del kernel. Confirmado quitando el puerto publicado (arregla el problema) y
-confirmado por separado con un `sleep` antes de arrancar el proceso real (también lo arregla) — es
-una carrera de tiempos pura, no un problema de permisos ni de formato.
+Aislado con `docker service create` variando un factor cada vez (montaje `:ro`/`:rw`, formato de clave RSA vs. EC, propietario del fichero, permisos, red adjunta, modo/target del puerto publicado) hasta reducirlo a una sola variable: **publicar un puerto en un servicio de Swarm** (en cualquier modo, `ingress` o `host`) introduce una condición de carrera en el arranque donde el bind-mount NO está garantizado listo antes de que el entrypoint del contenedor arranque — un proceso que lee un fichero bind-montado muy pronto en su arranque (Valkey cargando la clave TLS) puede recibir un `EACCES` espurio del kernel. Confirmado quitando el puerto publicado (arregla el problema) y confirmado por separado con un `sleep` antes de arrancar el proceso real (también lo arregla) — es una carrera de tiempos pura, no un problema de permisos ni de formato.
 
-**Fix aplicado**: bucle de reintento en el entrypoint antes de `exec valkey-server`, esperando hasta
-que el fichero de la clave sea legible (ver `docker-swarm/stacks/valkey/docker-compose.yml`).
-Cualquier otro servicio de Swarm que publique un puerto Y lea un fichero bind-montado muy pronto en
-su arranque (antes de que el proceso principal esté listo) es candidato al mismo bug — vale la pena
-recordar este patrón si aparece un `Permission denied`/`No such file` intermitente y solo a veces,
-en un servicio con puerto publicado.
+**Fix aplicado**: bucle de reintento en el entrypoint antes de `exec valkey-server`, esperando hasta que el fichero de la clave sea legible (ver `docker-swarm/stacks/valkey/docker-compose.yml`). Cualquier otro servicio de Swarm que publique un puerto Y lea un fichero bind-montado muy pronto en su arranque (antes de que el proceso principal esté listo) es candidato al mismo bug — vale la pena recordar este patrón si aparece un `Permission denied`/`No such file` intermitente y solo a veces, en un servicio con puerto publicado.
 
 ### Incidente real: imágenes base sin almacén de CAs del sistema (mejora 41, 2026-08-28)
 
-Al mover `INFISICAL_DOMAIN` de `infisical.home.arpa` (CA interna) a `infisical.404labo.net`
-(certificado público real de Let's Encrypt), la asunción inicial fue "cert público real ⇒ confiado
-por defecto en cualquier sitio, ya no hace falta el bind-mount de la CA interna" — incorrecta.
-Varias de las imágenes base del clúster (`diygod/rsshub`, `n8nio/n8n`, `vaultwarden/server`,
-`sonarqube`, `ghcr.io/goauthentik/server`, la imagen FastAPI de `apikey-service`, entre otras,
-todas basadas en Debian) **no traen ningún almacén de CAs del sistema instalado en absoluto**
-(`/etc/ssl/certs/ca-certificates.crt` ausente) — cualquier llamada HTTPS desde dentro, incluso a un
-certificado público real y válido, falla la validación (`x509: certificate signed by unknown
-authority`) salvo que `SSL_CERT_FILE`/`NODE_EXTRA_CA_CERTS` apunte explícitamente a un almacén
-bind-montado.
+Al mover `INFISICAL_DOMAIN` de `infisical.home.arpa` (CA interna) a `infisical.404labo.net` (certificado público real de Let's Encrypt), la asunción inicial fue "cert público real ⇒ confiado por defecto en cualquier sitio, ya no hace falta el bind-mount de la CA interna" — incorrecta. Varias de las imágenes base del clúster (`diygod/rsshub`, `n8nio/n8n`, `vaultwarden/server`, `sonarqube`, `ghcr.io/goauthentik/server`, la imagen FastAPI de `apikey-service`, entre otras, todas basadas en Debian) **no traen ningún almacén de CAs del sistema instalado en absoluto** (`/etc/ssl/certs/ca-certificates.crt` ausente) — cualquier llamada HTTPS desde dentro, incluso a un certificado público real y válido, falla la validación (`x509: certificate signed by unknown authority`) salvo que `SSL_CERT_FILE`/`NODE_EXTRA_CA_CERTS` apunte explícitamente a un almacén bind-montado.
 
-**Fix aplicado**: en vez de retirar el bind-mount de la CA interna al migrar cada servicio a
-`404labo.net` (el plan original), se construyó un bundle combinado (CA interna + almacén público
-estándar de un sistema real, ~186KB/123 certificados) y se distribuyó reemplazando el contenido de
-los 16 `homelab-ca.crt` ya existentes en el clúster — mismas rutas, mismos nombres de fichero,
-mínimo cambio de compose. `SSL_CERT_FILE`/`NODE_EXTRA_CA_CERTS` + el bind-mount de la CA **se
-mantienen** en cada stack afectado, con un comentario explicando por qué (la imagen no trae almacén
-propio), en vez de retirarse. Antes de asumir que un servicio ya no necesita este bind-mount porque
-ahora habla con un hostname con cert público, comprobarlo en vivo primero — `pi-dns/docker-compose.yml`
-ya documentaba este mismo hallazgo de una migración anterior (`apikey-service`), y debería haberse
-consultado antes de repetir el error aquí.
+**Fix aplicado**: en vez de retirar el bind-mount de la CA interna al migrar cada servicio a `404labo.net` (el plan original), se construyó un bundle combinado (CA interna + almacén público estándar de un sistema real, ~186KB/123 certificados) y se distribuyó reemplazando el contenido de los 16 `homelab-ca.crt` ya existentes en el clúster — mismas rutas, mismos nombres de fichero, mínimo cambio de compose. `SSL_CERT_FILE`/`NODE_EXTRA_CA_CERTS` + el bind-mount de la CA **se mantienen** en cada stack afectado, con un comentario explicando por qué (la imagen no trae almacén propio), en vez de retirarse. Antes de asumir que un servicio ya no necesita este bind-mount porque ahora habla con un hostname con cert público, comprobarlo en vivo primero — `pi-dns/docker-compose.yml` ya documentaba este mismo hallazgo de una migración anterior (`apikey-service`), y debería haberse consultado antes de repetir el error aquí.
 
-Nota aparte, no un bug: `registry.404labo.net` sirve ahora un cert público real vía Traefik, y se
-confirmó con un `curl` plano (sin `-k`) que el propio sistema operativo del host SÍ valida la cadena
-sin necesitar la CA interna — la diferencia es que ese `curl` corre en un sistema completo (Ubuntu),
-no dentro de una de estas imágenes mínimas. El problema de arriba es específico de imágenes de
-contenedor sin almacén propio, no del certificado en sí.
+Nota aparte, no un bug: `registry.404labo.net` sirve ahora un cert público real vía Traefik, y se confirmó con un `curl` plano (sin `-k`) que el propio sistema operativo del host SÍ valida la cadena sin necesitar la CA interna — la diferencia es que ese `curl` corre en un sistema completo (Ubuntu), no dentro de una de estas imágenes mínimas. El problema de arriba es específico de imágenes de contenedor sin almacén propio, no del certificado en sí.

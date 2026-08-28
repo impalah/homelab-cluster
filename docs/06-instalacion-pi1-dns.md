@@ -306,7 +306,7 @@ Para que `docker compose pull`/`up -d` funcione en **este** nodo (o cualquier ot
    sudo update-ca-certificates
    sudo systemctl restart docker   # dockerd solo lee el almacén de certs una vez, al arrancar
    ```
-   ⚠️ En `pi-dns` esto reinicia también `nginx` y `pihole` (dependen del mismo daemon) — unos segundos de corte para todo el clúster (DNS + proxy HTTPS). Los contenedores con `restart: unless-stopped` vuelven solos.
+⚠️ En `pi-dns` esto reinicia también `nginx` y `pihole` (dependen del mismo daemon) — unos segundos de corte para todo el clúster (DNS + proxy HTTPS). Los contenedores con `restart: unless-stopped` vuelven solos.
 2. **Inicio de sesión en el registry**, con el usuario que vaya a ejecutar `docker compose` en este nodo (`u-dns`):
    ```bash
    docker login registry.home.arpa   # credenciales en Vaultwarden: "Docker Registry (registry.home.arpa)"

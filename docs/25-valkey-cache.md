@@ -61,7 +61,7 @@ user valkey-admin on >{contraseña generada con openssl rand -hex 32} ~* &* +@al
   ```
   ACL SETUSER infisical on >otra_contraseña ~infisical:* &infisical:* +@read +@write -@dangerous
   ```
-  y guardarlo en `users.acl` (no solo en memoria vía `ACL SETUSER` — se perdería al reiniciar el contenedor sin `ACL SAVE`, y `ACL SAVE` requiere que `aclfile` sea escribible, hoy montado `:ro` a propósito).
+y guardarlo en `users.acl` (no solo en memoria vía `ACL SETUSER` — se perdería al reiniciar el contenedor sin `ACL SAVE`, y `ACL SAVE` requiere que `aclfile` sea escribible, hoy montado `:ro` a propósito).
 
 ⚠️ **El fichero `aclfile` no admite comentarios** (`#`) en esta versión de Valkey (9.1.1) — cualquier línea que no empiece literalmente por `user` rompe el arranque con `should start with user keyword followed by the username`. Confirmado en el despliegue real: la primera versión del fichero, con comentarios explicativos como en el resto de configs de este repo, hizo que el contenedor entrara en crash-loop. `users.acl`/`users.acl.example` se mantienen deliberadamente sin comentarios — la documentación vive aquí, no en el propio fichero.
 

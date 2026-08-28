@@ -114,23 +114,11 @@ infisical secrets set --file=<servicio>.env --path=/<servicio>/ \
 
 ## Estado actual — mejora 28 completada: 11 servicios migrados
 
-`apikey-service`/`authentik` (mejora 16, piloto) más los 9 de la mejora 28
-(docs/22-mejoras-futuras.md), migrados y verificados en producción el
-2026-08-19: `n8n-main`, `qdrant`, `open-webui`, `open-terminal-mcp` (retaco),
-`n8n-aux`, `rsshub`, `vaultwarden` (pi-utils), `sonarqube`, `bifrost`
-(pi-sonar). Verificación aplicada a los 9: logs con `Injecting N Infisical
-secrets`, `healthy`, prueba funcional real (no solo el healthcheck) y
-`--force-recreate` repetido dos veces para confirmar que arrancan solos.
+`apikey-service`/`authentik` (mejora 16, piloto) más los 9 de la mejora 28 (docs/22-mejoras-futuras.md), migrados y verificados en producción el 2026-08-19: `n8n-main`, `qdrant`, `open-webui`, `open-terminal-mcp` (retaco), `n8n-aux`, `rsshub`, `vaultwarden` (pi-utils), `sonarqube`, `bifrost` (pi-sonar). Verificación aplicada a los 9: logs con `Injecting N Infisical secrets`, `healthy`, prueba funcional real (no solo el healthcheck) y `--force-recreate` repetido dos veces para confirmar que arrancan solos.
 
 ### Hallazgo nuevo — el nombre del secreto en Infisical debe coincidir con el nombre real que consume la app, no con el de la variable `.env` original
 
-El volcado masivo del 2026-08-10 importó cada `.env` tal cual, con los
-nombres de variable **de ese fichero** — que no siempre coinciden con el
-nombre que la aplicación real espera (el `.env` de este repo suele añadir un
-prefijo por servicio o nodo para evitar colisiones entre `docker-compose.yml`
-distintos, cosa que Infisical no necesita porque cada servicio ya vive en su
-propia carpeta). Antes de conectar el wrapper de cada servicio (mejora 28) se
-revisó carpeta por carpeta y se renombraron las claves que no coincidían:
+El volcado masivo del 2026-08-10 importó cada `.env` tal cual, con los nombres de variable **de ese fichero** — que no siempre coinciden con el nombre que la aplicación real espera (el `.env` de este repo suele añadir un prefijo por servicio o nodo para evitar colisiones entre `docker-compose.yml` distintos, cosa que Infisical no necesita porque cada servicio ya vive en su propia carpeta). Antes de conectar el wrapper de cada servicio (mejora 28) se revisó carpeta por carpeta y se renombraron las claves que no coincidían:
 
 | Servicio | Clave `.env` original (2026-08-10) | Clave real que consume la app (renombrada en Infisical) |
 |---|---|---|
@@ -143,73 +131,25 @@ revisó carpeta por carpeta y se renombraron las claves que no coincidían:
 | `sonarqube` | `SONARQUBE_DB_USER` / `SONARQUBE_DB_PASSWORD` | `SONAR_JDBC_USERNAME` / `SONAR_JDBC_PASSWORD` |
 | `open-terminal-mcp`, `bifrost` | (ya coincidían) | sin cambios |
 
-`open-webui` es el caso especial: `DATABASE_URL` no es una contraseña suelta,
-es la cadena de conexión completa (`postgresql://openwebui:<password>@postgres-main:5432/openwebui`)
-— Open WebUI solo sabe leer `DATABASE_URL` entera, no una variable de
-contraseña por separado. Se sustituyó el secreto `OPENWEBUI_DB_PASSWORD` por
-uno nuevo `DATABASE_URL` con la cadena completa ya construida, en vez de
-intentar componerla en el `docker-compose.yml` a partir de un secreto
-inyectado (no se puede: `infisical run` inyecta variables de entorno
-completas, no permite interpolar un secreto dentro de otro string en YAML).
+`open-webui` es el caso especial: `DATABASE_URL` no es una contraseña suelta, es la cadena de conexión completa (`postgresql://openwebui:<password>@postgres-main:5432/openwebui`) — Open WebUI solo sabe leer `DATABASE_URL` entera, no una variable de contraseña por separado. Se sustituyó el secreto `OPENWEBUI_DB_PASSWORD` por uno nuevo `DATABASE_URL` con la cadena completa ya construida, en vez de intentar componerla en el `docker-compose.yml` a partir de un secreto inyectado (no se puede: `infisical run` inyecta variables de entorno completas, no permite interpolar un secreto dentro de otro string en YAML).
 
-**Antes de migrar un servicio nuevo, comprobar siempre si el nombre de la
-clave en Infisical coincide con lo que la aplicación real espera** — no
-asumir que el volcado masivo ya lo dejó bien, aunque el servicio esté en la
-lista de "candidatos limpios" del inventario.
+**Antes de migrar un servicio nuevo, comprobar siempre si el nombre de la clave en Infisical coincide con lo que la aplicación real espera** — no asumir que el volcado masivo ya lo dejó bien, aunque el servicio esté en la lista de "candidatos limpios" del inventario.
 
 ### Hallazgo nuevo — el healthcheck no ve los secretos inyectados en caliente
 
-`docker exec` (que es como Docker ejecuta el `healthcheck:` de Compose) hereda
-el entorno **estático** con el que se creó el contenedor, no el entorno
-dinámico del proceso PID 1 después de que `infisical run` lo sustituyera por
-`exec`. Cualquier healthcheck que antes referenciara una variable de secreto
-directamente (`$$ACCESS_KEY`, etc.) deja de funcionar tal cual tras migrar
-ese servicio — se descubrió con `rsshub` (`/healthz?key=$$ACCESS_KEY` pasaba
-a mandar `key=` vacío, 403 constante). Solución aplicada: aceptar como "sano"
-tanto la respuesta autenticada (200) como el 403 esperado sin credencial
-—mismo criterio que ya usaba `registry` para 401/200. Revisar este mismo
-punto antes de migrar cualquier otro servicio cuyo healthcheck dependa de un
-secreto.
+`docker exec` (que es como Docker ejecuta el `healthcheck:` de Compose) hereda el entorno **estático** con el que se creó el contenedor, no el entorno dinámico del proceso PID 1 después de que `infisical run` lo sustituyera por `exec`. Cualquier healthcheck que antes referenciara una variable de secreto directamente (`$$ACCESS_KEY`, etc.) deja de funcionar tal cual tras migrar ese servicio — se descubrió con `rsshub` (`/healthz?key=$$ACCESS_KEY` pasaba a mandar `key=` vacío, 403 constante). Solución aplicada: aceptar como "sano" tanto la respuesta autenticada (200) como el 403 esperado sin credencial —mismo criterio que ya usaba `registry` para 401/200. Revisar este mismo punto antes de migrar cualquier otro servicio cuyo healthcheck dependa de un secreto.
 
 ### Hallazgo nuevo — un secreto migrado puede seguir haciendo falta en claro en el `.env` si otro servicio SIN migrar lo consume
 
-`postgres-main` (retaco) usa `N8N_DB_PASSWORD` en su propio `environment:`
-—no para autenticarse él mismo, sino como valor de semilla para su script de
-init (`01-init-n8n.sh`), que solo se ejecuta si el volumen de datos está
-vacío. Al migrar `n8n-main` se retiró `N8N_DB_PASSWORD` del `.env` de
-`retaco` por rutina (ya no lo necesita `n8n-main`, que ahora lo recibe vía
-Infisical con el nombre `DB_POSTGRESDB_PASSWORD`) — pero `postgres-main`
-**seguía referenciándolo por su nombre original**, así que se quedó apuntando
-a una variable vacía. No rompe nada mientras el volumen de `postgres-main` no
-se reinicialice desde cero, pero si algún día ocurre, crearía el rol `n8n`
-con una contraseña vacía que ya no coincidiría con la que `n8n-main` lee de
-Infisical. Corregido restaurando `N8N_DB_PASSWORD` en el `.env` de `retaco`
-(mismo valor, sin rotar) — `postgres-main` está en la lista de "bloqueados,
-solo primer arranque" precisamente por este tipo de acoplamiento, así que
-**antes de borrar una variable en claro tras migrar un servicio, comprobar
-que ningún OTRO servicio (típicamente `postgres-main`, por sus scripts de
-init) todavía la referencia por su nombre original**.
+`postgres-main` (retaco) usa `N8N_DB_PASSWORD` en su propio `environment:` —no para autenticarse él mismo, sino como valor de semilla para su script de init (`01-init-n8n.sh`), que solo se ejecuta si el volumen de datos está vacío. Al migrar `n8n-main` se retiró `N8N_DB_PASSWORD` del `.env` de `retaco` por rutina (ya no lo necesita `n8n-main`, que ahora lo recibe vía Infisical con el nombre `DB_POSTGRESDB_PASSWORD`) — pero `postgres-main` **seguía referenciándolo por su nombre original**, así que se quedó apuntando a una variable vacía. No rompe nada mientras el volumen de `postgres-main` no se reinicialice desde cero, pero si algún día ocurre, crearía el rol `n8n` con una contraseña vacía que ya no coincidiría con la que `n8n-main` lee de Infisical. Corregido restaurando `N8N_DB_PASSWORD` en el `.env` de `retaco` (mismo valor, sin rotar) — `postgres-main` está en la lista de "bloqueados, solo primer arranque" precisamente por este tipo de acoplamiento, así que **antes de borrar una variable en claro tras migrar un servicio, comprobar que ningún OTRO servicio (típicamente `postgres-main`, por sus scripts de init) todavía la referencia por su nombre original**.
 
 ### Hallazgo nuevo — recrear un servicio puede arrastrar a `postgres-main`
 
-`docker compose up -d --force-recreate <servicio>` recreó también
-`postgres-main` la primera vez que se probó (sin pedirlo), por depender de él
-vía `depends_on`. No perdió datos (bind-mount), pero sí cortó brevemente las
-conexiones activas de otros consumidores (reconectaron solos). A partir de
-ahí se usó `--force-recreate --no-deps <servicio>` en el resto de
-recreaciones para evitar tocar dependencias sanas sin necesidad.
+`docker compose up -d --force-recreate <servicio>` recreó también `postgres-main` la primera vez que se probó (sin pedirlo), por depender de él vía `depends_on`. No perdió datos (bind-mount), pero sí cortó brevemente las conexiones activas de otros consumidores (reconectaron solos). A partir de ahí se usó `--force-recreate --no-deps <servicio>` en el resto de recreaciones para evitar tocar dependencias sanas sin necesidad.
 
 ### Duda sin resolver — `BIFROST_ADMIN_USERNAME`/`_PASSWORD`
 
-Sigue sin confirmarse si Bifrost los relee en cada arranque o solo la primera
-vez (como Grafana) — la comprobación en vivo (cambiar el valor en Infisical y
-recrear el contenedor) quedó bloqueada por una restricción de seguridad de
-esta sesión (no está permitido teclear directamente en un campo de
-contraseña). El resto de secretos de `bifrost` (`AWS_*`, `BIFROST_VIRTUAL_KEY`,
-`BIFROST_DB_PASSWORD`) sí están confirmados de cada arranque y funcionando.
-Pendiente para quien retome esta duda: cambiar `BIFROST_ADMIN_PASSWORD` en
-Infisical, recrear `bifrost` y probar el login del panel admin con el valor
-nuevo.
+Sigue sin confirmarse si Bifrost los relee en cada arranque o solo la primera vez (como Grafana) — la comprobación en vivo (cambiar el valor en Infisical y recrear el contenedor) quedó bloqueada por una restricción de seguridad de esta sesión (no está permitido teclear directamente en un campo de contraseña). El resto de secretos de `bifrost` (`AWS_*`, `BIFROST_VIRTUAL_KEY`, `BIFROST_DB_PASSWORD`) sí están confirmados de cada arranque y funcionando. Pendiente para quien retome esta duda: cambiar `BIFROST_ADMIN_PASSWORD` en Infisical, recrear `bifrost` y probar el login del panel admin con el valor nuevo.
 
 ## Histórico — piloto `apikey-service`
 
@@ -224,10 +164,7 @@ Migrado y verificado en producción el 2026-08-09. Detalle específico de esta m
 
 ### Servicios conectados en la mejora 28 (2026-08-19)
 
-De los 10 servicios que quedaron con el secreto ya importado pero sin
-conectar, 9 se conectaron y verificaron en la mejora 28 (claves finales tras
-los renombrados de la sección anterior). `registry` queda fuera a propósito
-(bajo valor, ver inventario).
+De los 10 servicios que quedaron con el secreto ya importado pero sin conectar, 9 se conectaron y verificaron en la mejora 28 (claves finales tras los renombrados de la sección anterior). `registry` queda fuera a propósito (bajo valor, ver inventario).
 
 | Nodo | Servicio | Carpeta | Secretos (nombre final, ya conectado) |
 |---|---|---|---|

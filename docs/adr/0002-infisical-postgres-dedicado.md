@@ -1,8 +1,6 @@
 # ADR 0002 — Infisical usa un Postgres dedicado, no `postgres-main`
 
-**Estado**: aceptada
-**Fecha**: 2026-08-09
-**Contexto**: mejora 16 del backlog (`docs/22-mejoras-futuras.md`), desarrollada en `docs/26-infisical-secretos.md`
+**Estado**: aceptada **Fecha**: 2026-08-09 **Contexto**: mejora 16 del backlog (`docs/22-mejoras-futuras.md`), desarrollada en `docs/26-infisical-secretos.md`
 
 ## Contexto
 
