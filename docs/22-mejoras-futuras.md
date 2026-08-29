@@ -1265,6 +1265,98 @@ Bajo — reutiliza infraestructura y patrón exactamente iguales a los de la ale
 
 ---
 
+## 43. Auditoría de bind-mounts en Docker Swarm — evaluar alternativas a la fijación por nodo
+
+**Prioridad: media**
+
+### Qué hay hoy
+
+**Hallazgo de partida**: el 100 % del estado real de este clúster en Docker Swarm se sirve hoy con
+bind-mounts de host (`/srv/homelab/<nodo>/...` o, en dos casos, `/mnt/nfs-data/...` del NAS) — no
+hay ni un solo volumen Docker nombrado (`driver: local` o cualquier otro) en ninguno de los 25
+stacks de `docker-swarm/stacks/` (confirmado por barrido, `grep` de referencias a volumen que no
+empiecen por `/`). Un bind-mount solo contiene datos reales en el nodo físico donde vive ese
+directorio, así que **cualquier servicio con bind-mount de estado real necesita
+`deploy.placement.constraints: node.hostname==X`** para que Swarm lo reprograme siempre en el mismo
+nodo — sin eso, una tarea reprogramada en otro nodo arrancaría con un directorio vacío (o fallaría
+al arrancar, según el servicio) en vez de recuperar los datos existentes.
+
+Esto es la razón estructural de por qué la inmensa mayoría de los stacks de este clúster llevan un
+`constraints: node.hostname==X` fijo — no es una limitación elegida a propósito, es la consecuencia
+directa de no usar ningún mecanismo de volumen portable. Vale la pena revisarlo servicio a servicio:
+para muchos (una base de datos con un único escritor, por ejemplo) fijar el nodo es correcto y no
+hay alternativa real sin asumir latencia de red en cada escritura; para otros, puede que no haga
+falta ningún estado real en disco, o que el estado sea prescindible, o que ya se haya resuelto sin
+necesidad de bind-mount — y en esos casos merece la pena preguntarse si el constraint sigue
+justificado.
+
+#### Inventario completo — bind-mounts por stack/servicio (2026-08-29)
+
+**Con bind-mount de estado real + `constraints: node.hostname==X`** (la mayoría — el nodo está
+fijado y, hoy, con razón: cada uno es el único sitio donde vive el dato):
+
+| Stack | Servicio(s) | Nodo | Bind-mount(s) | Naturaleza del dato |
+|---|---|---|---|---|
+| `postgres-main` | `postgres-main` | `retaco` | `/srv/homelab/retaco/postgres/{data,init}` | Real — BD multi-tenant compartida por casi todo el clúster |
+| `infisical` | `postgres-infisical` | `retaco` | `/srv/homelab/retaco/postgres-infisical/data` | Real — BD dedicada, instancia separada de `postgres-main` a propósito (ADR 0002) |
+| `infisical` | `infisical` | `retaco` | CA interna (`ca/homelab-ca.crt`, solo lectura) | Config — pinnado por compartir stack/red con `postgres-infisical`, no por datos propios |
+| `n8n-main` | `n8n-main` | `retaco` | `/srv/homelab/retaco/n8n/data` | Real — workflows y credenciales |
+| `n8n-aux` | `n8n-aux` | `pi-utils` | `/srv/homelab/pi-utils/n8n-aux/data` | Real — SQLite propio |
+| `qdrant` | `qdrant` | `retaco` | `/srv/homelab/retaco/qdrant/{storage,snapshots}` | Real — vectores de RAG |
+| `registry` | `registry` | `retaco` | `/srv/homelab/retaco/registry/{data,auth}` | Real — blobs de imágenes + htpasswd |
+| `open-webui` | `open-webui` | `retaco` | `/srv/homelab/retaco/open-webui/data` | Real — usuarios, chats, config (Postgres desde la migración, este directorio ya es solo residual/CA) |
+| `open-terminal-mcp` | `open-terminal-mcp` | `retaco` | `/srv/homelab/retaco/open-terminal-mcp/home` | Real — workspace del terminal |
+| `valkey` | `valkey` | `retaco` | `/srv/homelab/retaco/valkey/{users.acl,tls}` | Config (ACL/TLS) — Valkey en sí no persiste datos en disco aquí, es solo caché en memoria |
+| `authentik` | `authentik-server`, `authentik-worker` | `retaco` | `/srv/homelab/retaco/authentik/data` (+ `certs` en el worker) | Real — compartido entre ambos servicios, deben coincidir de nodo por eso además del bind-mount |
+| `vaultwarden` | `vaultwarden` | `pi-utils` | `/srv/homelab/pi-utils/vaultwarden/data` | Real — vault SQLite del gestor de contraseñas |
+| `rsshub` | `rsshub` | `pi-utils` | `/srv/homelab/pi-utils/rsshub/data` | Real/caché de feeds |
+| `portainer-server` | `portainer` | `pi-utils` | `/srv/homelab/pi-utils/portainer/data` | Real — BoltDB de Portainer |
+| `capataz` | `capataz-api`, `capataz-runner`, `capataz-frontend` | `pi-utils` | `catalog/`, `api/alembic*`, `certs/`, `config/capataz-frontend/default.conf` | Config — el estado real de Capataz vive en `postgres-main`/Valkey, no en estos bind-mounts |
+| `bifrost` | `bifrost` | `pi-sonar` | `/srv/homelab/pi-sonar/bifrost/data` | Mixto — `config.json` + SQLite legado sin usar; el estado real ya vive en `postgres-main` (`docs/23`) |
+| `sonarqube` | `sonarqube` | `pi-sonar` | `/srv/homelab/pi-sonar/sonarqube/{data,extensions,logs,temp}` | Real |
+| `pi-obs` | `loki`, `tempo`, `prometheus`, `grafana` | `pi-obs` | `/srv/homelab/pi-obs/{loki,tempo,prometheus,grafana}/...` | Real, pero regenerable a propósito (sin backup salvo Grafana) |
+| `pi-obs` | `otel-collector`, `postgres-exporter` | `pi-obs` | Solo config de solo lectura (`otel-collector`) o ninguno (`postgres-exporter`) | Config/ninguno — comparten el constraint del stack (mismo `deploy:` con ancla YAML) sin necesitarlo por datos propios |
+| `epub2pdf-service` | `epub2pdf-service` | `retaco` | `/mnt/nfs-data/epub2pdf/{input,output}` (NFS del NAS `ketekasko`) | Externo — confirmado que solo `retaco` tiene ese montaje NFS entre los 5 nodos |
+| `pdf2chunks-service` | `pdf2chunks-service` | `retaco` | `/mnt/nfs-data/pdf2chunks/input` (mismo NAS) | Externo — mismo motivo que `epub2pdf-service` |
+
+**Con bind-mount pero SIN `constraints` de nodo** (casos límite — a revisar con prioridad, ver
+"Qué haría falta"):
+
+| Stack | Servicio | Nodo | Bind-mount(s) | Por qué no está pinnado hoy |
+|---|---|---|---|---|
+| `apikey-service` | `apikey-service` | Ninguno — Swarm elige entre los 5 | `infisical-cli/infisical` (binario) + `ca/homelab-ca.crt` | Ficheros idénticos replicados a mano en `/srv/homelab/apikey-service/` de los 5 nodos — decisión deliberada, documentada en el propio compose, pero depende de que ese `rsync` manual nunca quede desincronizado en algún nodo (mismo tipo de fallo ya visto con Bifrost, ver `docs/23`) |
+| `markitdown` | `markitdown-service` | Ninguno — Swarm elige entre los 5 | `/srv/homelab/markitdown-cache` | Caché scratch, pérdida asumida a propósito si Swarm reprograma a otro nodo — decisión deliberada, sin riesgo real |
+
+**`mode: global` con bind-mount idéntico en cada nodo** (patrón correcto por diseño, sin acción
+necesaria — cada réplica lee el propio host donde corre, no datos compartidos):
+
+| Stack | Servicio | Bind-mount(s) |
+|---|---|---|
+| `common` | `node-exporter` | `/proc`, `/sys`, `/`, `/srv/homelab/node-exporter-textfile` |
+| `common` | `cadvisor` | `/`, `/var/run`, `/sys`, `/var/lib/docker`, `/dev/disk` |
+| `portainer` (agent) | `agent` | `/var/run/docker.sock`, `/var/lib/docker/volumes` |
+| `traefik` | `traefik` | `/var/run/docker.sock` |
+
+**Sin ningún volumen** (totalmente portable, sin acción posible ni necesaria): `crawl4ai-scraper-service`.
+
+### Qué haría falta
+
+1. **Revisar los dos casos "sin constraints" primero** (`apikey-service`, `markitdown-service`) — son los que peor encajan hoy: o se documenta explícitamente por qué es seguro dejarlos así (ya hecho parcialmente en comentarios), o se sustituye el `rsync` manual a los 5 nodos del binario de Infisical/CA de `apikey-service` por el mecanismo de `docker config` descrito en el punto siguiente.
+2. **Sustituir por `docker config` los bind-mounts que en realidad son un único fichero de texto de solo lectura, sin secretos** — mecanismo ya probado en este mismo clúster (`traefik-dynamic-routes-v5`, `docker-swarm/stacks/traefik/`), y **la alternativa correcta para el caso de Bifrost**, no una NFS ni mantener el bind-mount:
+   - **`bifrost` es el caso más claro de todo el inventario**: `config.json` es exactamente la forma que un `docker config` está pensado para resolver (fichero pequeño, de solo lectura, sin ningún secreto en claro — todos los campos sensibles ya usan el prefijo `env.`, resuelto en tiempo de arranque vía Infisical, no desde el propio fichero). Además, **el propio comentario del stack ya admite que `/app/data` "solo aloja ficheros de trabajo internos" y que no hay estado real ahí desde la migración a Postgres** (`docker-swarm/stacks/bifrost/docker-compose.yml`, cabecera) — así que convertir `config.json` en un `docker config` no sería solo un cambio de mecanismo de despliegue, sino la vía real para **cuestionar si `bifrost` necesita seguir pinnado a `pi-sonar` en absoluto** (verificar primero que ningún otro fichero de `/app/data` se sigue escribiendo de verdad antes de retirar el bind-mount entero, no asumirlo). De paso, habría evitado por completo el incidente real del 2026-08-29 (`docs/23-bifrost-gateway-llm.md`, "`config.json` desincronizado tras retirar `home.arpa`") — con un `docker config`, `docker stack deploy` reparte el contenido nuevo solo, sin depender de un `rsync` manual que alguien puede olvidar.
+   - **Otros candidatos claros vistos en el inventario de arriba**, misma forma (fichero único, de solo lectura, sin secretos): `config/capataz-frontend/default.conf` (`capataz`); `loki.yaml`/`tempo.yaml`/`prometheus.yml`/`otel-collector.yaml`/`datasources.yml`/`alerting/undervoltage.yml`/`dashboards.yml` (`pi-obs` — varios de estos, no solo `undervoltage.yml`, ya podrían ir por este camino).
+   - **Límites reales del mecanismo, a tener en cuenta antes de aplicarlo**: un `docker config` es un fichero único, no un directorio (descarta de raíz `catalog/`/`alembic/` de `capataz` y `dashboards/json/` de `pi-obs` tal cual, habría que trocearlos en un config por fichero, no siempre compensa); tiene un límite de 500 KB (ninguno de los candidatos de arriba se acerca); y **nunca debe llevar secretos** — el `users.acl` de `valkey`, por ejemplo, hoy lleva una contraseña en claro dentro del propio fichero (`user capataz on >{contraseña} ...`), así que ese caso concreto necesitaría separar la contraseña a un `docker secret` aparte antes de poder convertir el resto del ACL en `docker config`, no vale con moverlo tal cual.
+   - Sigue siendo **inmutable como los `docker secret`** (mismo patrón `-vN` ya usado en todo el repo) — cualquier cambio de contenido exige bump de versión + `docker stack deploy`, no un `docker config update` en sitio.
+3. **Para cada servicio de la primera tabla (bind-mount + constraint) que NO sea un candidato a `docker config`, confirmar que el pin sigue siendo la decisión correcta y que está documentado como tal** — la mayoría de los `docker-compose.yml` ya llevan un comentario explicando el motivo (patrón exigido por `CLAUDE.md`), pero conviene verificar que ninguno se quedó sin esa justificación tras ediciones posteriores.
+4. **Evaluar un volumen NFS-backed contra el NAS `ketekasko`** (ya probado NFSv3, `docs/21-configuracion-nas-ugreen.md`) como alternativa real al bind-mount local para los candidatos con menos escritura/latencia crítica que sí tengan estado real (p. ej. `registry`, `grafana`, `vaultwarden`) — **no** para bases de datos con escritura frecuente real (`postgres-main`, `qdrant`, `loki`, `prometheus`) sin medir antes: NFS añade latencia por escritura que puede degradar justo el tipo de servicio que más se beneficiaría de dejar de estar pinnado. El resultado esperado para la mayoría de estos es probablemente "mantener el bind-mount + constraint tal cual", pero que sea una decisión explícita y medida, no un valor por defecto sin examinar.
+5. **Para los dos servicios atados al NFS solo-en-`retaco`** (`epub2pdf-service`, `pdf2chunks-service`): valorar montar `ketekasko:/volume1/nfs-data` también en los otros 4 managers (técnicamente ya viable, mismo patrón NFSv3) para poder retirar el `constraints` — sopesando el coste real (4 puntos de montaje NFS más que mantener) frente al beneficio (servicios de conversión de bajo tráfico, el pin apenas cuesta algo hoy).
+6. **Actualizar esta misma tabla** en este documento (o moverla a `docs/31-docker-swarm.md`, que ya es el documento de referencia operativo de Swarm) una vez revisado cada servicio, marcando la decisión tomada — para que no vuelva a quedar como un inventario "de un momento dado" sin mantener.
+
+### Esfuerzo estimado
+Medio — el barrido en sí ya está hecho (tabla de arriba); el trabajo real está en medir antes de tocar cualquier servicio con escritura frecuente (punto 4) y en decidir, servicio a servicio, si el pin actual es la opción correcta o solo la que salió por defecto. El caso de Bifrost (punto 2) es el más barato de resolver de todo el inventario — mecanismo ya probado en el propio clúster, sin necesidad de medir latencia. Ningún cambio de este punto es urgente: todos los pins actuales funcionan correctamente hoy.
+
+---
+
 ## Resumen
 
 | # | Mejora | Prioridad | Esfuerzo | Depende de |
@@ -1311,5 +1403,6 @@ Bajo — reutiliza infraestructura y patrón exactamente iguales a los de la ale
 | 40 | DNS secundario del clúster — resolución de `*.404labo.net` sin depender solo de `pi-dns` | Media | Bajo-medio | Config de Unbound/Pi-hole ya versionada; alcance de sincronización (Pi-hole completo vs. solo Unbound) queda como decisión abierta |
 | 41 | ~~Retirar `*.home.arpa` por completo — todo bajo `404labo.net`~~ | Media | Medio | **Completado** (2026-08-28) — `home.arpa` retirado de Pi-hole/Traefik/Unbound, `nginx` decomisionado, ver `docs/31-docker-swarm.md` |
 | 42 | Alertas de disponibilidad de nodos y servicios | Media | Bajo | Prometheus/Grafana Alerting ya desplegados, mismo patrón que la alerta de undervoltage (`docs/14`); canal de notificación real comparte dependencia con la mejora 4 (ntfy) |
+| 43 | Auditoría de bind-mounts en Docker Swarm — evaluar alternativas a la fijación por nodo | Media | Medio | Inventario completo ya incluido en el propio punto; cualquier cambio real necesita medir latencia antes de aplicarse a un servicio con escritura frecuente |
 
 Ninguna de estas mejoras es urgente ni bloqueante — el clúster funciona correctamente sin ellas.

@@ -146,11 +146,51 @@ Sustituir `<ID_DE_CUENTA_AWS>` por el ID de cuenta de 12 dígitos (**IAM → pan
 }
 ```
 
-`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` son las del **usuario base** (`bifrost-bedrock-base`, sin permiso de Bedrock por sí mismo), `AWS_ROLE_ARN` es `arn:aws:iam::<ID_DE_CUENTA_AWS>:role/bifrost-bedrock-invoke` (el rol con la policy de invocación real) — las cuatro como variables de entorno normales en `pi-sonar/docker-compose.yml`/`.env`, nunca en `config.json` en claro.
+`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` son las del **usuario base** (`bifrost-bedrock-base`, sin permiso de Bedrock por sí mismo), `AWS_ROLE_ARN` es `arn:aws:iam::<ID_DE_CUENTA_AWS>:role/bifrost-bedrock-invoke` (el rol con la policy de invocación real) — inyectadas como variables de entorno normales al proceso, nunca en `config.json` en claro. ⚠️ El origen real de esas cuatro variables cambió desde que se escribió este párrafo — hoy vienen de Infisical, no de ningún `pi-sonar/docker-compose.yml`/`.env` (ese fichero ya ni siquiera define un servicio `bifrost`, ver "Secrets" más abajo).
 
 La alternativa más robusta a largo plazo, si algún día las *access keys* del usuario base resultan incómodas de rotar, sería **IAM Roles Anywhere** (certificados X.509 en vez de cualquier *access key* de larga duración) — evaluada y descartada por ahora por la complejidad añadida frente al beneficio real en un homelab de un único usuario.
 
 ## Instalación
+
+⚠️ **Ya no es así** — migrado a `docker-swarm/stacks/bifrost/` (2026-08-27, mejora 33), pinnado a
+`pi-sonar` con `constraints: node.hostname==pi-sonar` (mismo nodo de siempre, sin mover datos —
+ver `docs/31-docker-swarm.md`, Fase 4). El bind-mount de `/app/data` sigue siendo el mismo
+directorio físico del host (`/srv/homelab/pi-sonar/bifrost/data`), así que `config.json` sigue
+viviendo exactamente donde este apartado ya describía — lo único que cambió es cómo se levanta el
+contenedor y de dónde salen los secretos (ver "Secrets" más abajo). El apartado completo de abajo
+describe el despliegue Compose original tal y como se hizo entonces — sigue siendo válido como
+relato histórico (el motivo del `chown 1000:0`, el error real de `key_ids`...), pero **el
+procedimiento real de hoy está en la subsección siguiente**.
+
+### Cómo desplegar/actualizar Bifrost hoy (Swarm, procedimiento vigente)
+
+**Cambio de versión de imagen** (sin tocar `config.json`), desde un nodo manager (`retaco`/`pi-obs`/`pi-sonar`/`pi-utils`/`pinchi`):
+
+```bash
+rsync -av docker-swarm/stacks/bifrost/docker-compose.yml u-<x>@<manager>:/tmp/bifrost-compose.yml
+ssh u-<x>@<manager> "docker stack deploy -c /tmp/bifrost-compose.yml bifrost --with-registry-auth"
+```
+
+**Cambio en `config.json`** (nuevo modelo, alias, presupuesto, lo que sea) — bind-mount de
+**directorio completo**, así que hace falta el `rsync` manual al fichero real, luego forzar una
+tarea nueva para que Bifrost lo relea (no hay `docker config`/hot-reload para este fichero):
+
+```bash
+rsync -av pi-sonar/config/bifrost/config.json u-sonar@192.168.1.172:/tmp/bifrost-config.json
+ssh u-sonar@192.168.1.172 "sudo cp /tmp/bifrost-config.json /srv/homelab/pi-sonar/bifrost/data/config.json && rm /tmp/bifrost-config.json"
+ssh u-sonar@192.168.1.172 "docker service update --force bifrost_bifrost"
+```
+
+**Logs**: `docker service logs bifrost_bifrost` no devuelve nada (driver `loki`, igual que el resto
+del clúster) — consultar Loki directamente (`{swarm_service="bifrost_bifrost"}` en Grafana Explore,
+o vía la API HTTP de Loki en `pi-obs`, `192.168.1.171:3100`). Ver el incidente real más abajo
+("`config.json` desincronizado tras retirar `home.arpa`") para un ejemplo completo de diagnóstico
+por esta vía, incluida la consulta exacta.
+
+`sudo chown 1000:0 bifrost/data && chmod 770 bifrost/data` (motivo explicado abajo) solo hace falta
+una vez, en la primera instalación del nodo — no es parte del ciclo normal de actualización.
+
+### Cómo se hacía antes de la migración a Swarm (histórico, ya no aplica)
 
 ```bash
 ssh u-sonar@192.168.1.172
@@ -179,15 +219,54 @@ docker compose up -d bifrost
 docker compose logs -f bifrost
 ```
 
-`config.json` (`pi-sonar/config/bifrost/config.json`, versionado en git) no contiene ningún secreto — todos los campos sensibles usan el prefijo `env.` (`env.AWS_ACCESS_KEY_ID`, `env.BIFROST_VIRTUAL_KEY`...), resueltos en tiempo de arranque contra las variables de entorno del contenedor. Los secretos reales viven solo en `/srv/homelab/pi-sonar/.env`, fuera de git — mismo patrón que el resto del repo.
+`config.json` (`pi-sonar/config/bifrost/config.json`, versionado en git) no contiene ningún secreto — todos los campos sensibles usan el prefijo `env.` (`env.AWS_ACCESS_KEY_ID`, `env.BIFROST_VIRTUAL_KEY`...), resueltos en tiempo de arranque contra las variables de entorno del contenedor. Los secretos reales viven solo en `/srv/homelab/pi-sonar/.env`, fuera de git — mismo patrón que el resto del repo en esa época (ver "Secrets" más abajo para dónde viven de verdad hoy).
 
 Bifrost persiste su propio estado de gobernanza (virtual keys creadas/modificadas vía API o UI, tras el arranque inicial desde `config.json`) en `config.db` (SQLite), dentro del mismo volumen `/app/data` — por eso todo el directorio `bifrost/data/` debe tratarse como estado, no solo como config de solo lectura.
 
 **`key_ids` en `provider_configs` de la virtual key debe ser `["*"]`, no el `name` de la clave del proveedor** — es un error real que apareció en el primer despliegue (`could not resolve keys: key_id=bedrock-primary`): `key_ids` referencia identificadores internos que Bifrost asigna él mismo, no el campo `name` que se puso en `config.json`. Con una sola clave de Bedrock, `["*"]` (documentado como "permitir todas las claves") es la forma correcta y más simple.
 
+## Secrets — Infisical, no `.env` (desde la mejora 28, 2026-08-19, antes incluso de Swarm)
+
+⚠️ **Ya no es así** — los siete secretos reales de Bifrost (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
+`AWS_ROLE_ARN`, `BIFROST_VIRTUAL_KEY`, `BIFROST_DB_PASSWORD`, `BIFROST_ADMIN_USERNAME`,
+`BIFROST_ADMIN_PASSWORD`) migraron a Infisical con el resto de la mejora 28 (`docs/26-infisical-secretos.md`,
+proyecto "Homelab Cluster", ruta `/bifrost/`, entorno `prod`) — **ya no viven en `pi-sonar/.env`**,
+pese a lo que dice el resto de este documento en varios sitios ("variable de entorno en `.env`" a
+partir de aquí, léase "secreto de Infisical"). El stack de Swarm (`docker-swarm/stacks/bifrost/docker-compose.yml`)
+usa el mismo patrón "wrapper de dos pasos" que el resto del clúster (`docs/26`, sección del ADR 0001):
+tres Docker secrets nativos de Swarm (`bifrost-infisical-client-id-v1`/`-client-secret-v1`/`-project-id-v1`,
+credenciales de Universal Auth de la identidad de máquina de Infisical, no los secretos de la app en
+sí) para hacer `infisical login`, y luego `infisical run --path=/bifrost/ --env=prod -- /app/docker-entrypoint.sh /app/main`
+sustituye el proceso final con los siete secretos ya inyectados como variables de entorno normales —
+`config.json` sigue leyéndolos con el prefijo `env.` de siempre, sin ningún cambio en el propio
+fichero.
+
+**Duda sin resolver, heredada de `docs/26`**: no está confirmado si Bifrost relee `BIFROST_ADMIN_USERNAME`/`_PASSWORD`
+en cada arranque o solo la primera vez (tipo Grafana, que siembra una cuenta una sola vez e ignora
+la variable después) — cambiar el valor en Infisical y forzar una tarea nueva sin verificar el login
+real del panel podría dar una falsa sensación de que rotó. El resto de secretos (`AWS_*`,
+`BIFROST_VIRTUAL_KEY`, `BIFROST_DB_PASSWORD`) sí están confirmados de cada arranque.
+
 ## nginx (`pi-dns`)
 
-Bloque añadido a `pi-dns/config/nginx/nginx.conf` (sección "pi-sonar"):
+⚠️ **Ya no es así** — `nginx` en `pi-dns` está decomisionado del todo (mejora 41, 2026-08-28,
+`CLAUDE.md`) y **Traefik es la puerta de entrada real** hoy. El hostname también cambió de dominio
+(mejora 41, retirada de `home.arpa`): `bifrost.404labo.net` está enrutado por el proveedor `file`
+de Traefik (`docker-swarm/stacks/traefik/dynamic/routes.yml`, no por labels de Swarm en el propio
+stack, porque `bifrost` publica su puerto con `mode: host` en vez de vía la malla de enrutado) hacia
+el mismo backend de siempre, `http://192.168.1.172:8080` — ningún cambio en el propio Bifrost. El
+registro DNS apunta ahora a `192.168.1.175` (`pinchi`, uno de los 5 managers del Swarm donde corre
+Traefik en modo `global`), no a `192.168.1.170` (`pi-dns`) — Traefik puede correr en cualquiera de
+los managers, así que el registro puede apuntar a cualquiera de los 5. El resto de esta sección
+describe el nginx original tal y como se configuró entonces — sigue siendo la explicación real del
+gotcha de la ruta del fichero (aplica igual a cualquier config que se edite hoy dentro de
+`pi-dns/config/nginx/`, aunque ya no esté en producción), pero **el routing real de hoy es el
+bloque `bifrost-404labo-net`/`bifrost` de `routes.yml`**, sin equivalente al `proxy_read_timeout: 300s`
+que se documenta más abajo — Traefik no impone un timeout de respuesta por defecto como nginx, así
+que el problema real que motivó ese ajuste no debería reproducirse, pero no se ha vuelto a probar
+expresamente con una respuesta larga desde el cutover a Traefik.
+
+Bloque añadido a `pi-dns/config/nginx/nginx.conf` (sección "pi-sonar"), histórico:
 
 ```nginx
 server {
@@ -215,7 +294,7 @@ PIHOLE_PASSWORD=*** bash shared/scripts/load-dns-records.sh
 
 ## Autenticación — virtual key de Bifrost
 
-`config.json` define una única virtual key (`vk-homelab-cluster`), con `enforce_auth_on_inference: true` — cualquier petición a `/v1/chat/completions` sin ella recibe `401`. El valor real vive en `BIFROST_VIRTUAL_KEY` (`.env` de `pi-sonar`, fuera de git).
+`config.json` define una única virtual key (`vk-homelab-cluster`), con `enforce_auth_on_inference: true` — cualquier petición a `/v1/chat/completions` sin ella recibe `401`. El valor real vive en `BIFROST_VIRTUAL_KEY`, en Infisical (ruta `/bifrost/`), no en ningún `.env` — ver "Secrets" más arriba.
 
 Los clientes (Open WebUI, n8n) deben mandar una de estas cabeceras:
 
@@ -227,7 +306,7 @@ o
 x-bf-vk: <BIFROST_VIRTUAL_KEY>
 ```
 
-Rotar la key: generar un valor nuevo (`openssl rand -hex 24`, prefijo `sk-bf-` por convención), actualizarlo en `.env`, `docker compose up -d bifrost` (recarga el `config.json` con el nuevo valor resuelto), y actualizar la conexión en Open WebUI/n8n.
+Rotar la key: generar un valor nuevo (`openssl rand -hex 24`, prefijo `sk-bf-` por convención), actualizarlo en Infisical (`infisical secrets set` o la UI, ruta `/bifrost/`, entorno `prod`), `docker service update --force bifrost_bifrost` (relee el secreto vía el wrapper `infisical run` en el próximo arranque), y actualizar la conexión en Open WebUI/n8n.
 
 ## Autenticación del panel de administración — `governance.auth_config`
 
@@ -244,7 +323,7 @@ Rotar la key: generar un valor nuevo (`openssl rand -hex 24`, prefijo `sk-bf-` p
 }
 ```
 
-Variables correspondientes en `pi-sonar/.env` (usuario `admin`, contraseña generada con `openssl rand -hex 24`, guardada también en Vaultwarden). Verificado: sin credencial, `/api/logs` da `401`; con `-u admin:<password>` (HTTP Basic Auth estándar), `200`. La inferencia con la virtual key normal no se ve afectada — son dos mecanismos de auth independientes, uno para `/v1/*` (virtual key), otro para todo lo demás (usuario/contraseña de admin).
+Variables correspondientes en Infisical (`/bifrost/`, ver "Secrets" más arriba) — usuario `admin`, contraseña generada con `openssl rand -hex 24`, guardada también en Vaultwarden. Verificado: sin credencial, `/api/logs` da `401`; con `-u admin:<password>` (HTTP Basic Auth estándar), `200`. La inferencia con la virtual key normal no se ve afectada — son dos mecanismos de auth independientes, uno para `/v1/*` (virtual key), otro para todo lo demás (usuario/contraseña de admin).
 
 **Al acceder desde el navegador a `https://bifrost.home.arpa` ahora pedirá estas credenciales** (usuario/contraseña de admin), no las de ningún usuario de Open WebUI ni la virtual key.
 
@@ -442,7 +521,7 @@ bash /srv/homelab/shared/scripts/create-postgres-db.sh postgres-main dbadmin bif
 }
 ```
 
-`host`/`user`/`db_name` van hardcodeados en claro (no son secreto, mismo criterio que `SONAR_JDBC_URL` en `pi-sonar/docker-compose.yml`) — solo la contraseña pasa por `env.BIFROST_DB_PASSWORD` (`pi-sonar/.env`, fuera de git). `ssl_mode: "disable"` porque `postgres-main` no tiene TLS habilitado — mismo criterio que el resto de conexiones internas del clúster a esa base. `postgresql.home.arpa` (no `postgres-main`, el nombre del contenedor) porque `bifrost` vive en `pi-sonar`, cross-host respecto a `retaco` — mismo patrón que `SONAR_JDBC_URL`.
+`host`/`user`/`db_name` van hardcodeados en claro (no son secreto, mismo criterio que `SONAR_JDBC_URL` en `pi-sonar/docker-compose.yml`) — solo la contraseña pasa por `env.BIFROST_DB_PASSWORD`, en Infisical desde la mejora 28 (fuera de `.env`, ver "Secrets" más arriba). `ssl_mode: "disable"` porque `postgres-main` no tiene TLS habilitado — mismo criterio que el resto de conexiones internas del clúster a esa base. `postgresql.home.arpa` (no `postgres-main`, el nombre del contenedor) porque `bifrost` vive en `pi-sonar`, cross-host respecto a `retaco` — mismo patrón que `SONAR_JDBC_URL`. ⚠️ El `host` real pasó de `postgresql.home.arpa` a `postgresql.404labo.net` en la mejora 41 — ver el incidente "`config.json` desincronizado tras retirar `home.arpa`" más abajo, que documenta también por qué este cambio no llegó solo con el commit.
 
 ### Sin migración de datos existentes
 
@@ -457,18 +536,55 @@ Se empezó de cero, sin migrar `config.db`/`logs.db` previos — mismo criterio 
 5. `SELECT count(*) FROM logs` tras esa petición — `1`: el log de la petición quedó escrito en Postgres, no en SQLite.
 6. Ruta `ollama/qwen3.5:9b` (provider Ollama, sección más abajo) probada aparte tras el cambio — sigue funcionando sin diferencias, la migración de storage no afecta al routing de providers.
 
+### Fallo real encontrado y corregido (2026-08-29): `config.json` desincronizado tras retirar `home.arpa`
+
+Al cerrar la mejora 41 (retirada de `*.home.arpa`, ver `docs/22-mejoras-futuras.md`) se actualizó
+`pi-sonar/config/bifrost/config.json` en el repo (`config_store.config.host`/`logs_store.config.host`
+de `postgresql.home.arpa` a `postgresql.404labo.net`), pero **no se volvió a hacer el `rsync`** a
+`/srv/homelab/pi-sonar/bifrost/data/config.json` — el fichero real que Bifrost lee en cada arranque
+(sección "Deploy" más abajo). Como el registro `postgresql.home.arpa` en Pi-hole ya se había
+retirado, el contenedor entraba en crash-loop en cada intento de arranque:
+
+```
+{"level":"error","message":"failed to bootstrap server: failed to load config failed to connect to
+`user=bifrost database=bifrost`: hostname resolving error: lookup postgresql.home.arpa on
+127.0.0.11:53: no such host"}
+```
+
+Confirmado vía Loki (`{swarm_service="bifrost_bifrost"}` — `docker service logs` no devuelve nada,
+igual que el resto del clúster con el driver `loki`). Es la misma clase de deriva ya vista con
+`crawl4ai-scraper-service` durante el barrido de mejora 41 (repo corregido, nodo no redesplegado) —
+pero aquí el motivo estructural es distinto: `config.json` vive dentro de un bind-mount de
+**directorio completo** (`/app/data`) sembrado a mano por `rsync` (ver más abajo), no por un `docker
+config`/`docker stack deploy` que lo redistribuya automáticamente en cada despliegue del stack.
+
+Corregido con el mismo patrón de `/tmp` + `sudo cp` de siempre (`CLAUDE.md`, "Deploying a changed
+file to a node") y un `docker service update --force bifrost_bifrost` para forzar el redespliegue
+del contenedor con el fichero corregido — no hace falta bump de versión de nada, es un bind-mount
+directo, no un `docker config` versionado.
+
+**Lección**: cualquier cambio futuro a `config.json` en el repo necesita el `rsync` manual de la
+sección "Deploy" para llegar al nodo real — no basta con el commit, y `docker stack deploy`/`docker
+service update --force` por sí solos no lo tocan.
+
 ### Vaultwarden
 
 `BIFROST_DB_PASSWORD` es una credencial más — misma limitación que `OPENWEBUI_DB_PASSWORD` (ver sección de Open WebUI más abajo): no automatizable sin la contraseña maestra de un usuario real de Vaultwarden. Añadir a mano una entrada `bifrost — postgres` (usuario `bifrost`, host `postgres-main:5432`/`postgresql.home.arpa:5432`, base `bifrost`).
 
 ## Operación
 
-- **Arranque/parada**: `cd /srv/homelab/pi-sonar && docker compose up -d bifrost` / `docker compose stop bifrost` — igual que cualquier otro servicio del clúster (`docs/11-operacion-diaria.md`).
-- **Logs**: `docker compose logs -f bifrost`, o desde Grafana/Loki (`promtail` en `pi-sonar` ya envía los logs de todos los contenedores del nodo) — esto son los logs del *proceso* (stdout), no los logs de peticiones del panel (esos están en la tabla `logs`, base `bifrost` en `postgres-main`, ver sección "Postgres centralizado" arriba).
-- **Actualizaciones**: **manuales, nunca automáticas** — `bifrost` no lleva la label de watchtower a propósito (mismo criterio que `sonarqube` en este nodo, ver `docs/16-mantenimiento-actualizaciones.md`). Subir de versión: cambiar el tag en `pi-sonar/docker-compose.yml`, `docker compose pull bifrost && docker compose up -d bifrost`, revisar el changelog de Bifrost antes (puede tocar el formato de `config.json` o el comportamiento de `enforce_auth_on_inference`).
+- **Arranque/parada** (Swarm, vigente): no hay "parada" normal de un servicio Swarm sin quitarlo del stack — `docker service scale bifrost_bifrost=0` para apagarlo temporalmente, `=1` para reactivarlo, o `docker service update --force bifrost_bifrost` para reiniciarlo con la misma config. `docker compose stop bifrost` ya no existe como comando aplicable — no hay ningún `docker-compose.yml` corriendo en `pi-sonar` para este servicio.
+- **Logs** (Swarm, vigente): `docker service logs bifrost_bifrost` no devuelve nada (driver `loki`) — consultar Loki directamente (`{swarm_service="bifrost_bifrost"}`, Grafana Explore o la API HTTP en `pi-obs:3100`) para los logs del *proceso*; los logs de petición del panel siguen en la tabla `logs` de Postgres, sin cambios (sección "Postgres centralizado" arriba).
+- **Actualizaciones** (Swarm, vigente): siguen siendo **manuales, nunca automáticas** — el stack de Swarm tampoco lleva la label de watchtower, mismo criterio de siempre. Subir de versión: cambiar el tag `maximhq/bifrost:vX.Y.Z` en `docker-swarm/stacks/bifrost/docker-compose.yml`, `rsync` + `docker stack deploy` (ver "Cómo desplegar/actualizar Bifrost hoy" arriba), revisar el changelog de Bifrost antes.
 - **Coste**: Bedrock factura por token de AWS — a diferencia del resto del clúster (100 % local). Presupuesto de 5 USD/mes ya configurado (`governance.budgets`, ver sección "Seguimiento de coste y presupuesto con aviso" más arriba).
-- **Añadir más modelos/proveedores**: editar `providers` en `config.json` (nuevo proveedor) y `allowed_models` de la virtual key si se quiere restringir por modelo en vez de dejar `["*"]`.
+- **Añadir más modelos/proveedores**: editar `providers` en `config.json` (nuevo proveedor) y `allowed_models` de la virtual key si se quiere restringir por modelo en vez de dejar `["*"]` — desplegar con el procedimiento de `config.json` de arriba (`rsync` al bind-mount + `docker service update --force`).
 - **Backup**: desde la migración a Postgres (sección "Postgres centralizado" arriba), el estado de gobernanza y el historial de logs quedan cubiertos automáticamente por `shared/scripts/backup-postgres.sh` (mejora 1 del backlog) sin necesidad de un script dedicado a Bifrost — cierra el punto que quedaba pendiente aquí. `bifrost/data/config.db`/`logs.db` (SQLite, previos a la migración) siguen en disco sin borrar, pero ya no se actualizan ni se usan.
+
+### Cómo se hacía antes de la migración a Swarm (histórico, ya no aplica)
+
+- **Arranque/parada**: `cd /srv/homelab/pi-sonar && docker compose up -d bifrost` / `docker compose stop bifrost` — igual que cualquier otro servicio del clúster (`docs/11-operacion-diaria.md`).
+- **Logs**: `docker compose logs -f bifrost`, o desde Grafana/Loki (`promtail` en `pi-sonar` ya envía los logs de todos los contenedores del nodo).
+- **Actualizaciones**: cambiar el tag en `pi-sonar/docker-compose.yml`, `docker compose pull bifrost && docker compose up -d bifrost`.
 
 ## Troubleshooting
 
@@ -476,13 +592,13 @@ Se empezó de cero, sin migrar `config.db`/`logs.db` previos — mismo criterio 
 |---|---|
 | Contenedor en *restart loop*, log `Error: /app/data is not writable by UID:GID 1000:0 (owned by ...)` | Visto en el despliegue real — la imagen corre como UID:GID `1000:0`, y `mkdir` en el host crea el directorio con el propietario del usuario SSH (`u-sonar`, no `1000:0`). Arreglo: `sudo chown 1000:0 bifrost/data && chmod 770 bifrost/data` antes de `docker compose up` |
 | `failed to sync governance config: ... could not resolve keys: key_id=<nombre>` al arrancar | Visto en el despliegue real — `key_ids` en `provider_configs` de la virtual key debe ser `["*"]`, no el `name` de la clave del proveedor (`bedrock-primary` en nuestro caso). Bifrost asigna sus propios identificadores internos a cada clave; `name` es solo para logs/UI, no es lo que `key_ids` espera |
-| `401` en toda petición, incluso con la key correcta | `BIFROST_VIRTUAL_KEY` en `.env` no coincide con el valor que Bifrost resolvió al arrancar — revisar `docker compose logs bifrost` al inicio, o reiniciar tras cambiar `.env` |
-| Error de credenciales AWS al arrancar (`unable to assume role`, `AccessDenied` en el propio `AssumeRole`) | Revisar `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`/`AWS_ROLE_ARN` en `.env`, y que la trust policy del rol `bifrost-bedrock-invoke` apunte exactamente al ARN del usuario `bifrost-bedrock-base` — un ARN mal escrito en cualquiera de los dos lados rompe el `AssumeRole` en silencio. Verificable fuera de Bifrost con `aws sts assume-role --role-arn <ARN> --role-session-name test` usando las credenciales del usuario base |
+| `401` en toda petición, incluso con la key correcta | `BIFROST_VIRTUAL_KEY` en Infisical (`/bifrost/`) no coincide con el valor que Bifrost resolvió al arrancar — revisar los logs en Loki (`{swarm_service="bifrost_bifrost"}`) al inicio, o `docker service update --force bifrost_bifrost` tras corregir el secreto |
+| Error de credenciales AWS al arrancar (`unable to assume role`, `AccessDenied` en el propio `AssumeRole`) | Revisar `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`/`AWS_ROLE_ARN` en Infisical (`/bifrost/`), y que la trust policy del rol `bifrost-bedrock-invoke` apunte exactamente al ARN del usuario `bifrost-bedrock-base` — un ARN mal escrito en cualquiera de los dos lados rompe el `AssumeRole` en silencio. Verificable fuera de Bifrost con `aws sts assume-role --role-arn <ARN> --role-session-name test` usando las credenciales del usuario base |
 | `403` / `AccessDeniedException` de Bedrock (pero el `AssumeRole` funcionó) | La policy adjunta al **rol** no cubre el modelo pedido — comprobar si es un *inference profile* (necesita el segundo `Statement`) o si el modelo no está habilitado en **Bedrock → Model access** de esa cuenta/región (paso manual en la consola de AWS, aparte de IAM) |
 | `ValidationException: The provided model identifier is invalid` | El `modelId` no existe tal cual en esa región/cuenta — el catálogo de Bedrock cambia con frecuencia (IDs de *foundation model* vs. *inference profile*, con o sin prefijo de región). Confirmar el ID exacto en **Bedrock → Model catalog** de la consola antes de asumir que es un problema de permisos |
-| `404` de nginx (página genérica, no de Bifrost) en `bifrost.home.arpa` | Visto en el despliegue real — `nginx.conf` se copió a la ruta del repo (`config/nginx/`) en vez de a la ruta real montada por Docker en este nodo (`/srv/homelab/pi-dns/nginx/conf/nginx.conf`); sin el bloque `bifrost.home.arpa` cargado, nginx cae al primer `server{}` de la lista (`index.home.arpa`) y da 404 al no encontrar la ruta como fichero estático |
-| `502` desde nginx en `bifrost.home.arpa` | Contenedor `bifrost` caído o arrancando — `docker compose ps` en `pi-sonar`, healthcheck tarda hasta `start_period: 15s` |
-| Contenedor marcado `unhealthy` en `docker compose ps` pese a responder bien a las peticiones reales | Visto en el despliegue real — la imagen de Bifrost **no trae `bash`** (`docker inspect bifrost --format '{{json .State.Health}}'` mostraba `"bash: not found"`), así que el truco `bash -c '</dev/tcp/...'` usado para `qdrant` en `retaco` no sirve aquí. Sí trae `wget` — healthcheck corregido a `wget -q -O /dev/null http://localhost:8080/health` |
+| `404` de nginx (página genérica, no de Bifrost) en `bifrost.home.arpa` (histórico — nginx en `pi-dns` ya no es el front door, ver "Ya no es así" en "nginx (`pi-dns`)" más arriba) | Visto en el despliegue real — `nginx.conf` se copió a la ruta del repo (`config/nginx/`) en vez de a la ruta real montada por Docker en este nodo (`/srv/homelab/pi-dns/nginx/conf/nginx.conf`); sin el bloque `bifrost.home.arpa` cargado, nginx cae al primer `server{}` de la lista (`index.home.arpa`) y da 404 al no encontrar la ruta como fichero estático |
+| `502`/`504` desde Traefik en `bifrost.404labo.net` | Contenedor `bifrost` caído o arrancando — `ssh u-sonar@192.168.1.172 "docker service ps bifrost_bifrost"` (Swarm, vigente; `docker compose ps` ya no aplica), healthcheck tarda hasta `start_period: 15s` |
+| Contenedor marcado `unhealthy` (`docker service ps bifrost_bifrost --no-trunc`, o `docker inspect <container_id> --format '{{json .State.Health}}'` sobre el contenedor real en `pi-sonar`) pese a responder bien a las peticiones reales | Visto en el despliegue real — la imagen de Bifrost **no trae `bash`** (`docker inspect bifrost --format '{{json .State.Health}}'` mostraba `"bash: not found"`), así que el truco `bash -c '</dev/tcp/...'` usado para `qdrant` en `retaco` no sirve aquí. Sí trae `wget` — healthcheck corregido a `wget -q -O /dev/null http://localhost:8080/health` |
 | Open WebUI sin ningún modelo en el selector, sin error visible en la UI | Visto en el despliegue real — cliente TLS estricto (Python/aiohttp) fallando en silencio contra `bifrost.home.arpa`: revisar logs (`docker compose logs open-webui \| grep -i ssl`). Dos causas posibles, en este orden: (1) el SAN del certificado de `pi-dns` no incluye ese hostname — `openssl s_client -connect <ip-pi-dns>:443 -servername bifrost.home.arpa \| openssl x509 -noout -text \| grep -A2 "Subject Alternative Name"`; (2) el proceso no confía en la CA interna — ver sección "No hay modelos disponibles" arriba para ambos fixes |
 | Timeout en respuestas largas (histórico, corregido) | **Ocurrió en producción** (agosto 2026): una consulta a `ollama/qwen3.5:27b` desde Open WebUI se quedó colgada sin respuesta. Diagnóstico: Ollama/Bifrost sí completaron la petición (68.3s, confirmado `200` en los logs de ambos), pero nginx cortaba la conexión con el cliente a los 60s (timeout por defecto, sin override) — el `200` de Bifrost llegaba 8s después de que nginx ya hubiera respondido `504` al cliente. Corregido subiendo `proxy_read_timeout`/`proxy_send_timeout` a `300s` en el bloque `bifrost.home.arpa` de `nginx.conf` (comentario con el detalle completo en el propio fichero). Bedrock nunca lo había disparado por responder siempre dentro de los 60s; los modelos locales grandes (`qwen3.5:27b`, `qwen2.5:32b`) sí pueden superarlo, sobre todo si Ollama hace *offload* parcial a CPU (ver fila siguiente) |
 | `qwen3.5:27b` (o cualquier modelo local grande) responde correcto pero muy despacio (pocos tokens/s) | Visto en producción — `ollama ps` mostraba solo ~10 de los 17.4 GB del modelo en VRAM (`size_vram` en la respuesta), el resto en CPU. En `ryzen`/`mole`, la GPU 1 (RTX 3070, 8 GB) es también la del escritorio físico del usuario (Xorg/gnome-shell/apps abiertas ya reservan varios GB) — el hueco libre combinado con la GPU 0 (RTX 5070, 12 GB) queda muy justo para un modelo de 17-20 GB, y Ollama prefiere dejar capas en CPU antes que agotar el margen. No es un fallo de Bifrost/nginx — es el reparto de VRAM del host. Mitigación práctica: usar `qwen3.5:9b` (6.6 GB, cabe entero en la GPU 0 sin tocar la del escritorio) para uso normal, reservar los modelos de 27b/32b para cuando se sepa que va a tardar varios minutos. A propósito **no** se ha forzado a Ollama a fijar estos modelos a una GPU concreta — se deja que reparta carga libremente, decisión explícita del usuario |
@@ -525,7 +641,7 @@ Y en la virtual key, un segundo `provider_configs` (junto al de `bedrock` ya exi
 }
 ```
 
-`OLLAMA_UPSTREAM_URL` (variable de entorno en `pi-sonar/docker-compose.yml`/`.env`, no en `config.json` directamente): **`http://192.168.1.150:11434`, por IP directa, no `https://ollama.home.arpa`**. Es tráfico servicio-a-servicio dentro de la LAN — mismo patrón que el resto del clúster (`n8n-main`, Qdrant... llegan a sus backends por IP directa; `apikey-service` solo protege las rutas de `nginx` pensadas para clientes humanos/externos, no las llamadas internas entre nodos). Ollama no tiene autenticación propia — igual que antes de la migración, sin cambio real de superficie de riesgo, solo cambia quién hace la llamada.
+`OLLAMA_UPSTREAM_URL` (variable de entorno normal, hoy en `environment:` del propio `docker-swarm/stacks/bifrost/docker-compose.yml` — no es secreto, así que a diferencia del resto de esta sección nunca pasó por Infisical, no en `config.json` directamente): **`http://192.168.1.150:11434`, por IP directa, no `https://ollama.home.arpa`**. Es tráfico servicio-a-servicio dentro de la LAN — mismo patrón que el resto del clúster (`n8n-main`, Qdrant... llegan a sus backends por IP directa; `apikey-service` solo protege las rutas de `nginx` pensadas para clientes humanos/externos, no las llamadas internas entre nodos). Ollama no tiene autenticación propia — igual que antes de la migración, sin cambio real de superficie de riesgo, solo cambia quién hace la llamada.
 
 `ollama_key_config` solo necesita `url` — a diferencia de Bedrock, Ollama no tiene concepto de credenciales, así que no hay nada más que configurar.
 
