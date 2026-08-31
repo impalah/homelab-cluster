@@ -1,16 +1,31 @@
-# Fase 4 (docs/31-docker-swarm.md): portainer (servidor) migrado al swarm --
-# último servicio de pi-utils en Compose clásico, cierra la migración de ese
-# nodo. `constraints: node.hostname==pi-utils` -- BoltDB real
-# (/srv/homelab/pi-utils/portainer/data, 3.1M) sigue en el mismo bind-mount,
-# sin mover. Backup físico completo ejecutado antes de migrar
-# (portainer-backup-<fecha>.tar.gz, junto a data/ en el mismo nodo).
+# Fase 4 (docs/31-docker-swarm.md): portainer (servidor) migrado al swarm.
 #
-# `mode: host` en el puerto 9000 -- reutiliza el mismo puerto que
-# authentik-server (retaco) y sonarqube (pi-sonar), también en mode: host:
-# sin colisión porque cada uno está pinnado a un nodo físico DISTINTO y
-# mode: host solo reserva el puerto en el nodo donde aterriza la tarea, no
-# en todo el swarm (a diferencia de ingress) -- ver docs/31 sección de
-# colisiones de puerto.
+# `constraints: node.hostname==pi-utils` → `node.hostname==pinchi`
+# (2026-08-31, decisión explícita del usuario). El motivo NO es que ya no
+# haga falta pin -- BoltDB real (`portainer.db`, modificado activamente,
+# más el material de claves privadas de `certs/`/`chisel/`) sigue siendo
+# estado genuino que exige un nodo fijo, a diferencia de `bifrost`/
+# `open-webui`. El motivo es la fiabilidad del disco: `pi-utils` es una
+# Raspberry Pi 5 (microSD), `pinchi` es un PC x86_64 con NVMe SSD real --
+# más fiable para las escrituras frecuentes de una base de datos embebida
+# (BoltDB usa mmap + bloqueo de fichero). Migración hecha con el servicio
+# parado (`docker service scale ...=0`, evita copiar el `.db` a mitad de
+# escritura) + `tar` en pipe directo nodo a nodo (sin aterrizar en disco
+# intermedio, dado que incluye claves privadas) + verificación por
+# `md5sum`. Backup adicional tomado en `pi-utils` antes de mover nada
+# (`portainer-backup-<fecha>.tar.gz`, junto a `data/` en el mismo nodo,
+# no borrado). El dato real vive ahora en
+# `/srv/homelab/pinchi/portainer/data`.
+#
+# Publicado en 19001, no 9000 (2026-08-31) -- `sonarqube` ya liberó el 9000
+# (pasó a 19000); portainer-server era el último de los dos que quedaban
+# compartiéndolo con `authentik-server`. `mode: ingress`, no `host` -- sigue
+# pinnado a un nodo fijo (ver arriba), pero ya no hay ninguna colisión real
+# de puerto que exija `mode: host` (mismo criterio ya aplicado a
+# `capataz-api`/`infisical`/`open-webui`: el pin no obliga a `mode: host`
+# por sí solo). `target: 9000` no cambia -- es el puerto interno por
+# defecto de la interfaz de Portainer (`--http-enabled`), solo se remapea
+# el lado publicado.
 #
 # Red `portainer-agent_agent_network` (external, ya creada por el stack
 # portainer-agent -- docker-swarm/stacks/portainer/agent-stack.yml) --
@@ -27,11 +42,11 @@ services:
     image: portainer/portainer-ce:2.42.0
     command: ["--http-enabled"]
     volumes:
-      - /srv/homelab/pi-utils/portainer/data:/data
+      - /srv/homelab/pinchi/portainer/data:/data
     ports:
       - target: 9000
-        published: 9000
-        mode: host
+        published: 19001
+        mode: ingress
     networks:
       - portainer-net
       - agent_network
@@ -45,7 +60,7 @@ services:
       replicas: 1
       placement:
         constraints:
-          - node.hostname==pi-utils
+          - node.hostname==pinchi
       restart_policy:
         condition: on-failure
 

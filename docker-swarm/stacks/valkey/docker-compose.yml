@@ -1,9 +1,25 @@
 # Fase 4 (docs/31-docker-swarm.md): valkey migrado al swarm.
-# `constraints: node.hostname==retaco` -- preserva el alias DNS directo a
-# 192.168.1.174 (shared/dns/dns-records.md) sin tener que tocar el registro.
-# Sin persistencia a propósito (solo caché, igual que en Compose clásico) --
-# no hay backup que hacer. Sin Infisical (ACL/TLS vía ficheros bind-mounted
-# directamente, igual que antes).
+#
+# `constraints: node.hostname==retaco` RETIRADO (2026-08-31, decisión
+# explícita del usuario). El motivo original (preservar el alias DNS
+# directo a 192.168.1.174, `shared/dns/dns-records.md`) resultó no ser
+# necesario -- el puerto 6379 ya se publica en `mode: ingress` (por
+# defecto, sintaxis corta), así que la routing mesh de Swarm reenvía
+# correctamente la conexión al nodo real sea cual sea, sin tocar el
+# registro DNS. Sin persistencia a propósito (`--save "" --appendonly no`,
+# solo caché en memoria) -- no hay datos que migrar.
+#
+# `users.acl` (lleva una contraseña en claro dentro del propio fichero) y
+# `tls/` (incluye `valkey.key`, clave privada real) -- deliberadamente NO
+# van a NFS (NFSv3 sin cifrar, expondría ambos en claro por la red cada vez
+# que arranca) ni a `docker config` (tampoco resuelve lo de la contraseña
+# en claro, y además es visible vía `docker config inspect`) -- replicados
+# a `/srv/homelab/valkey/{users.acl,tls}` en los 5 managers, mismo
+# mecanismo ya usado para el binario de `infisical` (copia local, no viaja
+# por red en cada arranque). Verificado por `md5sum` idéntico en los 5.
+#
+# Sin Infisical (ACL/TLS vía ficheros bind-mounted directamente, igual que
+# antes).
 #
 # Mejora 41 (2026-08-28): valkey.crt/valkey.key renombrados a CN=
 # valkey.404labo.net -- sigue siendo un cert AUTOFIRMADO por la CA interna
@@ -64,8 +80,8 @@ services:
           --tls-ca-cert-file /etc/valkey/tls/ca.crt \
           --tls-auth-clients no
     volumes:
-      - /srv/homelab/retaco/valkey/users.acl:/etc/valkey/users.acl:ro
-      - /srv/homelab/retaco/valkey/tls:/etc/valkey/tls:ro
+      - /srv/homelab/valkey/users.acl:/etc/valkey/users.acl:ro
+      - /srv/homelab/valkey/tls:/etc/valkey/tls:ro
     ports:
       - "6379:6379"
     networks:
@@ -78,9 +94,6 @@ services:
         max-buffer-size: 4m
     deploy:
       replicas: 1
-      placement:
-        constraints:
-          - node.hostname==retaco
       restart_policy:
         condition: on-failure
 

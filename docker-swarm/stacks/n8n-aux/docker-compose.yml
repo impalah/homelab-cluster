@@ -1,10 +1,23 @@
 # Fase 4 (docs/31-docker-swarm.md): cuarto servicio con estado migrado al
-# swarm. `constraints: node.hostname==pi-utils` -- los datos (SQLite propio
-# en /home/node/.n8n) siguen en el mismo bind-mount de siempre. Reutiliza
-# directamente las rutas ya preparadas en pi-utils (infisical-cli, CA,
-# datos). A diferencia de n8n-main, SIN dependencias cruzadas por alias de
+# swarm. A diferencia de n8n-main, SIN dependencias cruzadas por alias de
 # red Docker -- SQLite local, sin Postgres, confirmado por grep antes de
 # migrar (docs/31-docker-swarm.md).
+#
+# `constraints: node.hostname==pi-utils` RETIRADO (2026-08-31, decisión
+# EXPLÍCITA del usuario, asumiendo el riesgo con conocimiento de causa) --
+# a diferencia de n8n-main, aquí `database.sqlite`+`-wal`+`-shm` SÍ son
+# estado real y con escritura activa (WAL de 8,8M al momento de migrar,
+# modificado hace minutos) -- misma categoría de riesgo ya señalada en la
+# mejora 43 para bases de datos embebidas con escritura real sobre NFS
+# (mismo tipo que Portainer/SonarQube, que se resolvieron moviéndolas a
+# `pinchi` en vez de NFS). Aquí se decidió NFS de todas formas. Migrado con
+# el servicio parado (`docker service scale ...=0`, evita copiar el WAL a
+# mitad de escritura) + verificado por `md5sum` de cada fichero (incluidos
+# los tres del SQLite) -- idénticos. El binario de `infisical` pasa a la
+# ruta compartida multi-arquitectura (mismo mecanismo que `authentik`/
+# `bifrost`/etc.). Si esto llega a causar problemas de latencia/corrupción,
+# el rollback documentado es el mismo patrón que Portainer: mover a un nodo
+# con disco más fiable en vez de NFS.
 #
 # ⚠️ N8N_ENCRYPTION_KEY es irreversible una vez fijada (CLAUDE.md) -- NO
 # vive aquí, se inyecta vía Infisical (path /n8n-aux/) exactamente igual que
@@ -43,9 +56,14 @@ services:
       SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
       INFISICAL_DOMAIN: https://infisical.404labo.net/api
     volumes:
-      - /srv/homelab/pi-utils/n8n-aux/data:/home/node/.n8n
-      - /srv/homelab/pi-utils/n8n-aux/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
-      - /srv/homelab/pi-utils/infisical-cli/infisical:/usr/local/bin/infisical:ro
+      - /mnt/nfs-data/n8n-aux/data:/home/node/.n8n
+      - /srv/homelab/infisical/infisical-cli/infisical:/usr/local/bin/infisical:ro
+    configs:
+      # homelab-ca-bundle-v1: compartido con 10 stacks más (2026-08-31,
+      # confirmado por md5sum idéntico) -- ver docker-swarm/stacks/authentik/
+      # docker-compose.yml para la explicación completa.
+      - source: homelab-ca-bundle-v1
+        target: /etc/ssl/certs/homelab-ca.crt
     secrets:
       - source: n8n-aux-infisical-client-id-v1
         target: n8n-aux-infisical-client-id
@@ -78,9 +96,6 @@ services:
         max-buffer-size: 4m
     deploy:
       replicas: 1
-      placement:
-        constraints:
-          - node.hostname==pi-utils
       restart_policy:
         condition: on-failure
 
@@ -88,6 +103,10 @@ networks:
   n8n-aux-net:
     driver: overlay
     attachable: true
+
+configs:
+  homelab-ca-bundle-v1:
+    external: true
 
 secrets:
   n8n-aux-infisical-client-id-v1:

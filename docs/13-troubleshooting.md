@@ -401,11 +401,72 @@ Ya corregido de raíz: todos los contenedores de esa red tienen IP fija explíci
 
 Ver `docs/06-instalacion-pi1-dns.md` sección 6.1 — paso manual fácil de pasar por alto.
 
+### 5. `docker.service` no arranca en un manager Swarm tras un reboot físico — carrera con la red
+
+**Síntoma:** cualquier comando `docker`/`docker compose` falla con `Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?`, y `systemctl status docker` muestra `Active: failed`.
+
+**Causa confirmada en este clúster** (2026-08-30, reinicio físico de los 6 nodos — afectó a `pi-obs`, `pi-sonar` y `pi-utils` por igual, los tres a la vez): en el arranque, `dockerd` con Swarm activo intenta anunciar su IP local dialeando contra el manager configurado (aquí `pinchi:2377`) **antes** de que la interfaz de red tenga IP/ruta asignada — falla con `failed to start cluster component: could not find local IP address: dial udp <ip>:2377: connect: network is unreachable`, el proceso muere, y el burst-limit por defecto de systemd (3 reintentos rápidos, `Start request repeated too quickly`) se agota sin dejar más intentos automáticos. El servicio se queda en `failed` **indefinidamente** — no en unos segundos, hasta que alguien actúa a mano.
+
+**Diagnóstico:**
+
+```bash
+ssh u-<x>@192.168.1.17x "sudo systemctl status docker --no-pager -l"
+ssh u-<x>@192.168.1.17x "sudo journalctl -u docker --no-pager | tail -25"
+# Buscar: "failed to start cluster component: could not find local IP address ... network is unreachable"
+```
+
+**Solución:**
+
+```bash
+ssh u-<x>@192.168.1.17x "sudo systemctl restart docker"
+```
+
+Con la red ya arriba (basta con que hayan pasado unos segundos/minutos desde el boot), el reintento manual funciona a la primera. Repetir en cada nodo afectado — no hay forma de saber cuáles sin comprobar los 5 managers uno a uno tras un reboot completo (`pi-dns` no cuenta, no es manager Swarm). `docker node ls` desde cualquier manager que sí haya arrancado bien confirma qué nodos siguen `Down`/`Unreachable`.
+
+### 6. Servicios de Swarm en `0/N` réplicas justo tras el reboot — normalmente se autorreparan solos
+
+Tras devolver `docker.service` a los nodos afectados (punto 5 arriba), es normal ver varios servicios en `docker service ls` con réplicas a `0/1` durante uno o dos minutos: dependen unos de otros (Traefik, Infisical, Postgres, Valkey) y los primeros intentos de arranque de un servicio dependiente fallan si su dependencia todavía no está lista — el propio Swarm reintenta solo, sin acción manual, igual que ya hacía `depends_on: condition: service_healthy` en Compose clásico (punto 1) pero a nivel de todo el clúster. Caso real (2026-08-30): `apikey-service` falló varias veces seguidas con `unable to authenticate with universal auth ... status-code=502` (Infisical/Traefik aún no listos) y arrancó bien en el siguiente intento, segundos después; lo mismo con `open-webui` y `vaultwarden`.
+
+**Diagnóstico** (`docker service logs` no sirve para ver el histórico — el driver de logging es `loki`, hay que consultar su API directamente):
+
+```bash
+FROM=$(( $(date -u +%s) - 600 ))000000000
+NOW=$(date -u +%s)000000000
+curl -s "http://192.168.1.171:3100/loki/api/v1/query_range" \
+  --data-urlencode 'query={swarm_service="<stack>_<servicio>"}' \
+  --data-urlencode "start=$FROM" --data-urlencode "end=$NOW" --data-urlencode "limit=200"
+```
+
+**Cuándo preocuparse de verdad:** si un servicio sigue en `0/N` pasados 3-5 minutos con reintentos activos, o si `docker service ps <servicio> --no-trunc` (columna `ERROR`) muestra algo que no es "dependencia todavía no lista" sino estructural — bind mount ausente, imagen no encontrada, etc. Ver el punto 7.
+
+### 7. Bind mount NFS no se remonta tras el reboot — `systemd-resolved` colgado en el DNS secundario
+
+**Síntoma:** un servicio de Swarm con bind mount contra `/mnt/nfs-data/...` (p. ej. `epub2pdf-service`, `pdf2chunks-service`) queda en bucle de `Rejected` con `invalid mount config for type "bind": bind source path does not exist: /mnt/nfs-data/<...>`.
+
+**Causa confirmada en este clúster** (2026-08-30, en `retaco`): el punto de montaje NFS hacia `ketekasko.404labo.net` (`/etc/fstab`, opción `_netdev`) no llegó a montarse en el arranque porque, en ese instante, `systemd-resolved` ya había caído al DNS secundario del netplan (`1.1.1.1`, público) en vez de `192.168.1.170` (pi-dns) — mismo mecanismo que "DNS caído en varios nodos a la vez" más arriba, pero aquí el síntoma no es un servicio que deja de resolver un hostname en caliente, sino un *mount* que nunca llegó a completarse durante el boot y que `_netdev` no reintenta solo después. `ketekasko.404labo.net` solo resuelve vía Pi-hole (split-horizon) — contra `1.1.1.1` da NXDOMAIN silencioso, sin error visible salvo el propio fallo del mount.
+
+**Diagnóstico:**
+
+```bash
+ssh u-data@192.168.1.174 "mount | grep nfs; resolvectl status eno1 | grep -A2 'Current DNS'; dig +short ketekasko.404labo.net"
+```
+
+Si `dig +short ketekasko.404labo.net` no devuelve nada pese a que `dig +short ketekasko.404labo.net @192.168.1.170` sí responde: es este caso.
+
+**Solución:**
+
+```bash
+ssh u-data@192.168.1.174 "sudo systemctl restart systemd-resolved && sudo mount -a"
+```
+
+El Swarm reprograma la tarea sola en cuanto el mount vuelve a existir — no hace falta forzar el servicio con `docker service update`.
+
 ### Procedimiento recomendado de apagado/encendido
 
 - **Apagar:** el orden no importa mucho.
 - **Encender:** `pi-dns` primero, siempre con `docker compose up -d` explícito (nunca confiar solo en el arranque automático), luego el resto en cualquier orden.
-- **Verificar:** `check-health.sh <nodo>` en cada uno.
+- **Verificar (nodos clásicos):** `check-health.sh <nodo>` en cada uno.
+- **Verificar (Swarm):** `docker node ls` desde cualquier manager — todos deben quedar `Ready`/`Reachable` (o `Leader` en uno); si alguno no, es casi seguro el punto 5 (`docker.service` en `failed`, hay que reiniciarlo a mano en ese nodo). Después, `docker service ls` — cualquier `0/N` que no se autorrepare en unos minutos, ver puntos 6 y 7.
 
 ---
 

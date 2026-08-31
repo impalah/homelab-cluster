@@ -45,15 +45,15 @@ de aplicación), pero cualquier IP del Swarm serviría igual. Certificado real d
 | `whisper.404labo.net` | `192.168.1.175` | Whisper-service en ryzen | 9800 |
 | `grafana.404labo.net` | `192.168.1.175` | Grafana en pi-obs | 3000 |
 | `prometheus.404labo.net` | `192.168.1.175` | Prometheus en pi-obs — protegido con Authentik (forward-auth), verificado de punta a punta (mejora 41, Fase C) | 9090 |
-| `sonarqube.404labo.net` | `192.168.1.175` | SonarQube en pi-sonar | 9000 |
+| `sonarqube.404labo.net` | `192.168.1.175` | SonarQube en pi-sonar | 19000 |
 | `bifrost.404labo.net` | `192.168.1.175` | Bifrost (gateway LLM / AWS Bedrock) en pi-sonar — auth propia (virtual keys), no protegido con apikey-service | 8080 |
 | `rsshub.404labo.net` | `192.168.1.175` | RSSHub en pi-utils | 1200 |
 | `markitdown.404labo.net` | `192.168.1.175` | Markitdown-service en pi-utils — protegido con apikey-service | 8001 |
 | `crawl4ai.scraper.404labo.net` | `192.168.1.175` | crawl4ai-scraper-service en pi-utils — protegido con apikey-service. Sub-subdominio a propósito, no un error de nomenclatura. | 8002 |
 | `n8n-aux.404labo.net` | `192.168.1.175` | n8n-aux en pi-utils | 5679 |
-| `portainer.404labo.net` | `192.168.1.175` | Portainer en pi-utils | 9000 |
-| `vaultwarden.404labo.net` | `192.168.1.175` | Vaultwarden en pi-utils | 8222 |
-| `registry.404labo.net` | `192.168.1.175` | Registry Docker privado en retaco — autenticación propia (htpasswd), no protegido con apikey-service (los clientes Docker no mandan `X-Api-Key`) | 5000 |
+| `portainer.404labo.net` | `192.168.1.175` | Portainer -- movido a pinchi el 2026-08-31 (era pi-utils), fiabilidad de disco | 19001 |
+| `vaultwarden.404labo.net` | `192.168.1.175` | Vaultwarden -- movido a pinchi el 2026-08-31 (era pi-utils), fiabilidad de disco | 8222 |
+| `registry.404labo.net` | `192.168.1.175` | Registry Docker privado -- sin `constraints` de nodo desde el 2026-08-31 (datos en NFS), autenticación propia (htpasswd), no protegido con apikey-service (los clientes Docker no mandan `X-Api-Key`) | 5000 |
 | `epub2pdf.404labo.net` | `192.168.1.175` | epub2pdf-service en retaco — protegido con apikey-service | 8003 |
 | `pdf2chunks.404labo.net` | `192.168.1.175` | pdf2chunks-service en retaco — protegido con apikey-service | 8004 |
 | `open-terminal.404labo.net` | `192.168.1.175` | open-terminal-mcp (servidor MCP) en retaco — protegido con apikey-service, obligatorio (el transporte MCP no tiene auth propia, ver `docs/24-open-terminal-mcp.md`) | 8005 |

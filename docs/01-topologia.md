@@ -36,6 +36,103 @@ flowchart TB
     Switch --- nas["ketekasko (NAS UGREEN)\n192.168.1.180\nfuera del clúster Docker"]
 ```
 
+## Estado actual: servicios en Docker Swarm (2026-08-31)
+
+⚠️ **Esta sección refleja el estado real tras la migración a Docker Swarm y la revisión de `constraints`/NFS del 2026-08-31.** El resto de este documento (a partir de "Arquitectura de servicios — pi-dns como puerta de entrada", que sigue abajo) describe la topología **previa a Swarm** (nginx como puerta de entrada, hostnames `*.home.arpa`, un `docker-compose.yml` independiente por nodo) — se mantiene como referencia histórica, no como estado vigente. Para la topología actual: `docker-swarm/README.md`, `docs/31-docker-swarm.md` y `docs/32-manual-operaciones-swarm.md`.
+
+### Dónde vive cada servicio: nodo fijo, sin nodo fijo, y mapeos NFS
+
+```mermaid
+flowchart TB
+    subgraph retaco_node["retaco -- 192.168.1.174 (constraint fijo)"]
+        postgres_main["postgres-main"]
+        qdrant_svc["qdrant"]
+        infisical_svc["infisical +\npostgres-infisical"]
+    end
+
+    subgraph piobs_node["pi-obs -- 192.168.1.171 (constraint fijo)"]
+        obs_stack["loki · tempo · prometheus\ngrafana · otel-collector\npostgres-exporter"]
+    end
+
+    subgraph pisonar_node["pi-sonar -- 192.168.1.172 (constraint fijo)"]
+        sonarqube_svc["sonarqube\ndata/ en disco local\n(mejora 44: intento de\nmover a pinchi, revertido)"]
+    end
+
+    subgraph pinchi_node["pinchi -- 192.168.1.175 (constraint fijo)"]
+        portainer_svc["portainer-server\ndisco local (NVMe)"]
+        vaultwarden_svc["vaultwarden\ndisco local (NVMe)"]
+    end
+
+    subgraph floating["Sin constraint -- Swarm elige entre los 5 managers"]
+        authentik_svc["authentik-server / worker"]
+        bifrost_svc["bifrost"]
+        capataz_svc["capataz-api / runner / frontend"]
+        epub2pdf_svc["epub2pdf-service"]
+        pdf2chunks_svc["pdf2chunks-service"]
+        n8nmain_svc["n8n-main"]
+        n8naux_svc["n8n-aux"]
+        openterminal_svc["open-terminal-mcp"]
+        openwebui_svc["open-webui"]
+        registry_svc["registry"]
+        rsshub_svc["rsshub"]
+        valkey_svc["valkey"]
+        apikey_svc["apikey-service"]
+        markitdown_svc["markitdown-service"]
+        crawl4ai_svc["crawl4ai-scraper-service"]
+    end
+
+    subgraph global_mode["mode: global -- una réplica en cada uno de los 5 managers"]
+        traefik_svc["traefik"]
+        portagent_svc["portainer-agent"]
+        nodeexp_svc["node-exporter · cadvisor"]
+    end
+
+    NAS[("NAS ketekasko\n/mnt/nfs-data\nNFSv3, montado en los 5 managers")]
+
+    authentik_svc -.->|"authentik/{data,certs}"| NAS
+    capataz_svc -.->|"capataz/api-alembic\n(solo lectura)"| NAS
+    epub2pdf_svc -.->|"epub2pdf/{input,output}"| NAS
+    pdf2chunks_svc -.->|"pdf2chunks/{input,output}"| NAS
+    n8nmain_svc -.->|"n8n-main/data"| NAS
+    n8naux_svc -.->|"n8n-aux/data ⚠️ SQLite activo"| NAS
+    openterminal_svc -.->|"open-terminal-mcp/home"| NAS
+    openwebui_svc -.->|"open-webui/data\n(cache/ es tmpfs, no NFS)"| NAS
+    registry_svc -.->|"registry/{data,auth}\n(~32G)"| NAS
+    sonarqube_svc -.->|"sonarqube/extensions\n(data/ NO va por NFS)"| NAS
+```
+
+> **`n8n-aux` es el único mapeo NFS marcado con ⚠️** porque `database.sqlite`+`-wal`+`-shm` es una base de datos real con escritura activa (no solo caché/config) — se aceptó el riesgo de NFS a propósito, a diferencia de `portainer-server`/`vaultwarden`/`sonarqube`, que tienen el mismo tipo de estado (base de datos embebida y/o clave privada real) pero se resolvieron moviéndolas a disco local en `pinchi`/`pi-sonar` en vez de NFS.
+>
+> **Dos servicios sin nodo fijo tienen bind-mounts que tampoco pasan por NFS**, por sensibilidad del contenido (contraseña en claro / clave privada TLS): `valkey` (`users.acl`, `tls/`) y el binario del CLI de `infisical` (usado por prácticamente todos los servicios de la lista "Sin constraint") están replicados a una ruta idéntica en los 5 managers (`/srv/homelab/valkey/...`, `/srv/homelab/infisical/infisical-cli/...`) en vez de vivir en el NAS — así no viajan en claro por la red cada vez que un contenedor arranca. El binario de `infisical`, además, está organizado por arquitectura de CPU (`x86-64/`/`aarch64/`) con un symlink que resuelve solo, para que el mismo `docker-compose.yml` funcione sin cambios aterrice donde aterrice.
+>
+> `apikey-service`/`markitdown-service`/`crawl4ai-scraper-service` nunca tuvieron `constraints` -- son los primeros servicios migrados a Swarm (Fase 2/3b, `docs/31-docker-swarm.md`), sin estado local real desde el principio.
+
+### Dependencias reales entre servicios
+
+```mermaid
+flowchart LR
+    authentik_svc2["authentik"] -->|Postgres| postgres_main2["postgres-main\n(retaco)"]
+    n8nmain_svc2["n8n-main"] -->|Postgres| postgres_main2
+    sonarqube_svc2["sonarqube"] -->|Postgres| postgres_main2
+    capataz_svc2["capataz-api / runner"] -->|"Postgres\n(vía docker secret)"| postgres_main2
+
+    capataz_svc2 -->|"Redis (cola Celery)"| valkey_svc2["valkey\n(sin nodo fijo)"]
+    infisical_svc2["infisical"] -->|"Redis (caché)"| valkey_svc2
+    infisical_svc2 -->|Postgres dedicado| postgres_infisical2["postgres-infisical\n(retaco)"]
+
+    capataz_svc2 -->|"OIDC (login)"| authentik_svc2
+
+    openwebui_svc2["open-webui"] -->|"vectores (RAG)"| qdrant_svc2["qdrant\n(retaco)"]
+    openwebui_svc2 -->|"chat LLM"| bifrost_svc2["bifrost\n(sin nodo fijo)"]
+
+    bifrost_svc2 -->|"IP directa :11434"| ryzen2["Ollama\n(ryzen, fuera del Swarm)"]
+    bifrost_svc2 -->|"IAM InvokeModel"| bedrock2[("AWS Bedrock\neu-west-1")]
+```
+
+> No incluido en el diagrama para no saturarlo: **11 de los servicios sin `constraints`** (`authentik`, `bifrost`, `capataz-api/runner`, `n8n-main`, `n8n-aux`, `open-terminal-mcp`, `open-webui`, `rsshub`, `sonarqube`, `vaultwarden`, `apikey-service`) obtienen sus credenciales reales de **Infisical** (`infisical.404labo.net`) en cada arranque, vía el patrón `infisical login` + `infisical run` (ADR 0001) — es, con diferencia, la dependencia más repetida de todo el clúster, pero dibujarla como una flecha por servicio no aportaría información nueva.
+
+---
+
 ## Arquitectura de servicios — pi-dns como puerta de entrada
 
 Todo acceso HTTPS por nombre de host (`*.home.arpa`) entra por `nginx`, en `pi-dns`, que lo reenvía al nodo correspondiente. Los servicios que carecen de autenticación propia pasan, además, por `apikey-service` (también en `pi-dns`) antes de llegar al servicio real — ver `docs/06-instalacion-pi1-dns.md`.

@@ -73,7 +73,7 @@ curl -s http://192.168.1.171:9090/api/v1/targets | jq '.data.activeTargets[] | {
 
 ```bash
 cd /srv/homelab/pi-sonar && docker compose ps
-curl -s http://192.168.1.172:9000/api/system/status | jq .
+curl -s http://192.168.1.172:19000/api/system/status | jq .
 docker compose logs -f sonarqube
 ```
 

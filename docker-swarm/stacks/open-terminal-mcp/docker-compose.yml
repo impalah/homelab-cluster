@@ -1,7 +1,16 @@
 # Fase 4 (docs/31-docker-swarm.md): open-terminal-mcp migrado al swarm.
-# `constraints: node.hostname==retaco` -- los datos (/home/user, workspace
-# de las sesiones de shell del LLM) siguen en el mismo bind-mount, sin
-# mover. Sin dependencias cruzadas por alias.
+#
+# `constraints: node.hostname==retaco` RETIRADO (2026-08-31, decisión
+# explícita del usuario). `/home/user` (workspace de las sesiones de shell
+# del LLM) -- comprobado en vivo que solo tenía el scaffolding por defecto
+# (`.bashrc`/`.profile`/`.local`, 32K, nada creado en sesiones reales) --
+# migrado a `/mnt/nfs-data/open-terminal-mcp/home` (verificado por recuento
+# de ficheros). Se elige NFS y no `tmpfs` a propósito -- a diferencia de
+# `bifrost`, este directorio SÍ podría acumular contenido real en futuras
+# sesiones de terminal, conviene que sobreviva a un reinicio. Corre como
+# root (`uid=0`), sin problema de ACL. El binario de `infisical` pasa a la
+# ruta compartida multi-arquitectura (mismo mecanismo que `authentik`/
+# `bifrost`/etc.).
 version: "3.8"
 
 services:
@@ -15,9 +24,14 @@ services:
       INFISICAL_DOMAIN: https://infisical.404labo.net/api
       SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
     volumes:
-      - /srv/homelab/retaco/open-terminal-mcp/home:/home/user
-      - /srv/homelab/retaco/open-terminal-mcp/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
-      - /srv/homelab/retaco/infisical-cli/infisical:/usr/local/bin/infisical:ro
+      - /mnt/nfs-data/open-terminal-mcp/home:/home/user
+      - /srv/homelab/infisical/infisical-cli/infisical:/usr/local/bin/infisical:ro
+    configs:
+      # homelab-ca-bundle-v1: compartido con 10 stacks más (2026-08-31,
+      # confirmado por md5sum idéntico) -- ver docker-swarm/stacks/authentik/
+      # docker-compose.yml para la explicación completa.
+      - source: homelab-ca-bundle-v1
+        target: /etc/ssl/certs/homelab-ca.crt
     secrets:
       - source: open-terminal-mcp-infisical-client-id-v1
         target: open-terminal-mcp-infisical-client-id
@@ -50,9 +64,6 @@ services:
         max-buffer-size: 4m
     deploy:
       replicas: 1
-      placement:
-        constraints:
-          - node.hostname==retaco
       restart_policy:
         condition: on-failure
 
@@ -60,6 +71,10 @@ networks:
   open-terminal-mcp-net:
     driver: overlay
     attachable: true
+
+configs:
+  homelab-ca-bundle-v1:
+    external: true
 
 secrets:
   open-terminal-mcp-infisical-client-id-v1:

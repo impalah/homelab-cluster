@@ -3,13 +3,21 @@
 # services/<nombre>/ o el repo externo de cada una, no es una pérdida de
 # datos irrecuperable como postgres-main/vaultwarden).
 #
-# `constraints: node.hostname==retaco` -- los datos (blobs + htpasswd) siguen
-# en el mismo bind-mount de siempre, NUNCA se mueven de nodo (mismo criterio
-# que el resto de servicios con estado de esta fase). Mismo puerto publicado
-# (5000) que la copia Compose clásica que sustituye, así que
-# docker-swarm/stacks/traefik/dynamic/routes.yml NO necesita cambios --
-# sigue apuntando a 192.168.1.174:5000 tal cual, sea quien sea quien lo
-# orqueste por debajo.
+# `constraints: node.hostname==retaco` RETIRADO (2026-08-31, decisión
+# explícita del usuario). A diferencia de postgres-main/qdrant, el registry
+# es un almacén de blobs por hash de contenido (write-once, sin base de
+# datos embebida con WAL/mmap) -- patrón compatible con NFS sin el mismo
+# riesgo de escritura frecuente. Corre como root (`uid=0`), sin problema de
+# ACL. `data/` (32G) y `auth/htpasswd` migrados con el servicio parado
+# (`docker service scale ...=0`, sin subidas en curso confirmado antes de
+# parar) a `/mnt/nfs-data/registry/{data,auth}`.
+#
+# Mismo puerto publicado (5000) que la copia Compose clásica que sustituye,
+# así que docker-swarm/stacks/traefik/dynamic/routes.yml NO necesita
+# cambios -- sigue apuntando a 192.168.1.174:5000, y como el puerto se
+# publica en `mode: ingress` (por defecto), la routing mesh reenvía
+# correctamente aunque el registry ya no esté físicamente en `retaco`
+# (mismo mecanismo ya confirmado con `valkey`).
 #
 # REGISTRY_HTTP_SECRET como `docker secret` en vez de variable de entorno --
 # mismo motivo que apikey-service (docker-swarm/stacks/apikey-service/):
@@ -37,8 +45,8 @@ services:
       - source: registry-http-secret-v1
         target: registry-http-secret
     volumes:
-      - /srv/homelab/retaco/registry/data:/var/lib/registry
-      - /srv/homelab/retaco/registry/auth:/auth:ro
+      - /mnt/nfs-data/registry/data:/var/lib/registry
+      - /mnt/nfs-data/registry/auth:/auth:ro
     ports:
       - "5000:5000"
     networks:
@@ -51,9 +59,6 @@ services:
         max-buffer-size: 4m
     deploy:
       replicas: 1
-      placement:
-        constraints:
-          - node.hostname==retaco
       restart_policy:
         condition: on-failure
 

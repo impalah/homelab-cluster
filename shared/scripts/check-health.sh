@@ -3,7 +3,7 @@
 # check-health.sh
 # Verifica el estado de los servicios de un nodo del clúster.
 # Uso: bash check-health.sh <nodo>
-# Nodos válidos: ryzen | retaco | pi-dns | pi-obs | pi-sonar | pi-utils
+# Nodos válidos: ryzen | retaco | pi-dns | pi-obs | pi-sonar | pi-utils | pinchi
 # Si se omite el nodo, verifica todos los nodos (requiere SSH).
 # =============================================================================
 set -euo pipefail
@@ -162,7 +162,7 @@ check_pi_sonar() {
   check_docker_service cadvisor
   check_docker_service portainer-agent
   check_docker_service watchtower
-  check_http "sonarqube status"   "http://192.168.1.172:9000/api/system/status"
+  check_http "sonarqube status"   "http://192.168.1.172:19000/api/system/status"
   check_http "node-exporter"      "http://192.168.1.172:9100/metrics"
 }
 
@@ -173,16 +173,33 @@ check_pi_utils() {
   check_docker_service n8n-aux
   check_docker_service node-exporter
   check_docker_service cadvisor
-  check_docker_service portainer
   check_docker_service portainer-agent
   check_docker_service watchtower
-  check_docker_service vaultwarden
   check_http "rsshub"             "http://192.168.1.173:1200"
   check_http "markitdown health"  "http://192.168.1.173:8001/health"
   check_http "n8n-aux"            "http://192.168.1.173:5679/healthz"
   check_http "node-exporter"      "http://192.168.1.173:9100/metrics"
-  check_http "portainer"          "http://192.168.1.173:9000/api/system/status"
-  check_http "vaultwarden"        "http://192.168.1.173:8222/alive"
+}
+
+# pinchi (2026-08-31): destino de portainer-server/vaultwarden tras la
+# revisión de constraints (mejora 43) -- movidos aquí desde pi-utils por
+# fiabilidad de disco (NVMe real vs. microSD). Los `check_http` de abajo
+# funcionarían igual apuntando a la IP de CUALQUIER manager (todos los
+# servicios del clúster están en `mode: ingress`, la routing mesh reenvía
+# la petición al nodo real da igual por dónde entre) -- se usa la IP de
+# pinchi aquí por ser la más directa/representativa de dónde vive el
+# servicio hoy, no porque sea la única que funcione.
+check_pinchi() {
+  echo "=== pinchi (192.168.1.175) ==="
+  check_docker_service portainer-server
+  check_docker_service vaultwarden
+  check_docker_service node-exporter
+  check_docker_service cadvisor
+  check_docker_service portainer-agent
+  check_docker_service watchtower
+  check_http "node-exporter"      "http://192.168.1.175:9100/metrics"
+  check_http "portainer"          "http://192.168.1.175:19001/api/system/status"
+  check_http "vaultwarden"        "http://192.168.1.175:8222/alive"
 }
 
 case "${NODE}" in
@@ -192,17 +209,19 @@ case "${NODE}" in
   pi-obs)   check_pi_obs ;;
   pi-sonar) check_pi_sonar ;;
   pi-utils) check_pi_utils ;;
+  pinchi)   check_pinchi ;;
   all)
     check_ryzen;    echo ""
     check_retaco;   echo ""
     check_pi_dns;   echo ""
     check_pi_obs;   echo ""
     check_pi_sonar; echo ""
-    check_pi_utils
+    check_pi_utils; echo ""
+    check_pinchi
     ;;
   *)
     echo "[ERROR] Nodo desconocido: '${NODE}'"
-    echo "        Nodos válidos: ryzen | retaco | pi-dns | pi-obs | pi-sonar | pi-utils | all"
+    echo "        Nodos válidos: ryzen | retaco | pi-dns | pi-obs | pi-sonar | pi-utils | pinchi | all"
     exit 1
     ;;
 esac

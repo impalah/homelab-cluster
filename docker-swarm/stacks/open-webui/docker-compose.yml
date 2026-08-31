@@ -1,9 +1,33 @@
-# Fase 4 (docs/31-docker-swarm.md): open-webui migrado al swarm.
-# `constraints: node.hostname==retaco` -- los datos (uploads/caché en
-# /app/backend/data, 890M) siguen en el mismo bind-mount, sin mover. La BD
-# real (chat/usuarios) ya vive en postgres-main desde antes -- ya usa IP
-# real (192.168.1.174), no alias Docker, igual que QDRANT_URI -- confirmado
-# antes de migrar qdrant. Backup previo de /data (805M comprimido).
+# Fase 4 (docs/31-docker-swarm.md): open-webui, en Swarm.
+#
+# `constraints: node.hostname==retaco` RETIRADO (2026-08-31, decisión
+# explícita del usuario). Investigado antes de tocar nada: de los 890M de
+# `/app/backend/data`, 889M eran `cache/embedding/models` -- un modelo de
+# HuggingFace (`sentence-transformers/all-MiniLM-L6-v2`) descargado,
+# 100% regenerable. El resto (`webui.db`+`-wal`/`-shm`, `vector_db`,
+# `uploads` -- 1,1M en total) llevaba sin tocarse desde julio/principios de
+# agosto -- coincide con lo ya anotado en la mejora 43 ("Postgres desde la
+# migración, este directorio ya es solo residual"). La BD real
+# (chat/usuarios) vive en postgres-main desde antes -- llega vía secreto de
+# Infisical, no aparece en este fichero.
+#
+# Solución mixta (a petición del usuario, dado que el proceso corre como
+# root -- uid=0 -- así que la ACL de UGOS no es problema aquí):
+# - Lo residual (`webui.db*`, `vector_db`, `uploads`) migrado con `rsync`
+#   (verificado por `md5sum`, sin pérdida) a `/mnt/nfs-data/open-webui/data`
+#   (NAS ketekasko), montado en `/app/backend/data`.
+# - `cache/` se superpone con un `tmpfs` propio DENTRO de esa misma ruta --
+#   no persiste entre reinicios/nodos a propósito (es caché por
+#   definición), evita ocupar el NAS con 889M de contenido regenerable.
+#   Coste real: si el nodo cambia o reinicia, el modelo se vuelve a
+#   descargar una vez (latencia de arranque en frío, no de cada request).
+#
+# `QDRANT_URI` -- `qdrant.404labo.net`, no IP hardcodeada (2026-08-31,
+# limpieza a petición del usuario) -- Qdrant publica su puerto en
+# `mode: ingress` (por defecto), así que la petición llega igual por la
+# routing mesh aunque el DNS resuelva a otro nodo que el que ejecuta la
+# tarea de verdad -- mismo mecanismo que ya usan `sonarqube.404labo.net`/
+# `portainer.404labo.net`.
 version: "3.8"
 
 services:
@@ -20,12 +44,23 @@ services:
       # añadir la CA interna al combinado (era eso lo único que sobra).
       OPENAI_API_BASE_URLS: https://bifrost.404labo.net/v1
       VECTOR_DB: qdrant
-      QDRANT_URI: http://192.168.1.174:6333
+      QDRANT_URI: http://qdrant.404labo.net:6333
       INFISICAL_DOMAIN: https://infisical.404labo.net/api
     volumes:
-      - /srv/homelab/retaco/open-webui/data:/app/backend/data
-      - /srv/homelab/retaco/open-webui/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
-      - /srv/homelab/retaco/infisical-cli/infisical:/usr/local/bin/infisical:ro
+      - /mnt/nfs-data/open-webui/data:/app/backend/data
+      - type: tmpfs
+        target: /app/backend/data/cache
+        tmpfs:
+          size: 1073741824
+      - /srv/homelab/infisical/infisical-cli/infisical:/usr/local/bin/infisical:ro
+    configs:
+      # homelab-ca-bundle-v1: compartido con 10 stacks más (2026-08-31,
+      # confirmado por md5sum idéntico) -- ver docker-swarm/stacks/authentik/
+      # docker-compose.yml para la explicación completa. El entrypoint de
+      # abajo sigue leyendo /etc/ssl/certs/homelab-ca.crt tal cual -- `cat`
+      # no distingue si el origen es un bind-mount o un config.
+      - source: homelab-ca-bundle-v1
+        target: /etc/ssl/certs/homelab-ca.crt
     secrets:
       - source: open-webui-infisical-client-id-v1
         target: open-webui-infisical-client-id
@@ -49,14 +84,15 @@ services:
         exec infisical run --token="$$TOKEN" --projectId="$$PROJECT_ID" --env=prod --path=/open-webui/ -- \
           bash start.sh
     ports:
-      # mode: host, no ingress -- mismo motivo que sonarqube/authentik/
-      # bifrost: en modo ingress el puerto se reserva en TODO el swarm
-      # (necesario para la routing mesh), lo que choca con cualquier otro
-      # servicio que use ese mismo puerto en `mode: host` en cualquier nodo
-      # -- aquí, bifrost (pi-sonar, también 8080).
+      # Publicado en 19002, no 8080 (2026-08-31) -- liberaba el 8080 para
+      # poder quitarle el pin/mode:host a `bifrost` (mismo motivo, era el
+      # otro extremo de esa colisión). `target: 8080` no cambia -- es el
+      # puerto interno por defecto de open-webui, solo se remapea el lado
+      # publicado. `mode: ingress` -- ya no hay `constraints` de nodo (ver
+      # cabecera), la tarea puede aterrizar en cualquiera de los 5 managers.
       - target: 8080
-        published: 8080
-        mode: host
+        published: 19002
+        mode: ingress
     networks:
       - open-webui-net
     logging:
@@ -67,9 +103,6 @@ services:
         max-buffer-size: 4m
     deploy:
       replicas: 1
-      placement:
-        constraints:
-          - node.hostname==retaco
       restart_policy:
         condition: on-failure
 
@@ -77,6 +110,10 @@ networks:
   open-webui-net:
     driver: overlay
     attachable: true
+
+configs:
+  homelab-ca-bundle-v1:
+    external: true
 
 secrets:
   open-webui-infisical-client-id-v1:

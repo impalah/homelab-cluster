@@ -80,7 +80,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     configs:
-      - source: traefik-dynamic-routes-v5
+      - source: traefik-dynamic-routes-v10
         target: /etc/traefik/dynamic/routes.yml
     secrets:
       # Versión real en el clúster puede ir por delante de esta -- mejora 41
@@ -125,8 +125,14 @@ configs:
   # que aún vivía solo en *.home.arpa (paso aditivo, ver dynamic/routes.yml).
   # v5: cierre de la mejora 41 (2026-08-28) -- retira los ~24 routers
   # `Host(*.home.arpa)` y el certificado de *.home.arpa, verificados sanos
-  # antes todos sus gemelos *.404labo.net.
-  traefik-dynamic-routes-v5:
+  # antes todos sus gemelos *.404labo.net. v6 (2026-08-31): backend de
+  # sonarqube actualizado a :19000. v7 (2026-08-31): backend de portainer
+  # actualizado a :19001. v8 (2026-08-31): backend de open-webui actualizado
+  # a :19002. v9 (2026-08-31): backend de portainer movido de pi-utils a
+  # pinchi. v10 (2026-08-31): backend de vaultwarden movido de pi-utils a
+  # pinchi (192.168.1.175) -- servicio reubicado por fiabilidad de disco,
+  # ver docker-swarm/stacks/vaultwarden/docker-compose.yml.
+  traefik-dynamic-routes-v10:
     file: ./dynamic/routes.yml
 
 secrets:

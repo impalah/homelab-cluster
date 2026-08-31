@@ -41,13 +41,13 @@ el servicio "viva" ahí.
 | whisper.404labo.net         | ryzen.404labo.net      | 9800            |
 | grafana.404labo.net         | pi-obs.404labo.net     | 3000            |
 | prometheus.404labo.net      | pi-obs.404labo.net     | 9090            |
-| sonarqube.404labo.net       | pi-sonar.404labo.net   | 9000            |
+| sonarqube.404labo.net       | pi-sonar.404labo.net   | 19000           |
 | bifrost.404labo.net         | pi-sonar.404labo.net   | 8080            |
 | rsshub.404labo.net          | pi-utils.404labo.net   | 1200            |
 | markitdown.404labo.net      | pi-utils.404labo.net   | 8001            |
 | crawl4ai.scraper.404labo.net| pi-utils.404labo.net   | 8002            |
 | n8n-aux.404labo.net         | pi-utils.404labo.net   | 5679            |
-| portainer.404labo.net       | pi-utils.404labo.net   | 9000            |
+| portainer.404labo.net       | pi-utils.404labo.net   | 19001           |
 | vaultwarden.404labo.net     | pi-utils.404labo.net   | 8222            |
 | registry.404labo.net        | retaco.404labo.net     | 5000            |
 | epub2pdf.404labo.net        | retaco.404labo.net     | 8003            |

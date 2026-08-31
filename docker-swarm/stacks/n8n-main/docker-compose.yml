@@ -1,19 +1,28 @@
 # Fase 4 (docs/31-docker-swarm.md): tercer servicio con estado migrado al
-# swarm. `constraints: node.hostname==retaco` -- los datos
-# (workflows/credenciales cifradas en /home/node/.n8n) siguen en el mismo
-# bind-mount de siempre, NUNCA se mueven de nodo. Reutiliza directamente las
-# rutas ya preparadas en retaco (infisical-cli, CA, datos).
+# swarm.
+#
+# `constraints: node.hostname==retaco` RETIRADO (2026-08-31, decisión
+# explícita del usuario). Investigado antes de tocar nada: `DB_TYPE:
+# postgresdb` -- el estado real (workflows/credenciales/ejecuciones) vive
+# en `postgres-main`, no en `/home/node/.n8n`. Ese directorio local (44K)
+# solo tenía logs de eventos vacíos, un `config` de 56 bytes y
+# `storage/workflows/` sin ningún dato binario real dentro -- vestigial,
+# mismo patrón que `open-webui`. Migrado íntegro a
+# `/mnt/nfs-data/n8n-main/data` (verificado por recuento de ficheros). El
+# binario de `infisical` pasa a la ruta compartida multi-arquitectura
+# (mismo mecanismo que `authentik`/`bifrost`/etc.).
 #
 # ⚠️ N8N_ENCRYPTION_KEY es irreversible una vez fijada (CLAUDE.md) -- NO
 # vive aquí ni en ningún fichero de este repo, se inyecta vía Infisical
 # (path /n8n-main/) exactamente igual que en el Compose clásico que
 # sustituye. La migración de orquestador no la toca en absoluto.
 #
-# `DB_POSTGRESDB_HOST` cambiado de "postgres-main" (alias de red Docker del
-# proyecto Compose de retaco) a la IP real -- postgres-main SIGUE siendo
-# Compose clásico (es el último de la Fase 4, con backup obligatorio antes),
-# así que n8n-main ya no comparte red de proyecto con él. Mismo criterio ya
-# usado con qdrant/open-webui y capataz-api (docs/28).
+# `DB_POSTGRESDB_HOST` -- ya no es el alias de red Docker (dejó de resolver
+# al migrar a Swarm, sin red compartida con postgres-main) ni una IP
+# hardcodeada (2026-08-31, limpieza a petición del usuario) -- es
+# `postgresql.404labo.net`, alias DNS directo (Pi-hole, sin pasar por
+# Traefik -- protocolo Postgres, no HTTP) que resuelve siempre a la IP real
+# de retaco.
 version: "3.8"
 
 services:
@@ -21,7 +30,7 @@ services:
     image: n8nio/n8n:latest
     environment:
       DB_TYPE: postgresdb
-      DB_POSTGRESDB_HOST: 192.168.1.174
+      DB_POSTGRESDB_HOST: postgresql.404labo.net
       DB_POSTGRESDB_PORT: 5432
       DB_POSTGRESDB_DATABASE: n8n
       DB_POSTGRESDB_USER: n8n
@@ -52,9 +61,14 @@ services:
       SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
       INFISICAL_DOMAIN: https://infisical.404labo.net/api
     volumes:
-      - /srv/homelab/retaco/n8n/data:/home/node/.n8n
-      - /srv/homelab/retaco/n8n/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
-      - /srv/homelab/retaco/infisical-cli/infisical:/usr/local/bin/infisical:ro
+      - /mnt/nfs-data/n8n-main/data:/home/node/.n8n
+      - /srv/homelab/infisical/infisical-cli/infisical:/usr/local/bin/infisical:ro
+    configs:
+      # homelab-ca-bundle-v1: compartido con 10 stacks más (2026-08-31,
+      # confirmado por md5sum idéntico) -- ver docker-swarm/stacks/authentik/
+      # docker-compose.yml para la explicación completa.
+      - source: homelab-ca-bundle-v1
+        target: /etc/ssl/certs/homelab-ca.crt
     secrets:
       - source: n8n-main-infisical-client-id-v1
         target: n8n-main-infisical-client-id
@@ -87,9 +101,6 @@ services:
         max-buffer-size: 4m
     deploy:
       replicas: 1
-      placement:
-        constraints:
-          - node.hostname==retaco
       restart_policy:
         condition: on-failure
 
@@ -97,6 +108,10 @@ networks:
   n8n-main-net:
     driver: overlay
     attachable: true
+
+configs:
+  homelab-ca-bundle-v1:
+    external: true
 
 secrets:
   n8n-main-infisical-client-id-v1:

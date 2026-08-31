@@ -37,8 +37,13 @@ services:
     volumes:
       - /srv/homelab/retaco/qdrant/storage:/qdrant/storage
       - /srv/homelab/retaco/qdrant/snapshots:/qdrant/snapshots
-      - /srv/homelab/retaco/qdrant/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
       - /srv/homelab/retaco/infisical-cli/infisical:/usr/local/bin/infisical:ro
+    configs:
+      # homelab-ca-bundle-v1: compartido con 10 stacks más (2026-08-31,
+      # confirmado por md5sum idéntico) -- ver docker-swarm/stacks/authentik/
+      # docker-compose.yml para la explicación completa.
+      - source: homelab-ca-bundle-v1
+        target: /etc/ssl/certs/homelab-ca.crt
     secrets:
       - source: qdrant-infisical-client-id-v1
         target: qdrant-infisical-client-id
@@ -81,6 +86,10 @@ networks:
   qdrant-net:
     driver: overlay
     attachable: true
+
+configs:
+  homelab-ca-bundle-v1:
+    external: true
 
 secrets:
   qdrant-infisical-client-id-v1:

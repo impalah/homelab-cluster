@@ -11,7 +11,7 @@
 | markitdown-service | 8001 | https://markitdown.404labo.net (requiere API key — ver `docs/06-instalacion-pi1-dns.md`) |
 | crawl4ai-scraper-service | 8002→8000 | https://crawl4ai.scraper.404labo.net (requiere API key — ver `docs/06-instalacion-pi1-dns.md`) |
 | n8n-aux | 5679 | https://n8n-aux.404labo.net |
-| portainer | 9000 | https://portainer.404labo.net (servidor Portainer del clúster, ver `docs/10-instalacion-pi4-utils.md`) |
+| portainer | 19001 | https://portainer.404labo.net (servidor Portainer del clúster, ver `docs/10-instalacion-pi4-utils.md`) |
 | portainer-agent | 9001 | interno (usado por Portainer, no tiene URL propia) |
 | node-exporter | 9100 | interno (consultado por Prometheus en pi-obs) |
 | cadvisor | 8081 | interno (consultado por Prometheus en pi-obs) |

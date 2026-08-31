@@ -143,11 +143,38 @@ ketekasko.home.arpa:/volume1/nfs-data /mnt/nfs-data nfs vers=3,defaults,_netdev 
 
 ### Clientes montados hoy
 
+Montado en los **5 managers del Swarm** desde el 2026-08-31 (decisión expresa del usuario — considera el NAS, protegido con SAI, infraestructura suficientemente esencial del clúster como para usarlo de almacenamiento compartido, no solo para los dos servicios de conversión):
+
 | Nodo | Punto de montaje | Uso |
 |---|---|---|
-| `retaco` | `/mnt/nfs-data` | `/data/input`/`/data/output` de `epub2pdf-service` y `pdf2chunks-service` (subcarpetas `epub2pdf/`, `pdf2chunks/`) — ver `docs/05-instalacion-retaco.md` sección 5.4 |
+| `retaco` | `/mnt/nfs-data` | `epub2pdf-service`/`pdf2chunks-service` (`epub2pdf/`, `pdf2chunks/`) — ver `docs/05-instalacion-retaco.md` sección 5.4; `authentik/{data,certs}` desde el 2026-08-31 |
+| `pi-obs`, `pi-sonar`, `pi-utils`, `pinchi` | `/mnt/nfs-data` | Sin uso propio todavía (2026-08-31) — montado para poder desplegar ahí servicios con este bind-mount sea cual sea el nodo que Swarm elija |
 
-⚠️ **`stat`/`ls` sobre el punto de montaje como usuario sin privilegios pueden devolver "Permiso denegado" o `mode 0000` de forma intermitente**, pese a que el export tiene permisos abiertos y root squash desactivado — observado en vivo montando desde `retaco`. El acceso como `root` (por `sudo`, o el propio proceso `root` dentro de un contenedor Docker) siempre funciona con normalidad, verificado con lectura y escritura reales — no bloquea el caso de uso real (contenedores que escriben como root, ver sección "Esquema de carpetas de este NAS" más arriba). No investigado a fondo el motivo exacto; probablemente una peculiaridad de cómo UGOS Pro calcula o cachea los atributos NFSv3, no un problema de permisos real.
+### ⚠️ Permisos reales: ACL propia de UGOS (`ugacl_vfs`), NO POSIX estándar — resuelve la nota de "permiso denegado intermitente"
+
+Investigado a fondo el 2026-08-31 (motivaba la nota de abajo, sin explicar hasta ahora): UGOS Pro no controla el acceso a una carpeta compartida solo con los bits Unix habituales — tiene su **propia capa de ACL a nivel de VFS** (módulo de kernel `ugacl_vfs` + herramienta `ugacltool`, invisible a `getfacl`/`setfacl` estándar, tanto desde un cliente NFS como en el propio NAS por SSH). `/volume1/nfs-data` tiene esta ACL:
+
+```
+[0] group:admin (gid 10):allow:rwx...  (herencia: fichero + directorio)
+[1] user:linus (uid 1000):allow:rwx...  (herencia: fichero + directorio)
+```
+
+Es decir: **solo UID 1000 (`linus`) o cualquier UID cuyo grupo primario en el NAS sea `admin`/gid 10 (hoy también `nasadmin`, uid 1002) pueden escribir** — cualquier otro UID (por ejemplo, el UID interno de casi cualquier imagen Docker: 70 de Postgres, 472 de Grafana, 10001 de Loki, 65534 de Prometheus...) recibe `Permission denied`, **aunque el directorio muestre `777`**. `root` siempre pasa, por `no_root_squash` en el export (`/etc/exports`), no por esta ACL.
+
+**No existe un comodín tipo "everyone"/"todos" confirmado** — probado sin éxito: `everyone`, `anyone`, `all`, `world`, `Everyone`, el SID de Windows `S-1-1-0`, y el tipo `special` con varios valores numéricos (llega al módulo de kernel pero siempre devuelve `Invalid argument`). El único mecanismo confirmado que funciona es `user:<nombre-de-cuenta-NAS-real>`/`group:<nombre-de-grupo-NAS-real>` — identidades resueltas por nombre contra `/etc/passwd`/`/etc/group` del propio NAS, no UIDs arbitrarios sin cuenta asociada:
+
+```bash
+# Sintaxis confirmada en vivo (ejecutado en el propio NAS, por SSH)
+ugacltool get /volume1/nfs-data                              # ver ACL actual
+ugacltool add /volume1/nfs-data 'user:<nombre>:allow:rwxpdDaARWc--:-fd-'
+ugacltool add /volume1/nfs-data 'group:<nombre>:allow:rwxpdDaARWc--:-fd-'
+```
+
+**Consecuencia práctica para bind-mounts Docker sobre este NFS**: cada servicio necesita, o bien correr con `user: "1000:<gid>"` en su `docker-compose.yml` (si la imagen lo admite sin romperse — no todas, Postgres oficial es el caso típico dudoso), o bien una cuenta NAS nueva creada a mano por UID + `ugacltool add` correspondiente. Sin una de las dos cosas, el contenedor arranca pero cualquier escritura real falla en silencio con `Permission denied` — probarlo en vivo (`docker exec <contenedor> touch <ruta>`) antes de dar una migración por buena, no basta con ver el servicio `Running`.
+
+⚠️ **`rsync -av`/`-p` rompe la herencia de esta ACL** — al preservar permisos explícitamente (`chmod`), convierte el directorio/fichero de "modo ACL heredada" a "modo Linux" plano (confirmado con `ugacltool get <ruta>`: pasa a devolver `It's Linux mode` en vez de listar las entradas). Un `mkdir` simple SÍ hereda la ACL del padre correctamente; un `rsync -av` posterior sobre ese mismo directorio la destruye. Si esto pasa, la solución más simple no es pelear con la ACL — es `chown -R <uid>:<gid>` directo al UID que va a escribir ahí (como root, vía `sudo`, que siempre tiene paso libre) para que el propietario Unix del "modo Linux" resultante ya sea el correcto, sin depender de que la ACL propietaria se vuelva a aplicar.
+
+Además del tema de ACL: **`stat`/`ls` sobre el punto de montaje como usuario sin privilegios pueden devolver "Permiso denegado" o `mode 0000` de forma intermitente**, pese a que el export tiene permisos abiertos y root squash desactivado — observado en vivo montando desde `retaco`. El acceso como `root` (por `sudo`, o el propio proceso `root` dentro de un contenedor Docker) siempre funciona con normalidad, verificado con lectura y escritura reales.
 
 ## Esquema de carpetas de este NAS
 
@@ -162,7 +189,7 @@ Volumen total 3.6 TB (RAID 1), repartido en dos carpetas compartidas:
 - Host/red permitida: `192.168.1.0/24`
 - Privilegio: Lectura/Escritura
 - Squash de root: **desactivado** — decisión consciente para que procesos dentro de contenedores que escriban como `root` lo hagan también como `root` en el NAS, sin mapear a un usuario sin privilegios (evita fallos de permisos opacos en bind mounts de Docker). Contrapartida asumida: cualquier `root` en la LAN `192.168.1.0/24` tiene control total sobre esta carpeta — aceptable en esta LAN de confianza, no expuesta a Tailscale/internet.
-- No requiere usuario del NAS — NFS con `AUTH_SYS` controla acceso por IP/red, no por cuenta.
+- ⚠️ **Corregido (2026-08-31)**: esto solo es cierto para el propio *montaje* (`AUTH_SYS` sí autentica por IP/red, no por cuenta, para poder montar). Una vez montada, la carpeta lleva además su propia ACL de UGOS (`ugacl_vfs`) que sí exige cuenta — ver el aviso "Permisos reales" más arriba, sección "Clientes montados hoy".
 
 **`media`** — SMB sí requiere una cuenta de usuario del NAS (`Panel de control → Usuario → Crear`) con permiso de Lectura/Escritura asignado en `Propiedades → pestaña "Permiso"` de la carpeta — sin acceso anónimo/invitado, coherente con el resto del clúster (todo autenticado).
 

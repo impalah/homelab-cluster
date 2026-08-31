@@ -56,17 +56,20 @@ bash toggle-direct-access.sh all on        # reabre todo
 
 ### Puertos gestionados por nodo
 
+⚠️ **Desde la revisión de `constraints` del 2026-08-31 (mejora 43, `docs/22-mejoras-futuras.md`), la mayoría de estos servicios ya no están fijados a un nodo** — Swarm puede reprogramar la tarea a cualquiera de los 5 managers. La tabla agrupa los puertos por dónde estaba cada servicio al escribir esto, no como garantía de dónde sigue estando — confirmar con `docker service ps <servicio>` antes de asumir. `qdrant`, `postgres-main`, `sonarqube` y los servicios de `pi-obs` sí siguen con `constraints` real (ver `docs/01-topologia.md`, diagrama de colocación). Además, **ningún servicio del clúster publica ya su puerto en `mode: host`** — todos son `mode: ingress`, lo que en teoría significa que la routing mesh de Swarm publica cada puerto en los 5 managers, no solo en el nodo de esta tabla — **no verificado en vivo** si `DOCKER-USER` cierra también ese tráfico reenviado en los nodos que no ejecutan la tarea real (mejora 46, pendiente de comprobar).
+
 | Nodo | Puertos | Servicios |
 |---|---|---|
 | ryzen | 8080, 11434, 9800, 8010, 8188 | open-webui, ollama, whisper-service, vllm, comfyui |
-| retaco | 5678, 6333, 5000, 8003, 8004 | n8n-main, qdrant, registry, epub2pdf-service, pdf2chunks-service |
+| retaco | 5678, 6333, 5000, 8003, 8004 | n8n-main, qdrant (fijo), registry, epub2pdf-service, pdf2chunks-service |
 | pi-obs | 3000, 9090 | grafana, prometheus |
-| pi-sonar | 9000 | sonarqube |
-| pi-utils | 1200, 8001, 5679, 9000, 8222 | rsshub, markitdown-service, n8n-aux, portainer, vaultwarden |
+| pi-sonar | 19000 | sonarqube (fijo — 2026-08-31: era 9000, cambiado para liberar el puerto que compartía con `authentik`/`portainer`) |
+| pi-utils | 1200, 8001, 5679 | rsshub, markitdown-service, n8n-aux |
+| pinchi | 19001, 8222 | portainer (2026-08-31: era 9000 en pi-utils, movido a pinchi por fiabilidad de disco), vaultwarden (idem, movido de pi-utils) |
 
 ### Qué queda deliberadamente FUERA
 
-`node-exporter` (9100), `cadvisor` (8081), `portainer-agent` (9001) y `postgres-main` (5432, en retaco) **no** se gestionan aquí — ninguno pasa por nginx, así que "solo pi-dns" los dejaría inalcanzables para quien de verdad los necesita entre nodos (Prometheus, en pi-obs, recopilando las métricas de node-exporter/cadvisor de todos los nodos; Portainer, en pi-utils, hablando con cada portainer-agent; postgres-exporter y SonarQube conectando a `postgres-main`). Esas integraciones ya funcionaban por IP directa antes de este documento y siguen sin verse afectadas — es tráfico legítimo entre nodos, y no supone saltarse nginx.
+`node-exporter` (9100), `cadvisor` (8081), `portainer-agent` (9001) y `postgres-main` (5432, en retaco) **no** se gestionan aquí — ninguno pasa por nginx, así que "solo pi-dns" los dejaría inalcanzables para quien de verdad los necesita entre nodos (Prometheus, en pi-obs, recopilando las métricas de node-exporter/cadvisor de todos los nodos; Portainer, en pinchi desde el 2026-08-31, hablando con cada portainer-agent; postgres-exporter y SonarQube conectando a `postgres-main`). Esas integraciones ya funcionaban por IP directa antes de este documento y siguen sin verse afectadas — es tráfico legítimo entre nodos, y no supone saltarse nginx.
 
 ## Verificar que funciona
 

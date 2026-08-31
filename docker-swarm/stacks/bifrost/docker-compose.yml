@@ -1,9 +1,31 @@
-# Fase 4 (docs/31-docker-swarm.md): bifrost pinnado a pi-sonar
-# (constraints: node.hostname==pi-sonar), mismos datos sin mover. Estado
-# real en postgres-main (bases "bifrost"), /app/data solo aloja ficheros de
-# trabajo internos -- sin backup dedicado (ya documentado como no-estado
-# real en la copia Compose clásica). Ollama (ryzen) por IP directa, sin
-# cambios.
+# Fase 4 (docs/31-docker-swarm.md): bifrost, en Swarm.
+#
+# `constraints: node.hostname==pi-sonar` RETIRADO (2026-08-31, decisión
+# explícita del usuario). Los dos motivos que lo justificaban ya no aplican:
+# - Datos: confirmado en vivo (mejora 43) que config.db/logs.db (SQLite
+#   legado, mejora 23) y logs/ llevan sin escribirse desde antes del
+#   2026-08-07 -- /app/data nunca alojó estado real que migrar. config.json
+#   pasa a `docker config` (bifrost-config-v1) desde entonces, elimina el
+#   rsync manual que causó el incidente real de docs/23 ("config.json
+#   desincronizado tras retirar home.arpa"). Al no haber ningún dato real
+#   que persistir, `/app/data` pasa de bind-mount a `tmpfs` -- sigue
+#   cumpliendo el único requisito real (la imagen exige que el directorio
+#   exista y sea escribible por UID:GID 1000:0 al arrancar, ver docs/23,
+#   "is not writable by UID:GID 1000:0"), sin depender del NAS para nada
+#   (a diferencia de `authentik`, que sí tenía contenido real que migrar a
+#   NFS). El `docker config` se sigue superponiendo solo sobre
+#   `config.json` dentro del tmpfs.
+# - Infisical: el binario pasa de `/srv/homelab/pi-sonar/infisical-cli/`
+#   (ruta fija a un nodo concreto) a `/srv/homelab/infisical/infisical-cli/
+#   infisical` -- symlink multi-arquitectura compartido en los 5 managers,
+#   mismo mecanismo ya usado en `authentik`.
+# - Puerto: `open-webui` (retaco) liberó el 8080 (pasó a 19002) -- Bifrost
+#   se queda en 8080, pero en `mode: ingress` en vez de `host` (necesario
+#   ir junto con quitar el pin: Traefik apunta a este servicio con IP fija,
+#   `mode: host` sin pin se habría roto en silencio en cuanto Swarm
+#   reprogramase la tarea).
+#
+# Ollama (ryzen) por IP directa, sin cambios en esta pasada.
 version: "3.8"
 
 services:
@@ -11,7 +33,12 @@ services:
     image: maximhq/bifrost:v1.6.8
     environment:
       AWS_REGION: eu-west-1
-      OLLAMA_UPSTREAM_URL: http://192.168.1.150:11434
+      # ryzen.404labo.net, no IP hardcodeada (2026-08-31, limpieza a
+      # petición del usuario) -- alias DNS plano del nodo (Pi-hole), misma
+      # IP exacta de siempre. Deliberadamente NO se usa ollama.404labo.net
+      # -- ese hostname va protegido con apikey-service vía Traefik
+      # (forward-auth), y Bifrost no manda X-Api-Key -- se rompería.
+      OLLAMA_UPSTREAM_URL: http://ryzen.404labo.net:11434
       # Mejora 41 (2026-08-28): cert real de Let's Encrypt, pero SSL_CERT_FILE
       # SIGUE haciendo falta -- esta imagen no trae ningún almacén de CAs del
       # sistema (hallazgo real, ver apikey-service). homelab-ca.crt pasa a
@@ -19,9 +46,19 @@ services:
       INFISICAL_DOMAIN: https://infisical.404labo.net/api
       SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
     volumes:
-      - /srv/homelab/pi-sonar/bifrost/data:/app/data
-      - /srv/homelab/pi-sonar/bifrost/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
-      - /srv/homelab/pi-sonar/infisical-cli/infisical:/usr/local/bin/infisical:ro
+      - /srv/homelab/infisical/infisical-cli/infisical:/usr/local/bin/infisical:ro
+      - type: tmpfs
+        target: /app/data
+        tmpfs:
+          size: 8388608
+    configs:
+      - source: bifrost-config-v1
+        target: /app/data/config.json
+      # homelab-ca-bundle-v1: compartido con 10 stacks más (2026-08-31,
+      # confirmado por md5sum idéntico) -- ver docker-swarm/stacks/authentik/
+      # docker-compose.yml para la explicación completa.
+      - source: homelab-ca-bundle-v1
+        target: /etc/ssl/certs/homelab-ca.crt
     secrets:
       - source: bifrost-infisical-client-id-v1
         target: bifrost-infisical-client-id
@@ -43,12 +80,13 @@ services:
         exec infisical run --token="$$TOKEN" --projectId="$$PROJECT_ID" --env=prod --path=/bifrost/ -- \
           /app/docker-entrypoint.sh /app/main
     ports:
-      # mode: host, no ingress -- mismo motivo que sonarqube/authentik: en
-      # modo ingress el puerto queda reservado en todo el swarm, no solo en
-      # pi-sonar, y chocó con open-webui (retaco, también 8080).
+      # mode: ingress (2026-08-31) -- ya no hay `constraints` de nodo (ver
+      # cabecera), la tarea puede aterrizar en cualquiera de los 5 managers.
+      # Sin colisión real que lo impida -- open-webui liberó el 8080
+      # (pasó a 19002).
       - target: 8080
         published: 8080
-        mode: host
+        mode: ingress
     networks:
       - bifrost-net
     logging:
@@ -59,9 +97,6 @@ services:
         max-buffer-size: 4m
     deploy:
       replicas: 1
-      placement:
-        constraints:
-          - node.hostname==pi-sonar
       restart_policy:
         condition: on-failure
 
@@ -69,6 +104,16 @@ networks:
   bifrost-net:
     driver: overlay
     attachable: true
+
+configs:
+  # Auto-creado por `docker stack deploy` desde ./config.json (mismo patrón
+  # que traefik-dynamic-routes-v5) -- inmutable, un cambio de contenido exige
+  # subir de versión aquí y en el target de arriba, no un `docker config
+  # update` en sitio.
+  bifrost-config-v1:
+    file: ./config.json
+  homelab-ca-bundle-v1:
+    external: true
 
 secrets:
   bifrost-infisical-client-id-v1:

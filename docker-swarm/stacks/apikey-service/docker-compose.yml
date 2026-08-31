@@ -15,6 +15,13 @@
 # prerequisitos ya replicados en los 5 nodos, docs/31-docker-swarm.md) --
 # se deja elegir al scheduler por defecto de Swarm.
 #
+# Revisado en la mejora 43 (2026-08-31): el binario de infisical (123 MB)
+# no cabe en un `docker config` (límite 500 KB) -- el bind-mount + réplica
+# por nodo sigue siendo la única opción real, y ya está decidido y
+# automatizado (ADR 0001, `shared/scripts/deploy-infisical-cli.sh`), no un
+# `rsync` ad-hoc como el que causó el incidente real de Bifrost (docs/23).
+# Nada que cambiar aquí.
+#
 # Credenciales de Infisical como `docker secret` (creados a mano, external:
 # true, igual que el certificado TLS de 3b) en vez de variables de entorno
 # -- Swarm expone `docker service inspect` con las env vars en texto plano
@@ -40,12 +47,21 @@ services:
       # real), no solo la CA interna -- mismo fichero, contenido ampliado.
       INFISICAL_DOMAIN: https://infisical.404labo.net/api
       SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
-      APIKEY_OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://192.168.1.171:4318/v1/logs
+      # pi-obs.404labo.net, no IP hardcodeada (2026-08-31, limpieza a
+      # petición del usuario, incluido explícitamente pese a ser la misma
+      # categoría que el loki-url de logging que se dejó aparte) -- alias
+      # DNS plano del nodo (Pi-hole), misma IP exacta de siempre.
+      APIKEY_OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://pi-obs.404labo.net:4318/v1/logs
       APIKEY_LOG_LEVEL: INFO
       APIKEY_LOG_FORMAT: json
     volumes:
       - /srv/homelab/apikey-service/infisical-cli/infisical:/usr/local/bin/infisical:ro
-      - /srv/homelab/apikey-service/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
+    configs:
+      # homelab-ca-bundle-v1: compartido con 10 stacks más (2026-08-31,
+      # confirmado por md5sum idéntico) -- ver docker-swarm/stacks/authentik/
+      # docker-compose.yml para la explicación completa.
+      - source: homelab-ca-bundle-v1
+        target: /etc/ssl/certs/homelab-ca.crt
     secrets:
       - source: apikey-infisical-client-id-v1
         target: infisical-client-id
@@ -93,6 +109,10 @@ networks:
   traefik-public:
     external: true
     name: traefik_traefik-public
+
+configs:
+  homelab-ca-bundle-v1:
+    external: true
 
 secrets:
   apikey-infisical-client-id-v1:

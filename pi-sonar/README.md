@@ -7,7 +7,7 @@
 
 | Servicio | Puerto (host) | URL pública |
 |---|---|---|
-| sonarqube | 127.0.0.1:9000 | https://sonarqube.404labo.net |
+| sonarqube | 19000 | https://sonarqube.404labo.net |
 | bifrost | 8080 | https://bifrost.404labo.net |
 
 > La base de datos de SonarQube vive en `retaco` (`postgres-main`), no en este nodo — ver `docs/05-instalacion-retaco.md`.

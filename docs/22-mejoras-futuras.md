@@ -1265,7 +1265,7 @@ Bajo — reutiliza infraestructura y patrón exactamente iguales a los de la ale
 
 ---
 
-## 43. Auditoría de bind-mounts en Docker Swarm — evaluar alternativas a la fijación por nodo
+## 43. ~~Auditoría de bind-mounts en Docker Swarm — evaluar alternativas a la fijación por nodo (y a los puertos en `mode: host` que provoca)~~ — hecho
 
 **Prioridad: media**
 
@@ -1339,6 +1339,37 @@ necesaria — cada réplica lee el propio host donde corre, no datos compartidos
 
 **Sin ningún volumen** (totalmente portable, sin acción posible ni necesaria): `crawl4ai-scraper-service`.
 
+#### Efecto colateral del pin: puertos en `mode: host` en vez de `mode: ingress`
+
+Publicar un puerto en Swarm sin decir nada usa `mode: ingress` por defecto — la routing mesh, que
+reserva ese puerto en **los 5 nodos**, no solo en el que ejecuta la tarea. Ocho servicios de este
+clúster publican su puerto en `mode: host` en su lugar (reserva solo en el nodo real), y en la
+mayoría de los casos el motivo documentado es exactamente el mismo tipo de problema que motiva esta
+mejora: al estar pinnados a un nodo por su bind-mount, dos servicios pinnados a nodos *distintos*
+pueden compartir el mismo número de puerto sin chocar — pero solo si ninguno usa `mode: ingress`,
+porque ese modo sí reservaría el puerto en el swarm entero y chocaría igualmente aunque estén en
+nodos físicos diferentes:
+
+| Stack/servicio | Puerto | Motivo documentado en el propio compose | ¿Colisión de puerto confirmada en vivo? |
+|---|---|---|---|
+| `bifrost` | 8080 | Mismo puerto que `open-webui` (nodo distinto) | Sí — encontrada al desplegar |
+| `open-webui` | 8080 | Mismo puerto que `bifrost` | Sí — encontrada al desplegar |
+| `authentik-server` | 9000 | Histórico: compartía puerto con `sonarqube`/`portainer-server`. **Ambos liberados y `constraints`/`mode: host` retirados del todo (2026-08-31)** — junto con `/data`/`/certs` en NFS y el binario de `infisical` en ruta multi-arquitectura compartida, `authentik-server`/`authentik-worker` quedan sin pin de nodo, en `mode: ingress`. Confirmado en vivo: tras forzar el redespliegue, Swarm reprogramó ambas tareas a `pi-sonar` (no `retaco`) sin intervención manual, todo verificado sano desde el nodo nuevo | Histórico, ya no aplica |
+| `sonarqube` | ~~9000~~ **19000** | ~~Mismo puerto que `authentik-server`~~ **Resuelto (2026-08-31)**: republicado en 19000 | Histórico, ya no aplica |
+| `portainer-server` | ~~9000~~ **19001** | ~~Mismo puerto que `authentik-server`~~ **Resuelto (2026-08-31)**: republicado en 19001 (el `constraints: node.hostname==pi-utils` se queda igual — lo exige la BoltDB real, no el puerto) | Histórico, ya no aplica |
+| `capataz-api` | 8000 | Sin comentario que documente una colisión real | **No** — ningún otro stack publica el 8000 |
+| `capataz-frontend` | 8090 | Sin comentario que documente una colisión real | **No** — ningún otro stack publica el 8090 |
+| `infisical` | 8006 | Sin comentario que documente el motivo | **No** — ningún otro stack publica el 8006 |
+
+Los cinco primeros tienen una colisión real y documentada — `mode: host` ahí es la corrección
+correcta mientras sigan pinnados, no algo a revisar. Los tres últimos (`capataz-api`,
+`capataz-frontend`, `infisical`) no tienen ninguna colisión real detrás — todo apunta a que se puso
+`mode: host` por coherencia con el resto del stack (ya pinnado de todas formas por el bind-mount),
+no porque hiciera falta. Si el pin de esos servicios se revisa (ver `docker config` más abajo) y
+deja de ser necesario, `mode: host` también debería revisarse — mantenerlo sin necesidad renuncia a
+la routing mesh (balanceo entre réplicas, tolerancia a que Swarm reprograme la tarea) sin ganar nada
+a cambio.
+
 ### Qué haría falta
 
 1. **Revisar los dos casos "sin constraints" primero** (`apikey-service`, `markitdown-service`) — son los que peor encajan hoy: o se documenta explícitamente por qué es seguro dejarlos así (ya hecho parcialmente en comentarios), o se sustituye el `rsync` manual a los 5 nodos del binario de Infisical/CA de `apikey-service` por el mecanismo de `docker config` descrito en el punto siguiente.
@@ -1348,12 +1379,124 @@ necesaria — cada réplica lee el propio host donde corre, no datos compartidos
    - **Límites reales del mecanismo, a tener en cuenta antes de aplicarlo**: un `docker config` es un fichero único, no un directorio (descarta de raíz `catalog/`/`alembic/` de `capataz` y `dashboards/json/` de `pi-obs` tal cual, habría que trocearlos en un config por fichero, no siempre compensa); tiene un límite de 500 KB (ninguno de los candidatos de arriba se acerca); y **nunca debe llevar secretos** — el `users.acl` de `valkey`, por ejemplo, hoy lleva una contraseña en claro dentro del propio fichero (`user capataz on >{contraseña} ...`), así que ese caso concreto necesitaría separar la contraseña a un `docker secret` aparte antes de poder convertir el resto del ACL en `docker config`, no vale con moverlo tal cual.
    - Sigue siendo **inmutable como los `docker secret`** (mismo patrón `-vN` ya usado en todo el repo) — cualquier cambio de contenido exige bump de versión + `docker stack deploy`, no un `docker config update` en sitio.
 3. **Para cada servicio de la primera tabla (bind-mount + constraint) que NO sea un candidato a `docker config`, confirmar que el pin sigue siendo la decisión correcta y que está documentado como tal** — la mayoría de los `docker-compose.yml` ya llevan un comentario explicando el motivo (patrón exigido por `CLAUDE.md`), pero conviene verificar que ninguno se quedó sin esa justificación tras ediciones posteriores.
-4. **Evaluar un volumen NFS-backed contra el NAS `ketekasko`** (ya probado NFSv3, `docs/21-configuracion-nas-ugreen.md`) como alternativa real al bind-mount local para los candidatos con menos escritura/latencia crítica que sí tengan estado real (p. ej. `registry`, `grafana`, `vaultwarden`) — **no** para bases de datos con escritura frecuente real (`postgres-main`, `qdrant`, `loki`, `prometheus`) sin medir antes: NFS añade latencia por escritura que puede degradar justo el tipo de servicio que más se beneficiaría de dejar de estar pinnado. El resultado esperado para la mayoría de estos es probablemente "mantener el bind-mount + constraint tal cual", pero que sea una decisión explícita y medida, no un valor por defecto sin examinar.
-5. **Para los dos servicios atados al NFS solo-en-`retaco`** (`epub2pdf-service`, `pdf2chunks-service`): valorar montar `ketekasko:/volume1/nfs-data` también en los otros 4 managers (técnicamente ya viable, mismo patrón NFSv3) para poder retirar el `constraints` — sopesando el coste real (4 puntos de montaje NFS más que mantener) frente al beneficio (servicios de conversión de bajo tráfico, el pin apenas cuesta algo hoy).
-6. **Actualizar esta misma tabla** en este documento (o moverla a `docs/31-docker-swarm.md`, que ya es el documento de referencia operativo de Swarm) una vez revisado cada servicio, marcando la decisión tomada — para que no vuelva a quedar como un inventario "de un momento dado" sin mantener.
+4. **Revisar los tres servicios en `mode: host` sin colisión de puerto documentada** (`capataz-api`, `capataz-frontend`, `infisical`, ver tabla de arriba) — comprobar primero si de verdad no hay colisión (no solo confiar en que no hay comentario) y, si el pin que los fuerza a `mode: host` se resuelve con `docker config`, volver a `mode: ingress` a la vez. **`capataz-api` es el caso trabajado**, con los datos reales del bind-mount comprobados en `pi-utils` (2026-08-29):
+   - `catalog/services.example.yaml` — fichero único, 43 KB → candidato directo a `docker config`.
+   - `api/alembic.ini` — fichero único, 568 bytes → candidato directo a `docker config`.
+   - `certs/` (`ca-bundle.pem` 186 KB + `homelab-ca.crt` 1,8 KB, usado también por `capataz-runner`) — dos ficheros, ambos por debajo del límite de 500 KB → dos `docker config` separados, uno por fichero.
+   - `api/alembic/` (`env.py` + `versions/`, un directorio con varios ficheros que crece con cada migración nueva) — **no** encaja en `docker config` (solo admite un fichero, no un directorio) — este es el único de los cuatro bind-mounts de `capataz-api` que de verdad seguiría necesitando algo distinto de `docker config`; valorar aparte si tiene sentido hornear las migraciones dentro de la imagen (van versionadas con el propio código de Capataz) en vez de seguir pasándolas por bind-mount — cuestión del repo externo de Capataz, no de este, así que no forzarla dentro de esta tarea.
+   - Si `alembic/` se resuelve aparte (o se acepta como el único motivo real de pin restante), `capataz-runner` y `capataz-frontend` quedarían con **cero** bind-mounts propios (`certs/` y `default.conf` respectivamente, ambos ya cubiertos por `docker config`) — candidatos a perder el `constraints: node.hostname==pi-utils` heredado del stack y volver a `mode: ingress` en su puerto.
+5. **Evaluar un volumen NFS-backed contra el NAS `ketekasko`** (ya probado NFSv3, `docs/21-configuracion-nas-ugreen.md`) como alternativa real al bind-mount local para los candidatos con menos escritura/latencia crítica que sí tengan estado real (p. ej. `registry`, `grafana`, `vaultwarden`) — **no** para bases de datos con escritura frecuente real (`postgres-main`, `qdrant`, `loki`, `prometheus`) sin medir antes: NFS añade latencia por escritura que puede degradar justo el tipo de servicio que más se beneficiaría de dejar de estar pinnado. El resultado esperado para la mayoría de estos es probablemente "mantener el bind-mount + constraint tal cual", pero que sea una decisión explícita y medida, no un valor por defecto sin examinar.
+6. **Para los dos servicios atados al NFS solo-en-`retaco`** (`epub2pdf-service`, `pdf2chunks-service`): valorar montar `ketekasko:/volume1/nfs-data` también en los otros 4 managers (técnicamente ya viable, mismo patrón NFSv3) para poder retirar el `constraints` — sopesando el coste real (4 puntos de montaje NFS más que mantener) frente al beneficio (servicios de conversión de bajo tráfico, el pin apenas cuesta algo hoy).
+7. **Actualizar esta misma tabla** en este documento (o moverla a `docs/31-docker-swarm.md`, que ya es el documento de referencia operativo de Swarm) una vez revisado cada servicio, marcando la decisión tomada — para que no vuelva a quedar como un inventario "de un momento dado" sin mantener.
 
 ### Esfuerzo estimado
-Medio — el barrido en sí ya está hecho (tabla de arriba); el trabajo real está en medir antes de tocar cualquier servicio con escritura frecuente (punto 4) y en decidir, servicio a servicio, si el pin actual es la opción correcta o solo la que salió por defecto. El caso de Bifrost (punto 2) es el más barato de resolver de todo el inventario — mecanismo ya probado en el propio clúster, sin necesidad de medir latencia. Ningún cambio de este punto es urgente: todos los pins actuales funcionan correctamente hoy.
+Medio — el barrido en sí ya está hecho (tablas de arriba, incluida la de `mode: host`); el trabajo real está en medir antes de tocar cualquier servicio con escritura frecuente (punto 5) y en decidir, servicio a servicio, si el pin actual es la opción correcta o solo la que salió por defecto. Los casos de Bifrost y Capataz (puntos 2 y 4) son los más baratos de resolver de todo el inventario — mecanismo ya probado en el propio clúster (`docker config`), sin necesidad de medir latencia, y con el beneficio añadido de poder volver a `mode: ingress` en Capataz. Ningún cambio de este punto es urgente: todos los pins actuales funcionan correctamente hoy.
+
+### Cierre (2026-08-31)
+
+Ejecutados los puntos 1-4 y 7; los puntos 5 y 6 se evalúan y se decide explícitamente no ejecutarlos por ahora (razón al final).
+
+- **Punto 1 (`apikey-service`/`markitdown-service`)**: revisado, sin cambio de código. El binario de `infisical` pesa 123 MB en vivo (confirmado en `pi-utils`) — muy por encima del límite de 500 KB de `docker config`, así que el bind-mount + réplica por nodo sigue siendo la única opción real. Ya estaba formalmente decidido (`docs/adr/0001-infisical-inyeccion-bind-mount-vs-imagen-derivada.md`) y automatizado (`shared/scripts/deploy-infisical-cli.sh`, no un `rsync` ad-hoc) — se anota en el propio compose y se cierra el punto sin tocar nada más. `markitdown-service` seguía ya correcto (caché scratch, sin constraint).
+- **Punto 2 (`docker config` para bind-mounts de solo lectura)**:
+  - **Bifrost**: `config.json` pasa a `docker config` (`bifrost-config-v1`, `file:` versionado en `docker-swarm/stacks/bifrost/config.json`, movido desde `pi-sonar/config/bifrost/`). Verificado en vivo antes de tocar nada: `config.db`/`logs.db` (SQLite legado de la mejora 23) y `logs/` llevan sin escribirse desde antes del 2026-08-07 — sin estado real en `/app/data` hoy, solo `config.json`. **Pero el bind-mount de `/app/data` NO se retira** (a diferencia de lo que este mismo documento sugería) — la imagen exige que ese directorio exista y sea escribible por UID:GID 1000:0 al arrancar, o falla (`docs/23`, incidente real del primer despliegue); el `docker config` se superpone solo sobre `config.json` dentro del bind-mount existente. El `constraints: node.hostname==pi-sonar` tampoco se retira: no lo sostienen los datos (ya sin estado real) sino el puerto 8080 en `mode: host`, que choca con `open-webui` (`retaco`, mismo puerto) si Swarm lo reprogramase ahí — hallazgo nuevo, no estaba en el inventario original, anotado en la cabecera del compose. Redesplegado y verificado (`docker service ps`, arranque limpio sin errores de `/app/data`, `curl` real a `https://bifrost.404labo.net/v1/models` responde `401` como se espera sin virtual key).
+  - **Capataz**: `catalog/services.example.yaml`, `api/alembic.ini`, `certs/ca-bundle.pem`, `certs/homelab-ca.crt` pasan a `docker config ... external: true` (creados a mano desde los ficheros reales en `pi-utils` — vienen del checkout parcial del repo *externo* de Capataz, no están versionados en este repo, así que no usan `file:`). `capataz-frontend-default.conf` sí estaba versionado aquí (movido desde `pi-utils/config/capataz-frontend/`) — pasa a `docker config` con `file:`, igual que Bifrost. `api/alembic/` (directorio, crece con cada migración) se queda como bind-mount — no cabe en `docker config`, hornear las migraciones en la imagen es decisión del repo externo de Capataz, fuera de alcance. Redesplegado y verificado: los tres servicios sanos, login OIDC real y health-check reales por hostname (`https://capataz-api.404labo.net/health/live` → 200, `https://home.404labo.net/` → 200), `capataz-runner` conecta por TLS a Valkey (`rediss://...`, confirma que `certs/` sigue resoluble desde el `docker config`).
+  - **pi-obs** (`loki.yaml`/`tempo.yaml`/`prometheus.yml`/etc.): evaluado, **no ejecutado en esta pasada** — no desbloquea ningún des-pin (pi-obs sigue fijado por datos reales de Loki/Tempo/Prometheus/Grafana), sería solo un mecanismo de despliegue más limpio (evita el `rsync` manual). Queda como mejora futura de bajo riesgo, sin urgencia.
+  - **`valkey` (`users.acl`)**: evaluado, **no ejecutado** — lleva una contraseña en claro dentro del propio fichero, necesitaría separarla a un `docker secret` antes de poder convertir el resto del ACL a `docker config`. Fuera de alcance de esta pasada.
+- **Punto 3 (verificar comentarios de justificación)**: repasados los 16 stacks restantes con `constraints` (`postgres-main`, `n8n-main`, `n8n-aux`, `qdrant`, `registry`, `open-webui`, `open-terminal-mcp`, `valkey`, `authentik`, `vaultwarden`, `rsshub`, `portainer-server`, `sonarqube`, `pi-obs`, `epub2pdf-service`, `pdf2chunks-service`) — todos ya explican el motivo del pin junto al `constraints:`, sin huecos. Sin cambios.
+- **Punto 4 (`mode: host` sin colisión documentada)**: confirmado por `grep` en los 25 stacks que ningún otro servicio publica 8000/8090/8006 — `capataz-api` (8000) y `capataz-frontend` (8090) vuelven a `mode: ingress`; `infisical` (8006) también, aunque su `constraints: node.hostname==retaco` se queda igual (lo exige compartir stack/red con `postgres-infisical`, estado real, no el puerto). `capataz-runner` y `capataz-frontend` pierden además `constraints: node.hostname==pi-utils` al quedarse sin bind-mounts propios — confirmado en vivo que Swarm los reprogramó de hecho (aterrizaron primero en `pinchi`, antes de volver a `pi-utils` tras un problema de DNS no relacionado en ese nodo, ver más abajo). `capataz-api` mantiene el constraint por `api/alembic/`.
+- **Puntos 5 y 6 (NFS-backed volumes)**: evaluados el 2026-08-29, **decisión inicial: mantener el bind-mount + constraint tal cual para todos los candidatos** (`registry`, `grafana`, `vaultwarden`, `epub2pdf-service`, `pdf2chunks-service`) — sin medir latencia NFS real, sin síntoma en ese momento de que alguno estuviera sufriendo por estar fijado.
+  - ⚠️ **Revisado en la práctica el 2026-08-31**, en la revisión completa de `constraints` que siguió al cierre de esta mejora (ver `docs/01-topologia.md`, sección "Estado actual: servicios en Docker Swarm"): `registry` (32G, blobs por hash de contenido, sin BD embebida), `epub2pdf-service` y `pdf2chunks-service` (ya usaban ese mismo NFS, el pin solo existía porque antes únicamente `retaco` tenía el punto de montaje) **sí se movieron a NFS**, sin problema — el resultado esperado de este documento no se cumplió para estos tres. `vaultwarden`, en cambio, sí se dejó fuera de NFS a propósito (SQLite activo + clave privada RSA — se movió a disco local en `pinchi` en su lugar, no a NFS). `grafana`/`pi-obs` no se tocaron en esa revisión, siguen pendientes tal cual se decidió aquí.
+- **Hallazgo colateral, no parte del alcance de esta mejora**: al des-pinnar `capataz-runner`/`capataz-frontend`, Swarm los programó por primera vez en `pinchi` — que resultó tener el mismo bug de DNS ya documentado en `docs/13-troubleshooting.md` (`systemd-resolved` colgado en el servidor secundario, `1.1.1.1`, en vez de `pi-dns`), nunca detectado antes porque `pinchi` no había alojado ningún servicio hasta ahora. Corregido en vivo (`sudo systemctl restart systemd-resolved`), Swarm reintentó solo y las tareas acabaron sanas.
+
+---
+
+## 44. Pendiente de revisión — `sonarqube` se cuelga arrancando `infisical run` en `pinchi` (funciona en `pi-sonar` y en el resto de servicios ya movidos a `pinchi`)
+
+**Prioridad: media** (bloquea mover `sonarqube` a un disco más fiable que la microSD de `pi-sonar`, pero el servicio funciona con normalidad mientras se quede donde está)
+
+### Qué se intentó (2026-08-31)
+
+Mover `sonarqube` de `pi-sonar` (Raspberry Pi 5, microSD) a `pinchi` (PC x86_64, NVMe SSD) — mismo motivo y mismo patrón ya aplicado con éxito a `portainer-server` ese mismo día (fiabilidad de escritura para una base de datos embebida real, en este caso el índice de Elasticsearch de SonarQube, `data/es8`/`es9`). Migración de datos hecha con el servicio parado + `tar` en pipe directo nodo a nodo + verificación de tamaño — sin incidentes en esa parte.
+
+Al desplegar en `pinchi`, el contenedor arranca pero se queda colgado **indefinidamente** (probado más de 10 minutos sin ningún avance) en el paso `infisical run --token=... -- /opt/sonarqube/docker/entrypoint.sh` del `entrypoint:` — el proceso `infisical run` queda como PID 1, 0% CPU, estado `Ssl` (dormido), sin ningún proceso hijo (`/opt/sonarqube/docker/entrypoint.sh` nunca llega a ejecutarse), sin ninguna línea nueva en los logs (Loki).
+
+### Lo que se descartó como causa, con evidencia real
+
+- **Red/DNS/TLS**: descartado con `curl` directo desde un contenedor suelto en la misma red overlay (`sonarqube-net`) hacia `https://infisical.404labo.net/api/status` (`200`, 52 ms) y hacia `https://app.infisical.com` (`200`, 394 ms) — ambos instantáneos.
+- **CA interna**: `homelab-ca-bundle-v1` montado correctamente (185.872 bytes, igual que en el resto de servicios).
+- **IP allowlisting de la identidad de Infisical**: hipótesis considerada y **descartada** — `docs/26-infisical-secretos.md` documenta explícitamente que esa función es de pago (Pro/Enterprise) y no existe en la edición Community autoalojada de este clúster.
+- **Petición ni siquiera llega a Infisical**: confirmado consultando los logs del propio `infisical_infisical` vía Loki — cero líneas mencionando "sonarqube" en los 10 minutos del intento, pese a que el resto de servicios sí dejan rastro claro de la petición de secretos.
+
+### Lo que NO se pudo terminar de diagnosticar
+
+Reproducir el mismo comando `infisical run` a mano (con el token real ya emitido, capturado de `ps aux`) para ver el punto exacto del cuelgue — bloqueado por el clasificador de seguridad de Claude Code al detectar un token de autenticación real en la línea de comandos de prueba (comportamiento correcto del clasificador, no un fallo — no se intentó rodearlo).
+
+**Dato relevante para la próxima vez**: `authentik`, `bifrost` y `open-webui` ya arrancaron sin problema en `pinchi` ese mismo día, con el mismo mecanismo exacto de `infisical login` + `infisical run` (mismo binario, misma ruta compartida `/srv/homelab/infisical/infisical-cli/infisical`, mismo `homelab-ca-bundle-v1`). Algo específico de la identidad/proyecto/secretos de `sonarqube`, o de su imagen concreta, causa esto — no es un problema genérico de Infisical en `pinchi`.
+
+### Qué haría falta para retomarlo
+
+1. Reproducir el cuelgue con margen para depurar con calma (no en producción) — idealmente en un contenedor de prueba, con el token pasado por variable de entorno o fichero en vez de en la línea de comandos (evita el bloqueo del clasificador de seguridad y es más seguro de todas formas).
+2. Si el CLI de Infisical soporta algún flag de verbosidad/debug, usarlo para ver en qué llamada exacta se queda esperando.
+3. Comparar la configuración de la Machine Identity de `sonarqube` en el panel de Infisical contra la de `authentik`/`bifrost`/`open-webui` (rol, método de auth, cualquier diferencia real) — por si hay algo específico de esa identidad, no de la red.
+4. Solo entonces reintentar el traslado a `pinchi`.
+
+### Estado actual (revertido, sin pérdida de datos)
+
+`sonarqube` vuelve a `pi-sonar` (`constraints: node.hostname==pi-sonar`), mismo `data/` (índice de Elasticsearch) de siempre, sin tocar — verificado que el `id` de instancia de la API (`5EFBA1AB-AZ-EVE3dG4vWQuGQw0S_`) coincide exactamente con el de antes del intento. Lo demás del intento SÍ se mantiene, porque no depende de en qué nodo esté el servicio y quedó verificado funcionando antes del cuelgue: `extensions/` en NFS, `logs/`/`temp/` en `tmpfs`, binario de `infisical` en la ruta compartida multi-arquitectura, puerto en `mode: ingress`.
+
+### Esfuerzo estimado
+Bajo-medio — el barrido de descarte ya está hecho (red, DNS, TLS, CA, allowlisting), lo que falta es una sesión de depuración específica con margen para reproducir el cuelgue de forma segura.
+
+---
+
+## 45. Dashboards de Grafana por servicio — hoy casi todo el clúster no tiene ninguno propio
+
+**Prioridad: media**
+
+### Qué hay hoy
+
+Grafana (`pi-obs`) está desplegado y funcionando, con datasources reales conectados (Prometheus, Loki, Tempo) — pero el aprovisionamiento de dashboards (`pi-obs/config/grafana/dashboards/json/`) solo tiene **un** dashboard propio: `actualizaciones-pendientes.json` (la alerta de baja tensión/actualizaciones pendientes, `docs/14-monitorizacion-completa-cluster.md`). Para el resto de los ~30 servicios del clúster, la única forma de ver sus métricas es explorar a mano en Grafana (Explore) o mirar directamente Prometheus/Loki — nada guardado, nada compartible, nada que sobreviva a "¿qué le pasaba a X la semana pasada?".
+
+Lo que ya existe como fuente de datos real, sin dashboard que lo aproveche:
+- **Infraestructura de nodo** (todos los servicios, indirectamente): `node-exporter` + `cadvisor` en los 6 nodos — CPU/RAM/disco/red por contenedor y por host, ya en Prometheus.
+- **Logs** (todos los servicios): todo el `stdout`/`stderr` ya llega a Loki vía el driver `loki` de cada `docker-compose.yml` — consultable, pero sin ningún panel ya armado.
+- **Métricas de aplicación real** (más allá de host/contenedor): hoy solo `apikey-service` manda algo por OTLP (`docs/01`, sección de telemetría) — para el resto, un dashboard "por servicio" en la práctica sería sobre todo CPU/RAM/red del contenedor + volumen de logs/errores, no métricas de negocio propias (no hay `/metrics` de Prometheus expuesto por la mayoría de las apps).
+- `postgres-exporter` (`pi-obs`) ya expone métricas reales de `postgres-main` sin ningún dashboard que las muestre tampoco.
+
+### Qué haría falta
+
+1. Decidir el criterio de "un dashboard por servicio" — probablemente no 1:1 literal (30 dashboards casi idénticos, solo cambiando el nombre del contenedor, no aportaría mucho) sino por grupos con sentido: uno por **stack** de Swarm (`docker-swarm/stacks/<nombre>/`), con paneles de CPU/RAM/red (cadvisor, filtrado por `com.docker.swarm.service.name`), tasa de reinicios/estado de la tarea, y un panel de logs (Loki) filtrado a ese `swarm_service` — reutilizable como plantilla para los ~25 stacks.
+2. Un dashboard aparte, más detallado, para los servicios que ya exponen métricas reales propias: `postgres-main` (vía `postgres-exporter`), y cualquier otro que las tenga o las gane más adelante (revisar si Qdrant/SonarQube/Authentik exponen `/metrics` de Prometheus nativo antes de asumir que no).
+3. Uno específico para `apikey-service`, el único que ya manda trazas/logs por OTLP — aprovechar eso en vez de tratarlo igual que el resto.
+4. Provisionarlos como código (`pi-obs/config/grafana/dashboards/json/*.json`, igual que `actualizaciones-pendientes.json`), no crearlos a mano en la UI y olvidarlos — mismo criterio que el resto del repo (todo versionado, nada solo-en-producción).
+5. Revisar si compensa una plantilla Grafana con variable `$servicio` (un dashboard parametrizable que sirve para cualquier stack eligiendo de un desplegable) en vez de un JSON por servicio — menos ficheros que mantener, aunque algo menos flexible para paneles específicos de un servicio concreto.
+
+### Esfuerzo estimado
+Medio — el trabajo mecánico (plantilla + paneles cadvisor/Loki reutilizables) es bajo una vez decidido el criterio del punto 1; el esfuerzo real está en decidir cuántos dashboards de verdad hacen falta y para cuáles servicios merece la pena un dashboard a medida (los que exponen métricas propias) frente a la plantilla genérica.
+
+---
+
+## 46. Verificar si `toggle-direct-access.sh` cierra de verdad el acceso directo en los 5 managers, no solo en el nodo "asignado"
+
+**Prioridad: media** (afecta a un mecanismo de seguridad real, pero nadie ha activado `off` en producción todavía — no es una vulnerabilidad explotada, es una duda sin verificar)
+
+### Qué hay hoy
+
+`shared/scripts/toggle-direct-access.sh` gestiona el acceso directo por IP:puerto agrupando los puertos **por nodo** (`NODE_PORTS`) y aplicando reglas `DOCKER-USER` en ese nodo concreto. Este diseño asumía que un puerto publicado con `mode: host` solo está realmente escuchando en el nodo donde aterriza la tarea — cierto cuando se escribió.
+
+Tras la revisión de `constraints`/`mode: host` → `ingress` del 2026-08-31 (mejora 43 y esta misma sesión), **ya no queda ningún servicio del clúster en `mode: host`** — confirmado por `grep` en los 25 stacks, todos son `mode: ingress`. Con `mode: ingress`, Swarm publica el puerto en la routing mesh de **los 5 managers**, no solo en el nodo real de la tarea — confirmado en vivo el mismo día: `portainer`/`vaultwarden` (movidos a `pinchi`) siguen respondiendo `200` real al consultarlos por la IP de `pi-utils`, donde ya no viven.
+
+Esto es justo lo que hace útil a `mode: ingress` para servicios sin nodo fijo — pero para `toggle-direct-access.sh`, que existe para **cerrar** el acceso directo, es potencialmente el problema contrario: si `DOCKER-USER` en `pi-utils` bloquea el puerto de `vaultwarden`, pero la routing mesh de `pinchi` (o de cualquier otro manager) sigue respondiendo a ese mismo puerto sin la regla de bloqueo, el "cierre" sería parcial — cualquiera en la LAN podría seguir alcanzando el servicio directamente por la IP de un manager sin la regla, saltándose Traefik/`apikey-service` igualmente.
+
+### Qué haría falta
+
+1. Confirmar en vivo (con un servicio de bajo riesgo, no `vaultwarden`) si `docker service update --publish-add`/la routing mesh respeta las reglas `DOCKER-USER` de un nodo que NO ejecuta la tarea real, o si las bypasa a nivel de kernel (IPVS) antes de llegar a esa cadena.
+2. Si el bypass es real: decidir si `toggle-direct-access.sh` necesita aplicar la regla de cada puerto en **los 5 managers simultáneamente** en vez de agruparlos por nodo (cambio de diseño real, no cosmético) — probablemente simplifica el script (una sola lista de puertos, sin `NODE_PORTS` por nodo) a la vez que lo hace correcto.
+3. Si el bypass NO es real (`DOCKER-USER` sí intercepta el tráfico de la routing mesh en cualquier nodo): documentarlo explícitamente como comprobado, y la agrupación actual por nodo sigue siendo válida tal cual, solo hace falta mantenerla al día conforme los servicios cambien de nodo (ya corregido puntualmente el 2026-08-31 para `pinchi`).
+4. Revisar `docs/17-firewall-acceso-directo.md` con el resultado real, sea cual sea.
+
+### Esfuerzo estimado
+Bajo para comprobarlo (una prueba controlada con `curl` desde fuera de la LAN de confianza, o simulando con un origen no permitido, contra un servicio de bajo riesgo) — medio si hace falta rediseñar el script para aplicar reglas en los 5 nodos a la vez.
 
 ---
 
@@ -1403,6 +1546,9 @@ Medio — el barrido en sí ya está hecho (tabla de arriba); el trabajo real es
 | 40 | DNS secundario del clúster — resolución de `*.404labo.net` sin depender solo de `pi-dns` | Media | Bajo-medio | Config de Unbound/Pi-hole ya versionada; alcance de sincronización (Pi-hole completo vs. solo Unbound) queda como decisión abierta |
 | 41 | ~~Retirar `*.home.arpa` por completo — todo bajo `404labo.net`~~ | Media | Medio | **Completado** (2026-08-28) — `home.arpa` retirado de Pi-hole/Traefik/Unbound, `nginx` decomisionado, ver `docs/31-docker-swarm.md` |
 | 42 | Alertas de disponibilidad de nodos y servicios | Media | Bajo | Prometheus/Grafana Alerting ya desplegados, mismo patrón que la alerta de undervoltage (`docs/14`); canal de notificación real comparte dependencia con la mejora 4 (ntfy) |
-| 43 | Auditoría de bind-mounts en Docker Swarm — evaluar alternativas a la fijación por nodo | Media | Medio | Inventario completo ya incluido en el propio punto; cualquier cambio real necesita medir latencia antes de aplicarse a un servicio con escritura frecuente |
+| 43 | ~~Auditoría de bind-mounts en Docker Swarm — evaluar alternativas a la fijación por nodo y a los puertos en `mode: host`~~ | Media | Medio | **Completado** (2026-08-31) — Bifrost/Capataz/Infisical revisados y redesplegados (`docker config` + `mode: ingress` donde no había colisión real); NFS-backed volumes evaluados y descartados por ahora, sin medir, sin urgencia real |
+| 44 | Pendiente de revisión — `sonarqube` se cuelga arrancando `infisical run` en `pinchi` | Media | Bajo-medio | Movido de vuelta a `pi-sonar` sin pérdida de datos; red/DNS/TLS/CA/allowlisting ya descartados como causa, falta sesión de depuración específica antes de reintentar el traslado |
+| 45 | Dashboards de Grafana por servicio | Media | Medio | Hoy solo existe `actualizaciones-pendientes.json`; datos ya disponibles (cadvisor/node-exporter/Loki para todos, `postgres-exporter` para postgres-main) sin ningún panel armado — decidir 1 dashboard por stack vs. plantilla parametrizable antes de empezar |
+| 46 | Verificar si `toggle-direct-access.sh` cierra de verdad el acceso en los 5 managers, no solo en el nodo "asignado" | Media | Bajo-medio | Ningún servicio queda ya en `mode: host` tras la revisión de constraints (2026-08-31) -- confirmado en vivo que la routing mesh responde igual desde cualquier manager; falta comprobar si `DOCKER-USER` intercepta ese tráfico reenviado o lo bypasa |
 
 Ninguna de estas mejoras es urgente ni bloqueante — el clúster funciona correctamente sin ellas.

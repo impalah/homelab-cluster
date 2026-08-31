@@ -289,6 +289,48 @@ docker config inspect traefik_traefik-dynamic-routes-v5 --pretty   # el contenid
 
 El ciclo de vida es idéntico al de un secret (inmutable, versión nueva + `--config-rm`/ `--config-add` en `docker service update` para rotar) — la única diferencia real es que el contenido no está oculto.
 
+### Dos formas de crear un config, según de dónde viene el contenido
+
+**A — Versionado en este repo (`file:`)**: el compose declara directamente el fichero de origen, y `docker stack deploy` crea el config él solo a partir de ese fichero — no hace falta ningún `docker config create` a mano. Es el caso de `traefik-dynamic-routes-v5` (arriba) y, desde la mejora 43, de `bifrost-config-v1` (`docker-swarm/stacks/bifrost/config.json`) y `capataz-frontend-conf-v1` (`docker-swarm/stacks/capataz/capataz-frontend-default.conf`):
+
+```yaml
+configs:
+  bifrost-config-v1:
+    file: ./config.json   # ruta relativa al propio docker-compose.yml
+```
+
+Para que esto funcione, el fichero tiene que viajar junto al `docker-compose.yml` cuando se hace `rsync` al manager antes del `docker stack deploy` (mismo patrón de despliegue de la sección 3) — si solo copias el compose y no el fichero referenciado, el deploy falla porque no lo encuentra.
+
+**B — NO versionado en este repo (`external: true`)**: cuando el contenido real vive fuera de este repo (por ejemplo, un checkout parcial de otro proyecto ya desplegado en un nodo, como el de Capataz en `pi-utils`), no hay ningún fichero que versionar aquí — el config se crea a mano, igual que un secret, apuntando al fichero real en el nodo:
+
+```bash
+# Ejecutado directamente en el nodo (es manager, no hace falta mover el fichero a ningún sitio)
+ssh u-utils@192.168.1.173 "docker config create capataz-catalog-v1 /srv/homelab/pi-utils/capataz/catalog/services.example.yaml"
+```
+
+Ejemplo real, mejora 43 (2026-08-31): los 4 configs de `docker-swarm/stacks/capataz/docker-compose.yml` con `external: true` (`capataz-catalog-v1`, `capataz-alembic-ini-v1`, `capataz-ca-bundle-v1`, `capataz-homelab-ca-v1`) se crearon así, uno por uno, contra los ficheros reales en `pi-utils` (`docker config create <nombre> <ruta-en-pi-utils>` desde una sesión SSH al propio nodo). Si hace falta recrearlos (nodo reinstalado, config borrado por error), es el mismo comando, con el mismo nombre si el contenido no ha cambiado, o con sufijo `-vN+1` si sí — no hay ningún script que lo automatice, igual que con los secrets (sección 5).
+
+### Un config compartido entre varios stacks (`homelab-ca-bundle-v1`)
+
+Un `docker config` no está atado a un stack — cualquier servicio de cualquier stack puede declarar el mismo `source:` en su bloque `configs:`, siempre que el stack también lo declare como `external: true` en su propio `configs:` de nivel superior (Swarm no reparte automáticamente esa declaración entre stacks, cada `docker-compose.yml` tiene que repetirla).
+
+Caso real (2026-08-31, revisión de bind-mounts/`mode: host` posterior a la mejora 43): 11 stacks distintos (`authentik` ×2 servicios, `apikey-service`, `bifrost`, `open-webui`, `qdrant`, `n8n-main`, `n8n-aux`, `open-terminal-mcp`, `rsshub`, `sonarqube`, `vaultwarden`) montaban cada uno su **propia copia** de `homelab-ca.crt` (el bundle CA interna + almacén público que necesita `SSL_CERT_FILE`/`NODE_EXTRA_CA_CERTS` para que el binario de Infisical de cada contenedor valide TLS) — repartidas en 4 nodos distintos. Confirmado por `md5sum` antes de tocar nada que las 11 copias eran byte a byte idénticas (⚠️ **no todas lo son** — `infisical` y `capataz` llevan un `homelab-ca.crt` con contenido distinto, comprobado y dejado fuera a propósito). Se creó un único config (`docker config create homelab-ca-bundle-v1 <ruta-a-cualquiera-de-las-11-copias>`) y los 11 `docker-compose.yml` pasaron a referenciarlo:
+
+```yaml
+# En cada uno de los 11 docker-compose.yml
+services:
+  mi-servicio:
+    configs:
+      - source: homelab-ca-bundle-v1
+        target: /etc/ssl/certs/homelab-ca.crt
+
+configs:
+  homelab-ca-bundle-v1:
+    external: true
+```
+
+Rotar el contenido (por ejemplo, si la CA interna se renueva) exige crear `homelab-ca-bundle-v2` y actualizar el `source:` en los 11 sitios a la vez -- no hay forma de "empujar" un cambio a un config existente, ni de que un solo `docker service update` toque varios servicios de golpe.
+
 ---
 
 ## 7. Las mismas operaciones, paso a paso en Portainer

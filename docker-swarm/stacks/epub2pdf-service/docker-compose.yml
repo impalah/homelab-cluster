@@ -1,12 +1,16 @@
 # Fase 4 (docs/31-docker-swarm.md): epub2pdf-service migrado al swarm.
-# `constraints: node.hostname==retaco` -- OBLIGATORIO, no opcional: los
-# volúmenes /data/input y /data/output son subcarpetas del montaje NFS del
-# NAS (ketekasko:/volume1/nfs-data en /mnt/nfs-data), confirmado que SOLO
-# retaco tiene ese montaje entre los 5 nodos del swarm (comprobado con
-# `mount` en los 5 antes de migrar) -- en cualquier otro nodo el bind-mount
-# fallaría o (peor) crearía un directorio local vacío sin avisar. Sin
-# secretos (nunca los tuvo, .env sin overrides -- valores por defecto tal
-# cual estaban en Compose clásico).
+#
+# `constraints: node.hostname==retaco` RETIRADO (2026-08-31, decisión
+# explícita del usuario) -- ya no es cierto que solo `retaco` tenga el
+# montaje NFS del NAS (`ketekasko:/volume1/nfs-data` en `/mnt/nfs-data`):
+# se montó en los 5 managers del Swarm el mismo día (a petición del
+# usuario, NAS protegido con SAI y considerado infraestructura esencial del
+# clúster). El proceso corre como root (`uid=0`), así que la ACL propia de
+# UGOS (ver `docs/21-configuracion-nas-ugreen.md`) no es problema. Sin
+# migración de datos que hacer -- los volúmenes ya estaban en NFS de
+# siempre, el pin solo existía por la disponibilidad del punto de montaje,
+# no por los datos en sí. Sin secretos (nunca los tuvo, .env sin overrides
+# -- valores por defecto tal cual estaban en Compose clásico).
 version: "3.8"
 
 services:
@@ -31,9 +35,6 @@ services:
         max-buffer-size: 4m
     deploy:
       replicas: 1
-      placement:
-        constraints:
-          - node.hostname==retaco
       restart_policy:
         condition: on-failure
 

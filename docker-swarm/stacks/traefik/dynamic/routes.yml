@@ -250,7 +250,10 @@ http:
     openwebui:
       loadBalancer:
         servers:
-          - url: "http://192.168.1.174:8080"
+          # 19002, no 8080 (2026-08-31) -- puerto publicado cambiado en
+          # docker-swarm/stacks/open-webui/docker-compose.yml, libera el
+          # 8080 para poder quitarle el pin a bifrost.
+          - url: "http://192.168.1.174:19002"
     n8n:
       loadBalancer:
         servers:
@@ -282,7 +285,10 @@ http:
     sonarqube:
       loadBalancer:
         servers:
-          - url: "http://192.168.1.172:9000"
+          # 19000, no 9000 (2026-08-31) -- puerto publicado cambiado en
+          # docker-swarm/stacks/sonarqube/docker-compose.yml para liberar el
+          # 9000 y poder quitarle el pin de nodo a authentik-server.
+          - url: "http://192.168.1.172:19000"
     bifrost:
       loadBalancer:
         servers:
@@ -298,11 +304,19 @@ http:
     portainer:
       loadBalancer:
         servers:
-          - url: "http://192.168.1.173:9000"
+          # 192.168.1.175 (pinchi), no .173 (pi-utils) -- servicio movido de
+          # nodo (2026-08-31, fiabilidad de disco, ver docker-swarm/stacks/
+          # portainer-server/docker-compose.yml). 19001, no 9000
+          # (2026-08-31) -- puerto publicado cambiado, deja a
+          # authentik-server como único usuario del 9000 en el clúster.
+          - url: "http://192.168.1.175:19001"
     vaultwarden:
       loadBalancer:
         servers:
-          - url: "http://192.168.1.173:8222"
+          # 192.168.1.175 (pinchi), no .173 (pi-utils) -- servicio movido
+          # de nodo (2026-08-31, fiabilidad de disco/SQLite activo, ver
+          # docker-swarm/stacks/vaultwarden/docker-compose.yml).
+          - url: "http://192.168.1.175:8222"
     ollama:
       loadBalancer:
         servers:

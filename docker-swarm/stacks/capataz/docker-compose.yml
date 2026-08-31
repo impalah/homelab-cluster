@@ -8,12 +8,44 @@
 # overlay -- ya preparado de antes precisamente para Swarm (ver comentario
 # original en ese fichero).
 #
-# Los tres `constraints: node.hostname==pi-utils` -- el checkout parcial del
-# repo Capataz (catalog/, api/alembic*, certs/, config/capataz-frontend/)
-# solo existe en este nodo, rutas convertidas de relativas (./capataz/...)
-# a absolutas (/srv/homelab/pi-utils/capataz/...), obligatorio para
-# `docker stack deploy` (no hay contexto de fichero compose que resolver
-# relativo).
+# Revisado en la mejora 43 (2026-08-31): `catalog/`, `api/alembic.ini` y
+# `certs/` vienen del checkout parcial del repo *externo* de Capataz en este
+# nodo, no están versionados en homelab-cluster -- pasan a `docker config
+# ... external: true` (capataz-catalog-v1/capataz-alembic-ini-v1/
+# capataz-ca-bundle-v1/capataz-homelab-ca-v1, creados a mano desde el
+# fichero real en pi-utils, mismo patrón que los `docker secret` de abajo).
+# `default.conf` de capataz-frontend SÍ está versionado aquí
+# (capataz-frontend-default.conf) -- pasa a `docker config` con `file:`,
+# igual que traefik/routes.yml.
+#
+# Con eso, `capataz-runner` y `capataz-frontend` se quedan sin ningún
+# bind-mount propio (solo tmpfs + configs) y pierden el
+# `constraints: node.hostname==pi-utils` -- Swarm puede aterrizarlos en
+# cualquier manager.
+#
+# `capataz-api` también pierde el `constraints` (2026-08-31, decisión
+# explícita del usuario): `api/alembic/` (env.py + versions/, un directorio
+# que crece con cada migración nueva) no cabe en un `docker config` (solo
+# admite un fichero) -- pero SÍ cabe en NFS, es de solo lectura (`:ro`) y
+# nada dentro de la imagen depende de un UID concreto para leerlo (`.venv`/
+# `src`/`alembic.ini` ya son de lectura mundial dentro de la imagen,
+# comprobado en vivo). Migrado a `/mnt/nfs-data/capataz/api-alembic`. La
+# imagen corre por defecto como el usuario `capataz` (UID 10001), que NO
+# está entre los dos UID que permite la ACL de UGOS (1000/1002, ver
+# `docs/21-configuracion-nas-ugreen.md`) -- se fuerza `user: "1000:10"` en
+# el servicio (mismo patrón ya usado en `authentik`) en vez de tocar la ACL
+# del NAS, coherente con la decisión ya tomada para el resto de servicios.
+# Hornear las migraciones en la imagen sigue siendo decisión del repo
+# externo de Capataz, fuera de alcance aquí -- ver mejora 43,
+# docs/22-mejoras-futuras.md.
+#
+# `ports: mode: host` en capataz-api (8000) y capataz-frontend (8090) pasa a
+# `mode: ingress` -- confirmado por grep en los 25 stacks que ningún otro
+# servicio publica esos puertos hoy (Traefik ya usa 18090 para su propio
+# dashboard precisamente para evitar chocar con el 8090 de este stack, ver
+# docker-swarm/stacks/traefik/docker-compose.yml). El pin de capataz-api no
+# obliga a mode: host por sí solo -- son dos ejes independientes, solo una
+# colisión real de puerto lo exige.
 #
 # Secrets nativos de Compose (ficheros bajo secrets/) convertidos a objetos
 # `docker secret` reales de Swarm (capataz-*-v1) -- mismo criterio que
@@ -81,15 +113,22 @@ services:
       CAPATAZ_HEALTH_ALLOWED_HOST_SUFFIXES: .404labo.net
       CAPATAZ_STATUS_CACHE_TTL_SECONDS: "30"
       SSL_CERT_FILE: /run/ca-certs/ca-bundle.pem
+    user: "1000:10"
     volumes:
-      - /srv/homelab/pi-utils/capataz/catalog:/app/catalog:ro
-      - /srv/homelab/pi-utils/capataz/api/alembic.ini:/app/alembic.ini:ro
-      - /srv/homelab/pi-utils/capataz/api/alembic:/app/alembic:ro
-      - /srv/homelab/pi-utils/capataz/certs:/run/ca-certs:ro
+      - /mnt/nfs-data/capataz/api-alembic:/app/alembic:ro
       - type: tmpfs
         target: /tmp
         tmpfs:
           size: 67108864
+    configs:
+      - source: capataz-catalog-v1
+        target: /app/catalog/services.example.yaml
+      - source: capataz-alembic-ini-v1
+        target: /app/alembic.ini
+      - source: capataz-ca-bundle-v1
+        target: /run/ca-certs/ca-bundle.pem
+      - source: capataz-homelab-ca-v1
+        target: /run/ca-certs/homelab-ca.crt
     secrets:
       - source: capataz-database-url-v2
         target: database_url
@@ -102,7 +141,7 @@ services:
     ports:
       - target: 8000
         published: 8000
-        mode: host
+        mode: ingress
     networks:
       - capataz-net
     command:
@@ -130,9 +169,6 @@ services:
         max-buffer-size: 4m
     deploy:
       replicas: 1
-      placement:
-        constraints:
-          - node.hostname==pi-utils
       restart_policy:
         condition: on-failure
       resources:
@@ -152,7 +188,6 @@ services:
       CAPATAZ_PROMETHEUS_URL: https://prometheus.404labo.net
       SSL_CERT_FILE: /run/ca-certs/ca-bundle.pem
     volumes:
-      - /srv/homelab/pi-utils/capataz/certs:/run/ca-certs:ro
       - type: tmpfs
         target: /tmp
         tmpfs:
@@ -161,6 +196,11 @@ services:
         target: /home/capataz/.ansible/tmp
         tmpfs:
           size: 134217728
+    configs:
+      - source: capataz-ca-bundle-v1
+        target: /run/ca-certs/ca-bundle.pem
+      - source: capataz-homelab-ca-v1
+        target: /run/ca-certs/homelab-ca.crt
     secrets:
       - source: capataz-database-url-v2
         target: database_url
@@ -195,9 +235,6 @@ services:
         max-buffer-size: 4m
     deploy:
       replicas: 1
-      placement:
-        constraints:
-          - node.hostname==pi-utils
       restart_policy:
         condition: on-failure
       resources:
@@ -213,8 +250,10 @@ services:
       CAPATAZ_FRONTEND_OIDC_ISSUER: https://authentik.404labo.net/application/o/capataz/
       CAPATAZ_FRONTEND_OIDC_CLIENT_ID: capataz
       CAPATAZ_FRONTEND_OIDC_SCOPE: openid profile email groups
+    configs:
+      - source: capataz-frontend-conf-v1
+        target: /etc/nginx/conf.d/default.conf
     volumes:
-      - /srv/homelab/pi-utils/config/capataz-frontend/default.conf:/etc/nginx/conf.d/default.conf:ro
       - type: tmpfs
         target: /tmp
         tmpfs:
@@ -234,7 +273,7 @@ services:
     ports:
       - target: 80
         published: 8090
-        mode: host
+        mode: ingress
     networks:
       - capataz-net
     read_only: true
@@ -258,9 +297,6 @@ services:
         max-buffer-size: 4m
     deploy:
       replicas: 1
-      placement:
-        constraints:
-          - node.hostname==pi-utils
       restart_policy:
         condition: on-failure
       resources:
@@ -271,6 +307,22 @@ networks:
   capataz-net:
     driver: overlay
     attachable: true
+
+configs:
+  # Versionado en este repo -- file:, mismo patrón que traefik/routes.yml.
+  capataz-frontend-conf-v1:
+    file: ./capataz-frontend-default.conf
+  # Vienen del checkout parcial del repo externo de Capataz en pi-utils, no
+  # de este repo -- creados a mano (docker config create <nombre> <ruta en
+  # pi-utils>, mismo criterio que un docker secret), no con `file:`.
+  capataz-catalog-v1:
+    external: true
+  capataz-alembic-ini-v1:
+    external: true
+  capataz-ca-bundle-v1:
+    external: true
+  capataz-homelab-ca-v1:
+    external: true
 
 secrets:
   capataz-database-url-v2:

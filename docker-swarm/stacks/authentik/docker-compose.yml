@@ -1,15 +1,50 @@
 # Fase 4 (docs/31-docker-swarm.md): quinto servicio con estado migrado al
 # swarm -- server + worker juntos en el mismo stack (comparten el bind-mount
-# /data). `constraints: node.hostname==retaco` para ambos -- los datos
-# siguen en el mismo sitio de siempre, sin mover. Reutiliza directamente las
-# rutas ya preparadas en retaco (infisical-cli, CA, datos, certs).
+# /data).
 #
-# `AUTHENTIK_POSTGRESQL__HOST` cambiado de "postgres-main" (alias de red
-# Docker del proyecto Compose de retaco) a la IP real -- postgres-main sigue
-# en Compose clásico (es el último de la Fase 4), mismo criterio ya usado
-# con qdrant/n8n-main. La BD "authentik" en sí no se toca ni se mueve --
-# sigue siendo la misma instancia de postgres-main de siempre, solo cambia
-# cómo se alcanza.
+# `/data`/`/certs` pasan a `/mnt/nfs-data/authentik/{data,certs}` (NAS
+# ketekasko, montado ahora en los 5 managers -- 2026-08-31, a petición
+# expresa del usuario, NAS protegido con SAI y considerado infraestructura
+# esencial del clúster). Contenido real migrado con `rsync` antes del
+# cambio (solo `media/public/branding/...`, sin pérdida). El acceso NFS
+# depende de una ACL propia de UGOS Pro (`ugacl_vfs`, no POSIX estándar,
+# invisible a `getfacl`) que solo permite escribir a UID 1000 o al grupo
+# `admin` (gid 10) -- la imagen de Authentik YA corre como UID 1000 por
+# defecto (confirmado con `docker exec ... id`), así que no hace falta
+# forzar `user:` en el compose. Detalle completo, incluida la ACL, en
+# `docs/21-configuracion-nas-ugreen.md`.
+#
+# El binario de `infisical` pasa de `/srv/homelab/retaco/infisical-cli/`
+# (ruta fija a un nodo concreto) a `/srv/homelab/infisical/infisical-cli/
+# infisical` -- un symlink presente en los 5 managers, cada uno apuntando a
+# `x86-64/infisical` o `aarch64/infisical` según su propia arquitectura
+# (`retaco`/`pinchi` amd64; `pi-obs`/`pi-sonar`/`pi-utils` arm64; binarios
+# copiados de la copia ya verificada de `apikey-service`, sin descarga
+# nueva). Un bind-mount de un fichero concreto de un nodo NO se traduce
+# entre arquitecturas -- necesario resolver esto antes de poder plantear
+# quitar el `constraints` de más abajo.
+#
+# `constraints: node.hostname==retaco` RETIRADO (2026-08-31, decisión
+# explícita del usuario) -- los tres motivos que lo justificaban ya no
+# aplican: datos en `/data`/`/certs` (ahora NFS, no bind-mount local),
+# binario de `infisical` (ahora ruta compartida multi-arquitectura, no fija
+# a retaco) y el choque de puerto 9000 (sonarqube/portainer-server ya
+# liberado). `authentik-server`/`authentik-worker` pueden aterrizar en
+# cualquiera de los 5 managers -- `mode: host` → `ingress` en el puerto
+# también, ver más abajo (necesario ir junto con quitar el pin: Traefik
+# apunta a este servicio con IP fija, `mode: host` sin pin habría roto esa
+# IP en silencio en cuanto Swarm reprogramase la tarea). Los dos servicios
+# no necesitan estar en el mismo nodo entre sí -- se comunican vía
+# Postgres, no directamente por red (ver más abajo).
+#
+# `AUTHENTIK_POSTGRESQL__HOST` -- ya no es un alias de red Docker (dejó de
+# resolver al migrar authentik a Swarm, sin red compartida con postgres-main)
+# ni una IP hardcodeada (2026-08-31, limpieza a petición del usuario) -- es
+# `postgresql.404labo.net`, alias DNS directo (Pi-hole, sin pasar por
+# Traefik -- postgres-main habla protocolo Postgres, no HTTP) que resuelve
+# siempre a la IP real de retaco. La BD "authentik" en sí no se toca ni se
+# mueve -- sigue siendo la misma instancia de postgres-main de siempre,
+# solo cambia cómo se alcanza.
 #
 # Sin Redis/Valkey (confirmado contra la documentación oficial vigente,
 # nunca lo tuvo este despliegue). Sin puerto 9443 publicado -- TLS lo
@@ -22,6 +57,17 @@
 # para el middleware `authentik-auth` (forward-auth de `prometheus.home.arpa`,
 # docker-swarm/stacks/traefik/dynamic/routes.yml) -- mismo IP:puerto de
 # siempre, routes.yml no necesita ningún cambio.
+#
+# homelab-ca.crt pasa a `docker config homelab-ca-bundle-v1` (2026-08-31,
+# revisión de `mode: host`/bind-mounts tras la mejora 43) -- confirmado por
+# `md5sum` en vivo que el fichero es byte a byte idéntico al que ya montaban
+# `apikey-service`/`bifrost`/`open-webui`/`qdrant`/`n8n-main`/`n8n-aux`/
+# `open-terminal-mcp`/`rsshub`/`sonarqube`/`vaultwarden` -- un solo config
+# externo compartido en vez de 11 copias del mismo fichero en 4 nodos
+# distintos. `infisical` y `capataz` llevan un `homelab-ca.crt` con
+# contenido DISTINTO (verificado, no asumido) -- se quedan fuera de este
+# config compartido, sin tocar. El binario de `infisical` (130 MB) sigue
+# sin poder ser `docker config` (límite 500 KB) -- se queda como bind-mount.
 version: "3.8"
 
 x-authentik-common: &authentik-common
@@ -32,7 +78,7 @@ x-authentik-common: &authentik-common
     # combinado (CA interna + almacén público estándar).
     INFISICAL_DOMAIN: https://infisical.404labo.net/api
     SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
-    AUTHENTIK_POSTGRESQL__HOST: 192.168.1.174
+    AUTHENTIK_POSTGRESQL__HOST: postgresql.404labo.net
     AUTHENTIK_POSTGRESQL__NAME: authentik
     AUTHENTIK_POSTGRESQL__USER: authentik
     AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
@@ -56,9 +102,11 @@ services:
   authentik-server:
     <<: *authentik-common
     volumes:
-      - /srv/homelab/retaco/infisical-cli/infisical:/usr/local/bin/infisical:ro
-      - /srv/homelab/retaco/authentik/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
-      - /srv/homelab/retaco/authentik/data:/data
+      - /srv/homelab/infisical/infisical-cli/infisical:/usr/local/bin/infisical:ro
+      - /mnt/nfs-data/authentik/data:/data
+    configs:
+      - source: homelab-ca-bundle-v1
+        target: /etc/ssl/certs/homelab-ca.crt
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -74,34 +122,36 @@ services:
           dumb-init -- ak server
     shm_size: 512mb
     ports:
-      # mode: host, no ingress -- encontrado en vivo (2026-08-27, al migrar
-      # sonarqube): en modo ingress (el implícito), el puerto queda
-      # reservado en TODO el swarm, no solo en el nodo donde aterriza la
-      # tarea -- chocó con sonarqube (pi-sonar, también puerto 9000) aunque
-      # son nodos distintos. Ninguno de los servicios de esta fase con
-      # `constraints: node.hostname==X` necesita en realidad la routing
-      # mesh (una sola réplica, siempre en el mismo nodo) -- `mode: host`
-      # es lo semánticamente correcto, no solo el parche puntual.
+      # mode: ingress (2026-08-31) -- ya no hay `constraints` de nodo (ver
+      # cabecera), así que la tarea puede aterrizar en cualquiera de los 5
+      # managers. Traefik apunta a este servicio con IP fija
+      # (`http://192.168.1.174:9000`, routes.yml) sin usar el descubrimiento
+      # de Swarm -- con `mode: host` esa IP fija se habría roto en silencio
+      # el día que Swarm reprogramase la tarea a otro nodo. En `ingress`, la
+      # routing mesh reenvía la petición al nodo real desde cualquiera de
+      # los 5, así que la IP fija de Traefik sigue funcionando pase lo que
+      # pase. Sin colisión real que lo impida -- authentik-server es hoy el
+      # único servicio del clúster en el 9000 (sonarqube/portainer-server ya
+      # liberado, 2026-08-31).
       - target: 9000
         published: 9000
-        mode: host
+        mode: ingress
     networks:
       - authentik-net
     deploy:
       replicas: 1
-      placement:
-        constraints:
-          - node.hostname==retaco
       restart_policy:
         condition: on-failure
 
   authentik-worker:
     <<: *authentik-common
     volumes:
-      - /srv/homelab/retaco/infisical-cli/infisical:/usr/local/bin/infisical:ro
-      - /srv/homelab/retaco/authentik/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
-      - /srv/homelab/retaco/authentik/data:/data
-      - /srv/homelab/retaco/authentik/certs:/certs
+      - /srv/homelab/infisical/infisical-cli/infisical:/usr/local/bin/infisical:ro
+      - /mnt/nfs-data/authentik/data:/data
+      - /mnt/nfs-data/authentik/certs:/certs
+    configs:
+      - source: homelab-ca-bundle-v1
+        target: /etc/ssl/certs/homelab-ca.crt
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -120,9 +170,6 @@ services:
       - authentik-net
     deploy:
       replicas: 1
-      placement:
-        constraints:
-          - node.hostname==retaco
       restart_policy:
         condition: on-failure
 
@@ -130,6 +177,13 @@ networks:
   authentik-net:
     driver: overlay
     attachable: true
+
+configs:
+  # Compartido entre varios stacks -- ver docs/32-manual-operaciones-swarm.md
+  # §6. Creado una vez (docker config create homelab-ca-bundle-v1 <ruta>),
+  # no con `file:` -- no está versionado en este repo.
+  homelab-ca-bundle-v1:
+    external: true
 
 secrets:
   authentik-infisical-client-id-v1:

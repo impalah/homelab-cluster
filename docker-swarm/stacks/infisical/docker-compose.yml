@@ -98,9 +98,15 @@ services:
         export AUTH_SECRET=$$(cat /run/secrets/infisical-auth-secret)
         exec docker-entrypoint.sh ./standalone-entrypoint.sh
     ports:
+      # mode: ingress (mejora 43, 2026-08-31) -- confirmado por grep en los
+      # 25 stacks que ningún otro servicio publica el 8006, no había
+      # colisión real detrás del mode: host original (sin comentario que la
+      # documentara). El constraint==retaco se queda igual -- lo exige
+      # compartir stack/red con postgres-infisical (estado real, ADR 0002),
+      # no el puerto.
       - target: 8080
         published: 8006
-        mode: host
+        mode: ingress
     networks:
       - infisical-net
     logging:

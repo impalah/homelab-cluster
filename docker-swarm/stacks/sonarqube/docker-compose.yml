@@ -1,8 +1,35 @@
-# Fase 4 (docs/31-docker-swarm.md): sonarqube pinnado a pi-sonar
-# (constraints: node.hostname==pi-sonar), mismos datos sin mover. Ya usaba
-# IP/alias DNS reales para postgres-main (postgresql.home.arpa, no alias
-# Docker) -- migración simple, sin ajustes de red necesarios. Backup previo
-# ejecutado (data/+extensions/, 314M).
+# Fase 4 (docs/31-docker-swarm.md): sonarqube, en Swarm.
+#
+# ⚠️ Intento de mover `constraints: node.hostname==pi-sonar` →
+# `node.hostname==pinchi` REVERTIDO (2026-08-31, mismo día) -- el arranque
+# en `pinchi` se quedó colgado indefinidamente en el paso `infisical run`
+# (sin red: probado con éxito por `curl` directo a infisical.404labo.net y
+# a app.infisical.com desde la misma red overlay; sin llegar siquiera a
+# generar una petición en los logs del propio Infisical) -- causa real no
+# diagnosticada, sin poder depurar más a fondo por bloqueo del clasificador
+# de seguridad al necesitar pegar un token real en un comando de prueba.
+# **Pendiente de revisión** -- ver mejora 43 en docs/22-mejoras-futuras.md,
+# no reintentar sin investigar antes por qué falla justo aquí y no en
+# `authentik`/`bifrost`/`open-webui`, que sí arrancaron en `pinchi` sin
+# problema con el mismo mecanismo de Infisical.
+#
+# `data/` (índice de Elasticsearch, `es8`/`es9`) se queda en bind-mount +
+# nodo fijo (`pi-sonar` de nuevo) -- deliberadamente NO se movió a NFS,
+# misma categoría de riesgo que `postgres-main`/`qdrant` ya señalada en la
+# mejora 43 (base de datos real con escritura frecuente, sin medir NFS
+# antes de usarlo ahí).
+#
+# Lo que SÍ se mantiene de este intento (no depende de qué nodo aloje el
+# servicio, verificado funcionando antes del cuelgue): `extensions/` --
+# prácticamente vacío (`downloads/` sin contenido real) -- en NFS
+# (`/mnt/nfs-data/sonarqube/extensions`); `logs/`/`temp/` -- ninguno de los
+# dos aloja nada que deba sobrevivir a un reinicio -- en `tmpfs`; binario de
+# `infisical` en la ruta compartida multi-arquitectura (ya no depende de
+# `/srv/homelab/pi-sonar/infisical-cli/`); puerto en `mode: ingress` (sin
+# colisión real, el pin no lo exige por sí solo).
+#
+# Ya usaba IP/alias DNS real para postgres-main (`postgresql.404labo.net`,
+# no alias Docker) -- sin ajustes de red necesarios.
 #
 # ⚠️ Imagen fijada por DIGEST, no por el tag flotante "sonarqube:community"
 # de la copia clásica -- incidente real (2026-08-27): el primer despliegue
@@ -34,11 +61,22 @@ services:
       SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
     volumes:
       - /srv/homelab/pi-sonar/sonarqube/data:/opt/sonarqube/data
-      - /srv/homelab/pi-sonar/sonarqube/extensions:/opt/sonarqube/extensions
-      - /srv/homelab/pi-sonar/sonarqube/logs:/opt/sonarqube/logs
-      - /srv/homelab/pi-sonar/sonarqube/temp:/opt/sonarqube/temp
-      - /srv/homelab/pi-sonar/sonarqube/ca/homelab-ca.crt:/etc/ssl/certs/homelab-ca.crt:ro
-      - /srv/homelab/pi-sonar/infisical-cli/infisical:/usr/local/bin/infisical:ro
+      - /mnt/nfs-data/sonarqube/extensions:/opt/sonarqube/extensions
+      - /srv/homelab/infisical/infisical-cli/infisical:/usr/local/bin/infisical:ro
+      - type: tmpfs
+        target: /opt/sonarqube/logs
+        tmpfs:
+          size: 67108864
+      - type: tmpfs
+        target: /opt/sonarqube/temp
+        tmpfs:
+          size: 536870912
+    configs:
+      # homelab-ca-bundle-v1: compartido con 10 stacks más (2026-08-31,
+      # confirmado por md5sum idéntico) -- ver docker-swarm/stacks/authentik/
+      # docker-compose.yml para la explicación completa.
+      - source: homelab-ca-bundle-v1
+        target: /etc/ssl/certs/homelab-ca.crt
     secrets:
       - source: sonarqube-infisical-client-id-v1
         target: sonarqube-infisical-client-id
@@ -60,18 +98,17 @@ services:
         exec infisical run --token="$$TOKEN" --projectId="$$PROJECT_ID" --env=prod --path=/sonarqube/ -- \
           /opt/sonarqube/docker/entrypoint.sh
     ports:
-      # mode: host, no ingress -- ver nota en docker-swarm/stacks/pi-obs/
-      # docker-compose.yml. Encontrado en vivo (2026-08-27): en modo ingress
-      # (el implícito), el puerto 9000 ya lo reservaba authentik-server
-      # (retaco) en TODO el swarm, no solo en su propio nodo -- chocó al
-      # desplegar aunque sonarqube va pinnado a pi-sonar, un nodo distinto.
-      # `mode: host` publica solo en el nodo donde realmente aterriza la
-      # tarea, sin reservar el puerto en el resto del swarm -- semánticamente
-      # más correcto además, ya que este servicio nunca necesitó la routing
-      # mesh (siempre pinnado a un único nodo).
+      # Publicado en 19000, no 9000 (2026-08-31) -- liberaba el 9000
+      # (`authentik-server`/`portainer-server` lo compartían). `target: 9000`
+      # no cambia -- es el puerto interno por defecto de SonarQube dentro
+      # del contenedor, solo se remapea el lado publicado. `mode: ingress`
+      # (2026-08-31) -- sigue pinnado a un nodo fijo (ver cabecera, `data/`
+      # real), pero ya no hay ninguna colisión real de puerto que exija
+      # `mode: host` (mismo criterio ya aplicado a `capataz-api`/
+      # `infisical`/`open-webui`/`portainer-server`).
       - target: 9000
-        published: 9000
-        mode: host
+        published: 19000
+        mode: ingress
     networks:
       - sonarqube-net
     ulimits:
@@ -97,6 +134,10 @@ networks:
   sonarqube-net:
     driver: overlay
     attachable: true
+
+configs:
+  homelab-ca-bundle-v1:
+    external: true
 
 secrets:
   sonarqube-infisical-client-id-v1:
