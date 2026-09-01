@@ -11,7 +11,7 @@ Infraestructura doméstica distribuida en 7 nodos: tres PCs (Ryzen 9, MiniPC Ryz
 | ryzen.404labo.net  | 192.168.1.150   | fuera (Compose)  | IA con GPU: Ollama, Whisper, Open WebUI               |
 | retaco.404labo.net | 192.168.1.174   | manager          | Datos y automatización: Postgres main, Qdrant, n8n-main, Authentik, Valkey, Infisical |
 | pi-dns.404labo.net | 192.168.1.170   | fuera            | DNS (Pi-hole + Unbound) + Tailscale subnet router — sin nginx, sin apikey-service |
-| pi-obs.404labo.net | 192.168.1.171   | manager          | Observabilidad (OTel, Prometheus, Grafana, Loki, Tempo) |
+| pi-obs.404labo.net | 192.168.1.171   | manager          | Observabilidad (OTel, Prometheus, Grafana, Loki, Tempo) + servidor NUT del SAI físico del clúster (`docs/33-nut-sai.md`) |
 | pi-sonar.404labo.net| 192.168.1.172  | manager          | SonarQube, Bifrost (base de datos en retaco)          |
 | pi-utils.404labo.net| 192.168.1.173  | manager          | Utilidades: RSSHub, markitdown-service, crawl4ai-scraper-service, n8n-aux, Vaultwarden, Capataz |
 | pinchi.404labo.net | 192.168.1.175   | manager          | Nodo Swarm de propósito general (añadido 2026-08-22, `docs/30-instalacion-pinchi.md`) — sin servicios pinnados propios, recibe carga vía routing mesh |

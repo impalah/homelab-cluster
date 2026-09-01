@@ -1,0 +1,23 @@
+# upsmon LOCAL de pi-obs -- corre en el mismo contenedor que upsd/el driver,
+# se conecta por "localhost" dentro del propio contenedor. Generado en el
+# arranque a partir de este template (nut-server/entrypoint.sh, envsubst).
+MONITOR sai@localhost 1 monuser ${NUT_MONUSER_PASSWORD} primary
+
+# RUN_AS_USER root: mismo motivo que "user = root" en ups.conf (ver ese
+# fichero) -- UID/GID de "nut" dentro del contenedor no coincide con el
+# permiso real del dispositivo USB montado desde el host.
+RUN_AS_USER root
+
+MINSUPPLIES 1
+SHUTDOWNCMD "/usr/local/bin/nut-shutdown-host.sh"
+NOTIFYCMD "/usr/local/bin/nut-notify.sh"
+POLLFREQ 5
+POLLFREQALERT 5
+HOSTSYNC 15
+DEADTIME 15
+# pi-obs aloja el propio upsd -- interesa que sea de los ultimos nodos en
+# perder comunicacion de verdad (si se apaga el antes, el resto de upsmon
+# remotos se quedan sin servidor al que preguntar) -- FINALDELAY mayor que
+# el resto de nodos (15s por defecto en los clientes, ver
+# shared/scripts/nut-upsmon-client.conf.template y docs/33-nut-sai.md).
+FINALDELAY 30

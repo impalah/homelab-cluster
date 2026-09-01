@@ -109,6 +109,7 @@ services:
       - /srv/homelab/pi-obs/grafana/data:/var/lib/grafana
       - /srv/homelab/pi-obs/config/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
       - /srv/homelab/pi-obs/config/grafana/alerting/undervoltage.yml:/etc/grafana/provisioning/alerting/undervoltage.yml:ro
+      - /srv/homelab/pi-obs/config/grafana/alerting/sai-bateria.yml:/etc/grafana/provisioning/alerting/sai-bateria.yml:ro
       - /srv/homelab/pi-obs/config/grafana/dashboards/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
       - /srv/homelab/pi-obs/config/grafana/dashboards/json:/etc/grafana/provisioning/dashboards/json:ro
     secrets:
@@ -119,6 +120,36 @@ services:
     networks:
       - pi-obs-net
     user: "472"
+    logging: *loki-logging
+    deploy: *pi-obs-deploy
+
+  nut-exporter:
+    image: druggeri/nut_exporter:3.3.0
+    # El binario no soporta el sufijo _FILE (igual que postgres_exporter,
+    # ver comentario ahi abajo) -- a diferencia de ese, la imagen SI tiene
+    # shell (Alpine, pese a que el README del proyecto diga "scratch-based"
+    # -- confirmado leyendo su Dockerfile real antes de asumirlo), asi que
+    # el mismo patron de entrypoint que postgres-exporter funciona aqui.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        export NUT_EXPORTER_PASSWORD=$$(cat /run/secrets/nut-exporter-password)
+        exec /nut_exporter
+    environment:
+      NUT_EXPORTER_SERVER: "192.168.1.171"
+      NUT_EXPORTER_USERNAME: "monuser"
+      # Añade battery.charge.low/battery.runtime a la lista por defecto del
+      # exporter -- son las variables que usa upsmon para decidir el
+      # apagado (ver docs/33-nut-sai.md), utiles para la alerta de Grafana.
+      NUT_EXPORTER_VARIABLES: "battery.charge,battery.charge.low,battery.runtime,battery.voltage,battery.voltage.nominal,input.voltage,input.voltage.nominal,ups.load,ups.status"
+    secrets:
+      - source: nut-exporter-password-v1
+        target: nut-exporter-password
+    # Sin "ports:" a propósito -- Prometheus lo alcanza por alias
+    # "nut-exporter:9199" en la misma red overlay, nada más lo consume.
+    networks:
+      - pi-obs-net
     logging: *loki-logging
     deploy: *pi-obs-deploy
 
@@ -174,4 +205,6 @@ secrets:
   grafana-admin-password-v1:
     external: true
   postgres-exporter-dsn-v1:
+    external: true
+  nut-exporter-password-v1:
     external: true

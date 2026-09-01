@@ -1,0 +1,119 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: sai-bateria
+    folder: Homelab Alerts
+    interval: 10s
+    rules:
+      - uid: sai-en-bateria
+        title: "SAI - Funcionando con bateria (corte de luz)"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: network_ups_tools_ups_status{flag="OB"}
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+        noDataState: OK
+        execErrState: Error
+        for: 30s
+        annotations:
+          summary: "El SAI del cluster esta funcionando con bateria"
+          description: >-
+            Se ha detectado un corte de suministro electrico -- el SAI
+            (docs/33-nut-sai.md) esta alimentando el cluster con bateria.
+            Revisar cuanto antes; si la bateria se agota, los nodos se
+            apagaran solos de forma ordenada (mejora 5, docs/22-mejoras-futuras.md).
+        labels:
+          severity: warning
+          category: power
+
+      - uid: sai-bateria-baja
+        title: "SAI - Bateria baja, apagado automatico inminente"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: network_ups_tools_ups_status{flag="LB"}
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        annotations:
+          summary: "Bateria del SAI baja -- apagado automatico del cluster en curso"
+          description: >-
+            NUT ha marcado LB (low battery) en el SAI -- upsmon en los 6
+            nodos apagara el sistema operativo real de cada uno en breve
+            (docs/33-nut-sai.md). Esto es esperado, no hace falta ninguna
+            accion manual salvo confirmar despues que todos han vuelto.
+        labels:
+          severity: critical
+          category: power
+
+      - uid: sai-exporter-caido
+        title: "SAI - nut-exporter no responde (sin visibilidad del SAI)"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 120
+              to: 0
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: up{job="nut-exporter"}
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
+        noDataState: Alerting
+        execErrState: Error
+        for: 2m
+        annotations:
+          summary: "Prometheus no puede scrapear nut-exporter en pi-obs"
+          description: >-
+            Sin datos del SAI durante mas de 2 minutos -- puede ser el
+            propio exporter, upsd, o el driver USB en pi-obs. Revisar
+            docs/33-nut-sai.md. NUT protege el cluster via upsmon de forma
+            independiente aunque esta alerta no se vea, pero conviene
+            investigar cuanto antes por que se ha perdido la visibilidad.
+        labels:
+          severity: warning
+          category: power

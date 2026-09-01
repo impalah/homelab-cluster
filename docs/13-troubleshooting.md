@@ -299,6 +299,60 @@ scutil --dns | grep -A 3 "resolver #1"   # macOS
 
 ---
 
+## Infisical — bucle de reconexión a Valkey bloquea el DNS de todo el nodo (rate-limit de Pi-hole)
+
+**Síntoma:** varios servicios que usan `infisical run` en su arranque (en este incidente real, `authentik-worker`, `bifrost` y `vaultwarden`) quedan en bucle de reinicio permanente en Swarm, con este error en su log (vía Loki):
+
+```
+error: unable to authenticate with universal auth [err=APIError: CallUniversalAuthLogin unsuccessful response [POST https://infisical.404labo.net/api/v1/auth/universal-auth/login] [status-code=502] [reqId=]].
+```
+
+El 502 es real — `infisical.404labo.net` no responde, aunque `docker service ls` muestre el contenedor de `infisical_infisical` como `Running` desde hace horas y no reiniciando.
+
+**Causa raíz (incidente real, 2026-09-01):** si el servicio `valkey` se reprograma a otro nodo (por ejemplo, tras la caída de un nodo Swarm), el contenedor de Infisical que ya estaba corriendo en ese momento puede entrar en un bucle de reconexión contra `valkey.404labo.net` **sin backoff** — cientos de intentos por segundo, cada uno con su propia resolución DNS. Eso genera miles de consultas DNS por minuto desde el nodo donde vive Infisical, muy por encima del límite por cliente de Pi-hole (`dns.rateLimit`, 1000 consultas/60s por defecto), que responde bloqueando con `REFUSED` **todas** las consultas DNS de ese nodo, no solo las de `valkey.404labo.net`. Sin DNS, el propio servidor HTTP de Infisical dentro del contenedor deja de responder — hasta una petición a `localhost` dentro del propio contenedor se queda colgada, probablemente por saturación del bucle de eventos con los reintentos fallidos — de ahí el 502 en cascada para cualquier servicio que dependa de él en su arranque.
+
+**Diagnóstico:**
+
+```bash
+# 1. Confirmar el 502 real contra Infisical desde otro nodo (evita el falso positivo de
+#    hairpin NAT de Swarm si lo pruebas desde el propio nodo que aloja Infisical)
+ssh u-sonar@192.168.1.172 "curl -sk -o /dev/null -w 'HTTP %{http_code}\n' https://infisical.404labo.net/api/status"
+
+# 2. Log de Infisical (vía Loki) -- buscar el bucle de DNS
+curl -s -G 'http://192.168.1.171:3100/loki/api/v1/query_range' \
+  --data-urlencode 'query={swarm_service="infisical_infisical"} |= "ENOTFOUND"' \
+  --data-urlencode 'limit=20'
+
+# 3. Confirmar el rate-limit en Pi-hole (ejecutar en pi-dns)
+docker exec pihole tail -50 /var/log/pihole/FTL.log | grep -i "rate-limiting"
+# "Still rate-limiting <IP> as it made additional NNNN queries" repitiéndose cada minuto
+# sin parar es la confirmación -- <IP> es el nodo donde corre el contenedor atascado
+
+# 4. Confirmar que valkey resuelve bien desde OTRO nodo (descarta un problema real de DNS)
+ssh u-sonar@192.168.1.172 "dig +short valkey.404labo.net @192.168.1.170"
+```
+
+**Solución — un simple reinicio NO basta.** El contenedor nuevo repite el mismo bucle en cuanto arranca, porque el DNS del nodo sigue bloqueado por el rate-limit anterior (el bloqueo no expira mientras el nodo siga generando más de 1000 consultas/60s, y un contenedor recién arrancado que reintenta sin backoff vuelve a superar ese umbral en segundos). Hace falta parar el contenedor del todo y dejar pasar una ventana completa sin tráfico para que el contador de Pi-hole decaiga:
+
+```bash
+# 1. Parar Infisical del todo (no solo reiniciar) -- en un manager de Swarm
+docker service scale infisical_infisical=0
+
+# 2. Esperar a ver el mensaje de fin de bloqueo en Pi-hole antes de continuar
+docker exec pihole tail -f /var/log/pihole/FTL.log | grep -i "rate-limiting\|Ending rate"
+# "Ending rate-limitation of <IP>" confirma que ya se puede seguir
+
+# 3. Confirmar que el DNS del nodo afectado ha vuelto
+ssh u-data@192.168.1.174 "dig +short valkey.404labo.net @192.168.1.170"
+
+# 4. Volver a levantar Infisical
+docker service scale infisical_infisical=1
+```
+
+Los servicios que dependían de él (`authentik-worker`, `bifrost`, `vaultwarden` en este incidente) se recuperan solos vía la política de reinicio de Swarm en cuanto Infisical vuelve a responder — no hace falta tocarlos directamente, solo esperar y confirmar con `docker service ls` que sus réplicas vuelven a `1/1`.
+
+---
+
 ## Vaultwarden
 
 ### Síntoma: la extensión de Bitwarden conecta y sincroniza, pero no muestra las contraseñas en el editor

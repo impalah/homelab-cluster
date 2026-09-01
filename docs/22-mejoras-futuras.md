@@ -80,22 +80,28 @@ Medio.
 
 ---
 
-## 5. Integrar el SAI existente con NUT (Network UPS Tools)
+## 5. ~~Integrar el SAI existente con NUT (Network UPS Tools)~~ — hecho
 
 **Prioridad: media**
 
 ### Qué hay hoy
 
-Ya existe un SAI físico, sin ninguna integración software — ningún nodo sabe si está con batería ni cuánta autonomía queda.
+**Completado (2026-09-01)** — ver `docs/33-nut-sai.md` para el detalle completo. El SAI
+(Salicru SPS 2200 SOHO+) resultó estar conectado a `pi-obs`, no a `mole`/`ryzen` como
+suponía este documento originalmente. Servidor NUT (`usbhid-ups`) en `pi-obs`, clientes
+`upsmon` en los 6 nodos con apagado real vía D-Bus/logind (validado con hardware real en
+`pinchi`), métricas en Prometheus (`nut_exporter`) y alerta en Grafana
+(`sai-bateria.yml`). El aviso al canal de notificación (punto 6 original) queda pendiente
+de que exista `ntfy` (mejora 4) — la alerta funciona igual, solo sin push todavía.
 
 ### Qué haría falta
 
-1. Confirmar a qué equipo está conectado (probablemente `mole`/`ryzen`) — actúa de servidor NUT.
-2. `nut-server` con `usbhid-ups` (cubre APC, Eaton, CyberPower).
-3. `upsmon` en el resto de nodos como clientes remotos.
-4. Política de apagado ordenado ante batería baja (`pi-dns` con especial cuidado).
-5. Exponer métricas a Prometheus (`nut_exporter`).
-6. Conectar avisos al canal de notificación del punto 4.
+1. ~~Confirmar a qué equipo está conectado (probablemente `mole`/`ryzen`) — actúa de servidor NUT.~~
+2. ~~`nut-server` con `usbhid-ups` (cubre APC, Eaton, CyberPower).~~
+3. ~~`upsmon` en el resto de nodos como clientes remotos.~~
+4. ~~Política de apagado ordenado ante batería baja (`pi-dns` con especial cuidado).~~
+5. ~~Exponer métricas a Prometheus (`nut_exporter`).~~
+6. Conectar avisos al canal de notificación del punto 4 — pendiente de la mejora 4 (`ntfy`).
 
 ### Esfuerzo estimado
 Medio — depende de la compatibilidad del SAI con `usbhid-ups`.
@@ -1508,7 +1514,7 @@ Bajo para comprobarlo (una prueba controlada con `curl` desde fuera de la LAN de
 | 2 | ~~`git init` del repo + remoto~~ | Alta | — | **Completado** |
 | 3 | Alerta de espacio en disco | Media | Bajo | Reutiliza patrón de `docs/14` |
 | 4 | ntfy (notificaciones proactivas) | Media | Medio | — |
-| 5 | Integración NUT del SAI existente | Media | Medio | Modelo de SAI compatible con `usbhid-ups` |
+| 5 | ~~Integración NUT del SAI existente~~ | Media | Medio | **Completado** (2026-09-01) — `docs/33-nut-sai.md`; SAI conectado a `pi-obs` (no a `ryzen`), aviso proactivo pendiente de la mejora 4 (ntfy) |
 | 6 | Migrar tooling de mantenimiento a Ansible | Media | Medio-alto | Punto 2 (ya cumplido) |
 | 7 | Forgejo (repos + CI + artefactos), con GitHub como espejo | Media | Alto | Punto 2 (ya cumplido); esfuerzo separado, después de que la mejora 33 (Swarm) esté completa y el DNS resuelto |
 | 8 | ~~Registry: limpieza y garbage collection~~ | Media | Bajo | **Implementado (uso manual)** — `docs/29-registry-mantenimiento.md`; alerta de disco diferida a la mejora 3 |

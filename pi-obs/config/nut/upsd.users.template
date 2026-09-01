@@ -1,0 +1,11 @@
+# Generado en el arranque del contenedor a partir de este template
+# (nut-server/entrypoint.sh, envsubst) -- las contrasenas reales vienen de
+# .env, nunca se commitea nada real aqui.
+[monuser]
+    password = ${NUT_MONUSER_PASSWORD}
+    upsmon primary
+
+[admin]
+    password = ${NUT_ADMIN_PASSWORD}
+    actions = SET
+    instcmds = ALL

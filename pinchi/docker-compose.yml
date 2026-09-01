@@ -1,0 +1,58 @@
+name: homelab-pinchi
+
+# =============================================================================
+# Stack CLÁSICO del nodo pinchi (192.168.1.175) -- primer docker-compose.yml
+# propio de este nodo. Hasta ahora pinchi era Swarm-only (docs/30-instalacion-
+# pinchi.md, docs/32-manual-operaciones-swarm.md): sin servicios pinnados,
+# solo recibía carga vía routing mesh. Este fichero NO forma parte de esa
+# migración ni la revierte -- existe únicamente para nut-upsmon (cliente NUT,
+# ver docs/33-nut-sai.md), que necesita `privileged: true` de verdad y por
+# tanto no puede ser un servicio Swarm (docker stack deploy ignora
+# privileged/devices en silencio, confirmado en
+# docker-swarm/stacks/common/docker-compose.yml).
+# =============================================================================
+
+x-logging: &loki-logging
+  driver: loki
+  options:
+    loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+    loki-external-labels: "node=pinchi"
+    mode: non-blocking
+    max-buffer-size: 4m
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # nut-upsmon — cliente NUT: monitoriza el SAI remoto en pi-obs
+  # (192.168.1.171:3493) y apaga ESTE host si el SAI ordena un apagado por
+  # bateria critica. Ver docs/33-nut-sai.md.
+  #
+  # privileged: true IMPRESCINDIBLE -- confirmado en vivo aqui mismo
+  # (pinchi, 2026-09-01): sin el, AppArmor bloquea la conexion D-Bus al host
+  # real ("AppArmor policy prevents this sender..."), y el apagado real
+  # fallaria en silencio justo cuando mas falta hace. Una llamada PowerOff
+  # real (fuera de este servicio, prueba manual con dbus-send) ya se
+  # ejecuto con exito contra este mismo nodo antes de escribir este fichero.
+  # ---------------------------------------------------------------------------
+  nut-upsmon:
+    build: /srv/homelab/shared/docker/nut-client
+    image: nut-client:local
+    container_name: nut-upsmon
+    logging: *loki-logging
+    restart: unless-stopped
+    privileged: true
+    environment:
+      NUT_MONUSER_PASSWORD: ${NUT_MONUSER_PASSWORD}
+    volumes:
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+      - /srv/homelab/shared/config/nut/nut-client.conf:/etc/nut/nut.conf:ro
+      - /srv/homelab/shared/config/nut/upsmon-client.conf.template:/etc/nut/upsmon.conf.template:ro
+      - /srv/homelab/shared/scripts/nut-shutdown-host.sh:/usr/local/bin/nut-shutdown-host.sh:ro
+      - /srv/homelab/shared/scripts/nut-notify.sh:/usr/local/bin/nut-notify.sh:ro
+    networks:
+      - pinchi-net
+
+networks:
+  pinchi-net:
+    name: pinchi-net
+    driver: bridge

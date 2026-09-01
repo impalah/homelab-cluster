@@ -1,0 +1,22 @@
+# Cliente NUT "secondary" -- solo observa el SAI remoto en pi-obs y apaga
+# ESTE host si el SAI ordena un apagado por bateria critica (broadcast FSD).
+# No gestiona el driver ni decide instcmds -- eso es cosa del "primary" en
+# pi-obs (pi-obs/config/nut/upsmon.conf.template). Generado en el arranque
+# del contenedor (shared/docker/nut-client/entrypoint.sh, envsubst).
+MONITOR sai@192.168.1.171 1 monuser ${NUT_MONUSER_PASSWORD} secondary
+
+# RUN_AS_USER root: mismo motivo que en pi-obs (ver
+# pi-obs/config/nut/ups.conf) -- UID/GID de "nut" dentro del contenedor no
+# tiene por que coincidir con nada del host, y aqui ademas hace falta poder
+# ejecutar SHUTDOWNCMD (apagado real via D-Bus) sin restricciones de un
+# usuario sin privilegios.
+RUN_AS_USER root
+
+MINSUPPLIES 1
+SHUTDOWNCMD "/usr/local/bin/nut-shutdown-host.sh"
+NOTIFYCMD "/usr/local/bin/nut-notify.sh"
+POLLFREQ 5
+POLLFREQALERT 5
+HOSTSYNC 15
+DEADTIME 15
+FINALDELAY 15

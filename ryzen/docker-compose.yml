@@ -40,6 +40,34 @@ x-logging: &loki-logging
 services:
 
   # ---------------------------------------------------------------------------
+  # nut-upsmon — cliente NUT: monitoriza el SAI remoto en pi-obs
+  # (192.168.1.171:3493) y apaga ESTE host si el SAI ordena un apagado por
+  # bateria critica. Ver docs/33-nut-sai.md.
+  #
+  # privileged: true IMPRESCINDIBLE -- confirmado en vivo (pinchi,
+  # 2026-09-01): sin el, AppArmor bloquea la conexion D-Bus al host real
+  # ("AppArmor policy prevents this sender..."), y el apagado real fallaria
+  # en silencio justo cuando mas falta hace.
+  # ---------------------------------------------------------------------------
+  nut-upsmon:
+    build: /srv/homelab/shared/docker/nut-client
+    image: nut-client:local
+    container_name: nut-upsmon
+    logging: *loki-logging
+    restart: unless-stopped
+    privileged: true
+    environment:
+      NUT_MONUSER_PASSWORD: ${NUT_MONUSER_PASSWORD}
+    volumes:
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+      - /srv/homelab/shared/config/nut/nut-client.conf:/etc/nut/nut.conf:ro
+      - /srv/homelab/shared/config/nut/upsmon-client.conf.template:/etc/nut/upsmon.conf.template:ro
+      - /srv/homelab/shared/scripts/nut-shutdown-host.sh:/usr/local/bin/nut-shutdown-host.sh:ro
+      - /srv/homelab/shared/scripts/nut-notify.sh:/usr/local/bin/nut-notify.sh:ro
+    networks:
+      - ryzen-net
+
+  # ---------------------------------------------------------------------------
   # ollama — Servidor de inferencia LLM con GPU NVIDIA
   # ---------------------------------------------------------------------------
   ollama:

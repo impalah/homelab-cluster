@@ -21,6 +21,56 @@ x-logging: &loki-logging
 services:
 
   # ---------------------------------------------------------------------------
+  # nut-server — Network UPS Tools: driver usbhid-ups + upsd + upsmon local,
+  # todo en un solo contenedor (ver pi-obs/nut-server/entrypoint.sh). Único
+  # nodo con el SAI físico conectado por USB (Salicru SPS 2200 SOHO+,
+  # confirmado en vivo -- docs/33-nut-sai.md). Compose CLÁSICO a propósito,
+  # no Swarm -- el hardware USB está pinnado a este nodo concreto, mismo
+  # criterio que las GPUs de ryzen o Tailscale en pi-dns.
+  #
+  # "/dev/bus/usb" se monta ENTERO (no un /dev/hidrawN concreto) porque el
+  # número de bus/dispositivo puede cambiar si el SAI se desconecta y
+  # reconecta -- privileged: true para que el driver (corre como root antes
+  # de hacer become_user() interno a "nut") pueda abrir el dispositivo real
+  # sin depender de una regla udev de permisos.
+  #
+  # "/run/dbus/system_bus_socket" compartido con el host -- lo usa
+  # shared/scripts/nut-shutdown-host.sh (SHUTDOWNCMD de upsmon) para apagar
+  # el SO real de este nodo vía logind cuando el SAI ordena un apagado por
+  # batería crítica, no el contenedor.
+  # ---------------------------------------------------------------------------
+  nut-server:
+    build: ./nut-server
+    image: nut-server:local
+    container_name: nut-server
+    logging: *loki-logging
+    restart: unless-stopped
+    privileged: true
+    environment:
+      NUT_MONUSER_PASSWORD: ${NUT_MONUSER_PASSWORD}
+      NUT_ADMIN_PASSWORD: ${NUT_ADMIN_PASSWORD}
+    volumes:
+      - /dev/bus/usb:/dev/bus/usb
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+      - /srv/homelab/pi-obs/config/nut/nut.conf:/etc/nut/nut.conf:ro
+      - /srv/homelab/pi-obs/config/nut/ups.conf:/etc/nut/ups.conf:ro
+      - /srv/homelab/pi-obs/config/nut/upsd.conf:/etc/nut/upsd.conf:ro
+      - /srv/homelab/pi-obs/config/nut/upsd.users.template:/etc/nut/upsd.users.template:ro
+      - /srv/homelab/pi-obs/config/nut/upsmon.conf.template:/etc/nut/upsmon.conf.template:ro
+      - /srv/homelab/shared/scripts/nut-shutdown-host.sh:/usr/local/bin/nut-shutdown-host.sh:ro
+      - /srv/homelab/shared/scripts/nut-notify.sh:/usr/local/bin/nut-notify.sh:ro
+    ports:
+      - "3493:3493"
+    networks:
+      - pi-obs-net
+    healthcheck:
+      test: ["CMD-SHELL", "upsc sai@localhost > /dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # ---------------------------------------------------------------------------
   # loki / tempo / prometheus / otel-collector / grafana / postgres-exporter —
   # MIGRADOS al swarm, TODOS JUNTOS en un solo stack (Fase 4,
   # docs/31-docker-swarm.md, 2026-08-27). Fuente de verdad ahora:

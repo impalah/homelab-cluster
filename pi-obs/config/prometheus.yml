@@ -40,6 +40,19 @@ scrape_configs:
           node: retaco
           db: postgres-main
 
+  # NUT exporter — SAI fisico conectado por USB a pi-obs, ver docs/33-nut-sai.md.
+  # metrics_path/params distintos del resto porque druggeri/nut_exporter expone
+  # las metricas en /ups_metrics (no /metrics) y necesita el nombre de la UPS
+  # como query param.
+  - job_name: nut-exporter
+    metrics_path: /ups_metrics
+    static_configs:
+      - targets: ["nut-exporter:9199"]
+        labels:
+          node: pi-obs
+    params:
+      ups: ["sai"]
+
   # Prometheus itself
   - job_name: prometheus
     static_configs:
