@@ -445,3 +445,4 @@ Los documentos de `docs/` están numerados siguiendo el orden real en que hay qu
 | 31 | `docs/31-docker-swarm.md` | Migración completa a Docker Swarm (mejora 33): diseño, hoja de ruta por fases, incidentes reales, y el cierre conjunto con la retirada de `home.arpa` (mejora 41) |
 | 32 | `docs/32-manual-operaciones-swarm.md` | Manual de operaciones del día a día en Swarm (desplegar/parar/logs/secrets...), por CLI y paso a paso en Portainer, con capturas reales |
 | 33 | `docs/33-nut-sai.md` | Integración NUT del SAI físico (mejora 5): servidor en `pi-obs`, clientes `upsmon` en los 6 nodos, apagado automático real vía D-Bus, métricas y alerta en Grafana |
+| 34 | `docs/34-ntfy-notificaciones.md` | ntfy — canal de notificación proactivo del clúster (mejora 4): despliegue como stack Swarm, contact point de Grafana (undervoltage + SAI), y guía de uso genérico por HTTP/Python/n8n para integrarlo desde cualquier app |

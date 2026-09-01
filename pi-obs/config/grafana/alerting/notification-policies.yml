@@ -1,0 +1,27 @@
+apiVersion: 1
+
+# Mejora 4 (docs/22-mejoras-futuras.md): árbol de políticas de notificación
+# completo -- la provisión por fichero de Grafana sustituye el árbol
+# entero, no solo añade una rama, así que la raíz se deja igual que el
+# comportamiento por defecto de Grafana (receiver "grafana-default-email",
+# sin SMTP configurado en el clúster -- no llega a ningún sitio hoy, mismo
+# estado que antes de esta mejora) y se añade una única ruta hija para las
+# alertas de hardware/energía (undervoltage + SAI, ver
+# pi-obs/config/grafana/alerting/undervoltage.yml y sai-bateria.yml) hacia
+# ntfy. La alerta de espacio en disco (mejora 3, todavía sin implementar)
+# ya quedará cubierta en cuanto exista, sin tocar este fichero, en cuanto
+# lleve la misma label category=disco -- o hará falta añadir otro matcher
+# aquí si se prefiere una categoría distinta.
+policies:
+  - orgId: 1
+    receiver: grafana-default-email
+    group_by: ["grafana_folder", "alertname"]
+    routes:
+      - receiver: ntfy-cluster-alerts
+        object_matchers:
+          - ["category", "=~", "power|hardware"]
+        group_by: ["alertname"]
+        group_wait: 10s
+        group_interval: 5m
+        repeat_interval: 4h
+        continue: false

@@ -73,8 +73,12 @@ docker-swarm/
     ├── crawl4ai-scraper-service/ ← sin constraints (sin estado real), cualquiera de los 5 nodos
     ├── capataz/         ← capataz-api + capataz-runner + capataz-frontend combinados, pinnados
     │                        a pi-utils; 7 secrets nativos de Compose convertidos a docker secret
-    └── portainer-server/ ← servidor Portainer, pinnado a pi-utils; último servicio Compose
-                             clásico de ese nodo (junto con watchtower, que nunca se migra)
+    ├── portainer-server/ ← servidor Portainer, pinnado a pi-utils; último servicio Compose
+    │                        clásico de ese nodo (junto con watchtower, que nunca se migra)
+    └── ntfy/            ← mejora 4 (docs/22-mejoras-futuras.md, cerrada), canal de notificación
+                             proactivo del clúster; nace ya como stack Swarm (no es una migración),
+                             `node.labels.role == stateful` en vez de un `node.hostname` fijo — ver
+                             docs/34-ntfy-notificaciones.md
 ```
 
 Con esto, `retaco`, `pi-obs`, `pi-sonar` y `pi-utils` quedan con Compose clásico reducido a un

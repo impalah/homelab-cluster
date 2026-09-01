@@ -59,21 +59,21 @@ Bajo — reutiliza infraestructura y patrón existentes.
 
 ---
 
-## 4. Canal de notificación proactivo (ntfy)
+## 4. ~~Canal de notificación proactivo (ntfy)~~ — hecho
 
-**Prioridad: media**
+**Prioridad: media** — **completado**
 
-### Qué hay hoy
+### Qué se implementó
 
-La alerta de undervoltage y el panel de actualizaciones pendientes son **solo de consulta** — nada avisa activamente. No existe ningún canal de notificación en todo el clúster.
+**ntfy** desplegado como stack Swarm (`docker-swarm/stacks/ntfy/`, no en `pi-utils`/nginx como se planteaba originalmente — ese plan es de antes del cierre de la migración a Swarm y de la retirada de `home.arpa`, mejoras 33/39/41). Sin `node.hostname` fijo — `node.labels.role == stateful` (`retaco`/`pinchi`, destino por defecto de cualquier servicio nuevo con estado, `docs/31-docker-swarm.md`). Expuesto en `ntfy.404labo.net` vía Traefik (labels de descubrimiento en el propio stack, mismo patrón que `markitdown`), auth propia con `NTFY_AUTH_DEFAULT_ACCESS=deny-all` (sin topics públicos). Desplegado y verificado en vivo (2026-09-01) en el clúster real, no solo en el repo: healthcheck sano, DNS cargado en Pi-hole, usuario/token del topic `homelab-alerts` creados con `ntfy user`/`ntfy access`/`ntfy token`.
 
-### Qué haría falta
+Conectado como *contact point* de Grafana (`pi-obs/config/grafana/alerting/ntfy-contactpoint.yml` + `notification-policies.yml`): las alertas de undervoltage y del SAI (`category=power|hardware`, `docs/33-nut-sai.md`) ya enrutan hacia ntfy — la futura alerta de disco (mejora 3, todavía pendiente) quedará cubierta sola en cuanto lleve la misma label. `shared/scripts/check-image-updates.sh` también publica por ntfy si se exporta `NTFY_TOKEN` (punto 5 original, opcional, implementado). **Incidente real encontrado y corregido probándolo de verdad con el botón "Test" de Grafana**: la primera versión del contact point usaba el token de ntfy como contraseña de HTTP Basic Auth — Grafana lo provisionó sin quejarse, pero dio `401 Unauthorized` real al enviar (los tokens de ntfy solo valen como `Authorization: Bearer`); corregido usando el campo dedicado "Authorization Header" de Grafana (`authorization_scheme`/`authorization_credentials`, soportado desde la 9.1, muy anterior a la 10.4.2 de este clúster). Confirmado end-to-end tras el fix: "Test alert sent." en Grafana y la notificación real recibida en la app de ntfy.
 
-1. Desplegar **ntfy** en `pi-utils`, mismo patrón que Vaultwarden/Portainer (`docs/10-instalacion-pi4-utils.md` como referencia de estilo).
-2. Exponer como `ntfy.home.arpa` mediante nginx.
-3. App ntfy (Android/iOS/desktop), suscripción al topic del clúster.
-4. Conectar como *contact point* de Grafana: undervoltage + futura alerta de disco.
-5. Opcional: `check-image-updates.sh` publicando también por ntfy.
+Documentación completa (despliegue, alta de usuarios/tokens, todos los sistemas de notificación disponibles —web/PWA/apps/CLI/API HTTP para suscripción externa—, y cómo conseguir push nativo de verdad en cada plataforma —Firebase/Android, relé de sondeo/iOS, Web Push/navegador, ninguno activado todavía—, más ejemplos concretos en Python/n8n para integrarlo desde fuera del clúster): `docs/34-ntfy-notificaciones.md`.
+
+### Qué hay hoy (histórico, previo a la implementación)
+
+La alerta de undervoltage y el panel de actualizaciones pendientes eran **solo de consulta** — nada avisaba activamente. No existía ningún canal de notificación en todo el clúster.
 
 ### Esfuerzo estimado
 Medio.
@@ -91,8 +91,9 @@ Medio.
 suponía este documento originalmente. Servidor NUT (`usbhid-ups`) en `pi-obs`, clientes
 `upsmon` en los 6 nodos con apagado real vía D-Bus/logind (validado con hardware real en
 `pinchi`), métricas en Prometheus (`nut_exporter`) y alerta en Grafana
-(`sai-bateria.yml`). El aviso al canal de notificación (punto 6 original) queda pendiente
-de que exista `ntfy` (mejora 4) — la alerta funciona igual, solo sin push todavía.
+(`sai-bateria.yml`). El aviso al canal de notificación (punto 6 original) quedó cerrado
+el mismo día al implementarse la mejora 4 (`ntfy`) — `sai-bateria.yml` ya enruta a ntfy
+vía `pi-obs/config/grafana/alerting/notification-policies.yml`, ver `docs/34-ntfy-notificaciones.md`.
 
 ### Qué haría falta
 
@@ -101,7 +102,7 @@ de que exista `ntfy` (mejora 4) — la alerta funciona igual, solo sin push toda
 3. ~~`upsmon` en el resto de nodos como clientes remotos.~~
 4. ~~Política de apagado ordenado ante batería baja (`pi-dns` con especial cuidado).~~
 5. ~~Exponer métricas a Prometheus (`nut_exporter`).~~
-6. Conectar avisos al canal de notificación del punto 4 — pendiente de la mejora 4 (`ntfy`).
+6. ~~Conectar avisos al canal de notificación del punto 4 — pendiente de la mejora 4 (`ntfy`).~~
 
 ### Esfuerzo estimado
 Medio — depende de la compatibilidad del SAI con `usbhid-ups`.
@@ -602,7 +603,7 @@ Hoy solo es visible entrando al panel de Bifrost — no aparece junto al resto d
 **Vigilancia y alarmas sobre el coste** (antes solo apuntado como posibilidad en el punto 5, ahora parte explícita del alcance de esta mejora):
 
 5. Regla de alerta en Grafana sobre `bifrost_cost_total` (incremento acumulado en una ventana diaria/mensual, no el contador crudo desde el arranque) por encima de un umbral a decidir — mismo patrón ya usado para la alerta de disco (mejora 3) y la de parcheo de nodos (mejora 36).
-6. Conectar esa alerta al canal de notificación proactivo (ntfy, mejora 4) en cuanto exista; hasta entonces, un *contact point* de correo o quedarse solo con el aviso visual del panel como mínimo viable.
+6. Conectar esa alerta al canal de notificación proactivo — `ntfy` (mejora 4, ya implementado, `docs/34-ntfy-notificaciones.md`) puede reutilizarse tal cual como *contact point*, añadiendo el matcher que corresponda a `pi-obs/config/grafana/alerting/notification-policies.yml`; hasta que esta alerta se implemente, el mecanismo ya existe y está probado (undervoltage + SAI).
 7. **Evaluar también el mecanismo nativo de presupuestos de Bifrost** (`governance.budgets`, `docs/23-bifrost-gateway-llm.md`, sección "Seguimiento de coste") como alternativa o complemento a la alerta de Grafana — Bifrost ya soporta presupuestos con umbral por *virtual key* y puede avisar/bloquear directamente en el propio gateway, sin depender de que Prometheus/Grafana estén sanos en ese momento. Decidir la fuente de verdad: solo uno de los dos mecanismos, o ambos con roles distintos (Bifrost bloquea en el gateway antes de que la petición cueste dinero, Grafana avisa para visibilidad humana centralizada junto al resto de alertas del clúster). Esto sustituye la idea descartada de un aviso manual por n8n que se apuntaba en `docs/23`.
 8. **"U otros"**: hoy Bifrost es el único gateway de coste LLM del clúster — si en el futuro se añaden más proveedores/gateways o interesa una herramienta de FinOps dedicada, generalizar este mismo panel/alerta en vez de duplicar el mecanismo; no es necesario hoy, se deja anotado para no perder el contexto si surge.
 

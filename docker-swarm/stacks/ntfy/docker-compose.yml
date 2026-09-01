@@ -1,0 +1,93 @@
+# Mejora 4 (docs/22-mejoras-futuras.md): canal de notificación proactivo del
+# clúster. Nace directamente como stack Swarm -- no es una migración de un
+# servicio Compose preexistente (a diferencia del resto de servicios con
+# estado de la Fase 4, docs/31-docker-swarm.md), así que no hay bind-mount
+# real que mover ni motivo histórico para fijar un nodo concreto.
+#
+# `constraints: node.labels.role == stateful` en vez de un `node.hostname`
+# fijo -- es el destino por defecto documentado para cualquier servicio CON
+# estado nuevo (docs/31-docker-swarm.md, línea de la mejora 33), y aquí
+# aplica literalmente: sin motivo específico (SQLite con escritura muy
+# intensiva, clave privada sensible...) para elegir `retaco` o `pinchi` a
+# mano como sí lo hubo con vaultwarden/sonarqube/portainer-server. `cache.db`
+# (historial corto de mensajes, 12h) y `attachments/` son el único estado
+# real -- volumen de escritura bajo (un puñado de notificaciones al día),
+# nada comparable al WAL de una base de datos de aplicación.
+#
+# Sin Infisical/CA interna aquí -- a diferencia de la mayoría de stacks del
+# clúster, ntfy no hace ninguna llamada saliente HTTPS a otro servicio
+# interno (Grafana llama de entrada, vía webhook, no al revés) y no
+# necesita ningún secreto gestionado; el único "secreto" es el propio
+# auth.db de ntfy (usuarios/tokens), gestionado con `ntfy user`/`ntfy token`
+# dentro del propio contenedor -- ver docs/34-ntfy-notificaciones.md.
+version: "3.8"
+
+services:
+  ntfy:
+    image: binwiederhier/ntfy:v2.26.0
+    command:
+      - serve
+    environment:
+      TZ: Europe/Madrid
+      NTFY_BASE_URL: https://ntfy.404labo.net
+      NTFY_CACHE_FILE: /var/lib/ntfy/cache.db
+      NTFY_CACHE_DURATION: 12h
+      NTFY_ATTACHMENT_CACHE_DIR: /var/lib/ntfy/attachments
+      NTFY_ATTACHMENT_TOTAL_SIZE_LIMIT: 1G
+      # auth.db se crea solo al primer arranque si no existe -- persistido
+      # en el mismo volumen que cache.db. deny-all por defecto: sin usuario
+      # ni token válido, ni lectura ni escritura en ningún topic -- el
+      # clúster está detrás de split-horizon DNS + Tailscale, pero un
+      # ntfy abierto igualmente deja publicar/leer notificaciones a
+      # cualquiera que adivine el nombre del topic, así que se securiza
+      # igual que el resto de servicios con estado del clúster.
+      NTFY_AUTH_FILE: /var/lib/ntfy/auth.db
+      NTFY_AUTH_DEFAULT_ACCESS: deny-all
+      # Traefik hace de proxy TLS delante -- sin esto, ntfy aplicaría rate
+      # limiting/visitor-ID por la IP del propio Traefik en vez de la IP
+      # real del cliente (todas las peticiones parecerían venir del mismo
+      # sitio).
+      NTFY_BEHIND_PROXY: "true"
+      NTFY_LOG_LEVEL: info
+      NTFY_LOG_FORMAT: json
+    volumes:
+      - /srv/homelab/ntfy/data:/var/lib/ntfy
+    healthcheck:
+      # Patrón documentado por el propio proyecto ntfy -- /v1/health
+      # devuelve JSON, "healthy":true si el proceso está sano.
+      test: ["CMD-SHELL", "wget -q --tries=1 -O - http://127.0.0.1:80/v1/health | grep -Eo '\"healthy\"[[:space:]]*:[[:space:]]*true' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - ntfy-net
+      - traefik-public
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        mode: non-blocking
+        max-buffer-size: 4m
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.role == stateful
+      restart_policy:
+        condition: on-failure
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.ntfy-404labo-net.rule=Host(`ntfy.404labo.net`)"
+        - "traefik.http.routers.ntfy-404labo-net.entrypoints=websecure"
+        - "traefik.http.routers.ntfy-404labo-net.tls=true"
+        - "traefik.http.routers.ntfy-404labo-net.service=ntfy"
+        - "traefik.http.services.ntfy.loadbalancer.server.port=80"
+
+networks:
+  ntfy-net:
+    driver: overlay
+    attachable: true
+  traefik-public:
+    external: true
+    name: traefik_traefik-public

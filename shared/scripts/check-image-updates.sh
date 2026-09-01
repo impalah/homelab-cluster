@@ -15,6 +15,11 @@
 # Pensado para ejecutarse EN pi-obs (vía cron/systemd timer), con acceso SSH
 # al resto de nodos. Ver docs/16-mantenimiento-actualizaciones.md.
 #
+# Aviso opcional por ntfy (mejora 4, docs/22-mejoras-futuras.md/
+# docs/34-ntfy-notificaciones.md): exportar NTFY_TOKEN (token de un usuario
+# con permiso de escritura en el topic homelab-alerts) para que, además de
+# las métricas, publique un push cuando encuentre algo desactualizado.
+#
 # LIMITACIÓN CONOCIDA: compara el digest de la imagen para el MISMO tag
 # (detecta que "n8nio/n8n:latest" se reconstruyó, o que "postgres:16-alpine"
 # tiene un parche nuevo) — NO detecta que exista un tag de versión NUEVO
@@ -113,6 +118,23 @@ chmod 644 "${TMP_FILE}"
 mv "${TMP_FILE}" "${OUT_FILE}"
 echo "[OK] Escrito ${OUT_FILE}" >&2
 grep -c "^docker_image_outdated" "${OUT_FILE}" | xargs echo "[INFO] Contenedores comprobados:" >&2
-grep "} 1$" "${OUT_FILE}" | xargs -r -I{} echo "[INFO] Actualización disponible: {}" >&2
+outdated=$(grep "} 1$" "${OUT_FILE}")
+echo "${outdated}" | xargs -r -I{} echo "[INFO] Actualización disponible: {}" >&2
+
+# Punto 5 (opcional) de la mejora 4 (docs/22-mejoras-futuras.md): aviso por
+# ntfy si hay algo desactualizado -- solo si NTFY_TOKEN está exportado (no
+# hardcodeado aquí, mismo criterio que el resto de secretos del repo). Sin
+# NTFY_TOKEN, el script sigue funcionando exactamente igual que antes de la
+# mejora 4 (solo métricas, sin push) -- no bloqueante, `|| true` a propósito.
+if [ -n "${outdated}" ] && [ -n "${NTFY_TOKEN:-}" ]; then
+  count=$(echo "${outdated}" | wc -l)
+  curl -fsS -H "Authorization: Bearer ${NTFY_TOKEN}" \
+    -H "Title: Actualizaciones de imagen pendientes" \
+    -H "Priority: default" \
+    -H "Tags: whale" \
+    -d "${count} contenedor(es) con imagen nueva publicada en el mismo tag -- ver panel de Grafana o ${OUT_FILE}." \
+    https://ntfy.404labo.net/homelab-alerts >/dev/null \
+    || echo "[WARN] No se pudo publicar el aviso en ntfy (¿token inválido o ntfy caído?)" >&2
+fi
 
 exit 0

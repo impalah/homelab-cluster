@@ -1,0 +1,63 @@
+apiVersion: 1
+
+# Mejora 4 (docs/22-mejoras-futuras.md): contact point que conecta Grafana
+# con ntfy (docker-swarm/stacks/ntfy/), desplegado detrás de Traefik en
+# ntfy.404labo.net. El topic "homelab-alerts" está protegido con
+# NTFY_AUTH_DEFAULT_ACCESS=deny-all -- hace falta un usuario/token real con
+# permiso de escritura sobre ese topic (ver docs/34-ntfy-notificaciones.md,
+# sección "Alta del usuario y los tokens") antes de que este contact point
+# entregue nada.
+#
+# AUTH -- error real encontrado al probarlo en vivo con el botón "Test" de
+# Grafana (2026-09-01): los tokens de ntfy (`tk_...`) SOLO funcionan como
+# `Authorization: Bearer <token>` -- probarlo como contraseña de HTTP Basic
+# Auth (`username: grafana` / `password: <token>`, la primera versión de
+# este fichero) da `401 Unauthorized` de verdad (confirmado con curl contra
+# la instancia real, no una suposición). Grafana 10.4.2 sí trae un campo
+# dedicado para esto -- "Authorization Header - Scheme"/"-Credentials"
+# (`authorization_scheme`/`authorization_credentials` en el YAML,
+# confirmado leyendo el schema real del notifier webhook en
+# github.com/grafana/alerting, campos "New in 9.1" -- disponibles bastante
+# antes de esta versión) -- mutuamente excluyente con `username`/`password`.
+# Verificado end-to-end tras el cambio: "Test" en la UI de Grafana entrega
+# la notificación de verdad.
+#
+# IMPORTANTE (verificado contra la documentación real de ambos proyectos,
+# no asumido): el "publish as JSON" de ntfy (title/message/priority
+# extraídos del body) SOLO funciona posteando al endpoint raíz con un
+# campo "topic" dentro del JSON (docs.ntfy.sh/publish/#publish-as-json) --
+# NO postear directamente a `/<topic>` con Content-Type: application/json.
+# El webhook nativo de Grafana manda siempre su propio JSON de esquema
+# fijo (receiver/status/alerts/...), sin ningún campo "topic" que Grafana
+# pueda rellenar sin la función "Custom Payload" (confirmado en vivo que
+# NO existe en esta versión 10.4.2 -- UI real revisada campo a campo, "New
+# in 12.0" según el schema del notifier). Por eso este contact point postea
+# directamente al topic (`settings.url` con el topic en la ruta): ntfy lo
+# trata como una publicación normal, el body entero (el JSON crudo de
+# Grafana) se convierte en el texto del mensaje -- funcional (llega el
+# aviso, con toda la información dentro, confirmado con el botón "Test"),
+# pero no tan legible como un title/message limpios. Los campos
+# `title`/`message` SÍ existen en esta versión (confirmado en la UI,
+# disponibles desde 9.3) pero no cambian nada aquí -- solo afectan al JSON
+# que Grafana genera, y ntfy ignora ese JSON igualmente al no postear a la
+# raíz. Ver docs/34-ntfy-notificaciones.md, sección "Conectado como contact
+# point de Grafana", para la limitación y la idea de un relé por n8n si el
+# formato crudo resulta molesto en el uso real.
+#
+# `authorization_credentials: CHANGE_ME_NTFY_TOKEN` -- placeholder a
+# propósito, mismo criterio que los .env.example del resto del repo (nunca
+# un secreto real en git). Sustituir por el token real SOLO en la copia
+# desplegada (/srv/homelab/pi-obs/config/grafana/alerting/ntfy-contactpoint.yml),
+# no en este fichero versionado.
+contactPoints:
+  - orgId: 1
+    name: ntfy-cluster-alerts
+    receivers:
+      - uid: ntfy-cluster-alerts
+        type: webhook
+        settings:
+          url: https://ntfy.404labo.net/homelab-alerts
+          httpMethod: POST
+          authorization_scheme: Bearer
+          authorization_credentials: CHANGE_ME_NTFY_TOKEN
+        disableResolveMessage: false

@@ -55,6 +55,7 @@ el servicio "viva" ahí.
 | open-terminal.404labo.net   | retaco.404labo.net     | 8005            |
 | infisical.404labo.net       | retaco.404labo.net     | 8006            |
 | authentik.404labo.net       | retaco.404labo.net     | 9000            |
+| ntfy.404labo.net            | retaco/pinchi (`role=stateful`, sin nodo fijo) | 80  |
 
 `home.404labo.net` sirve el frontend de **Capataz** (consola de estado y automatización del
 clúster) — contenedor propio (`capataz-frontend`) en `pi-utils`, junto a `capataz-api`/

@@ -64,7 +64,8 @@ HOSTS='[
   "192.168.1.175 open-terminal.404labo.net",
   "192.168.1.175 infisical.404labo.net",
   "192.168.1.175 authentik.404labo.net",
-  "192.168.1.175 markitdown.404labo.net"
+  "192.168.1.175 markitdown.404labo.net",
+  "192.168.1.175 ntfy.404labo.net"
 ]'
 
 echo "[INFO] Autenticando en ${PIHOLE_URL}..."

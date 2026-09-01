@@ -110,6 +110,12 @@ services:
       - /srv/homelab/pi-obs/config/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
       - /srv/homelab/pi-obs/config/grafana/alerting/undervoltage.yml:/etc/grafana/provisioning/alerting/undervoltage.yml:ro
       - /srv/homelab/pi-obs/config/grafana/alerting/sai-bateria.yml:/etc/grafana/provisioning/alerting/sai-bateria.yml:ro
+      # Mejora 4 (docs/22-mejoras-futuras.md): contact point + política de
+      # notificación que enruta undervoltage/SAI (category=power|hardware)
+      # hacia ntfy -- ver docker-swarm/stacks/ntfy/ y
+      # docs/34-ntfy-notificaciones.md.
+      - /srv/homelab/pi-obs/config/grafana/alerting/ntfy-contactpoint.yml:/etc/grafana/provisioning/alerting/ntfy-contactpoint.yml:ro
+      - /srv/homelab/pi-obs/config/grafana/alerting/notification-policies.yml:/etc/grafana/provisioning/alerting/notification-policies.yml:ro
       - /srv/homelab/pi-obs/config/grafana/dashboards/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
       - /srv/homelab/pi-obs/config/grafana/dashboards/json:/etc/grafana/provisioning/dashboards/json:ro
     secrets:
