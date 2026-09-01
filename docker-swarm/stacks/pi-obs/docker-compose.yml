@@ -110,6 +110,8 @@ services:
       - /srv/homelab/pi-obs/config/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
       - /srv/homelab/pi-obs/config/grafana/alerting/undervoltage.yml:/etc/grafana/provisioning/alerting/undervoltage.yml:ro
       - /srv/homelab/pi-obs/config/grafana/alerting/sai-bateria.yml:/etc/grafana/provisioning/alerting/sai-bateria.yml:ro
+      # Mejora 3 (docs/22-mejoras-futuras.md): alerta de espacio en disco.
+      - /srv/homelab/pi-obs/config/grafana/alerting/disk-space.yml:/etc/grafana/provisioning/alerting/disk-space.yml:ro
       # Mejora 4 (docs/22-mejoras-futuras.md): contact point + política de
       # notificación que enruta undervoltage/SAI (category=power|hardware)
       # hacia ntfy -- ver docker-swarm/stacks/ntfy/ y

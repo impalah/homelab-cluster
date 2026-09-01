@@ -1,0 +1,72 @@
+apiVersion: 1
+
+# Mejora 3 (docs/22-mejoras-futuras.md): alerta de espacio en disco -- mismo
+# patrón que undervoltage.yml, condición literal propuesta en la mejora
+# (`< 15%` libre). Verificado en vivo contra Prometheus antes de escribir
+# esto (no asumido): los `fstype` reales presentes en los 6 nodos son
+# `ext4` (raíz), `vfat` (`/boot/firmware` en las Pi, `/boot/efi` en
+# pi-utils/retaco/pinchi), `tmpfs` y `nfs` (`/mnt/nfs-data`, compartido por
+# 5 de los 6 nodos) -- sin `overlay`/`squashfs` que hubieran dado falsos
+# positivos constantes. Ninguno está hoy cerca del umbral (mínimo real
+# observado: ~33% libre en varias raíces, ~98% libre en el NFS
+# compartido), así que la regla no dispara nada al desplegarla.
+#
+# `nfs` incluido a propósito -- es el volumen real donde vive `registry`
+# (32G) y los datos de `epub2pdf-service`/`pdf2chunks-service`
+# (`docs/31-docker-swarm.md`), tan digno de vigilar como el disco local.
+# Efecto secundario conocido, no un bug: al ser el mismo montaje remoto
+# reportado por 5 nodos distintos, si llega a bajar del umbral disparará
+# una alerta por nodo (5 en paralelo) para el mismo problema real -- mismo
+# comportamiento que tendría cualquier métrica de un recurso compartido en
+# este esquema de labels, no se ha añadido deduplicación por no ser
+# necesaria con el volumen de alertas actual del clúster.
+#
+# `for: 5m` (a diferencia del `for: 0s` de undervoltage) -- el espacio en
+# disco es un problema que se acumula durante horas/días, no un evento
+# puntual como un corte de tensión; 5 minutos evita un aviso por un pico
+# transitorio (una descarga grande a mitad de copiar) sin retrasar de forma
+# relevante el aviso real. `interval: 1m` en vez de los 10s de
+# undervoltage/SAI, mismo motivo -- no hace falta la misma granularidad
+# para algo que cambia despacio.
+groups:
+  - orgId: 1
+    name: disk-space
+    folder: Homelab Alerts
+    interval: 1m
+    rules:
+      - uid: disk-space-low
+        title: "Espacio en disco bajo"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes) * 100
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [15]
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: "Espacio en disco bajo en {{ $labels.node }} ({{ $labels.mountpoint }})"
+          description: >-
+            El sistema de ficheros {{ $labels.mountpoint }} ({{ $labels.fstype }})
+            en {{ $labels.node }} tiene menos del 15% de espacio libre.
+            Revisar qué está creciendo (logs, backups, imágenes Docker sin
+            limpiar) antes de que se quede sin espacio de verdad.
+        labels:
+          severity: warning
+          category: disk

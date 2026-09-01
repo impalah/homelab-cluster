@@ -7,11 +7,8 @@ apiVersion: 1
 # sin SMTP configurado en el clúster -- no llega a ningún sitio hoy, mismo
 # estado que antes de esta mejora) y se añade una única ruta hija para las
 # alertas de hardware/energía (undervoltage + SAI, ver
-# pi-obs/config/grafana/alerting/undervoltage.yml y sai-bateria.yml) hacia
-# ntfy. La alerta de espacio en disco (mejora 3, todavía sin implementar)
-# ya quedará cubierta en cuanto exista, sin tocar este fichero, en cuanto
-# lleve la misma label category=disco -- o hará falta añadir otro matcher
-# aquí si se prefiere una categoría distinta.
+# pi-obs/config/grafana/alerting/undervoltage.yml y sai-bateria.yml) y la de
+# espacio en disco (mejora 3, disk-space.yml, category=disk) hacia ntfy.
 policies:
   - orgId: 1
     receiver: grafana-default-email
@@ -19,7 +16,7 @@ policies:
     routes:
       - receiver: ntfy-cluster-alerts
         object_matchers:
-          - ["category", "=~", "power|hardware"]
+          - ["category", "=~", "power|hardware|disk"]
         group_by: ["alertname"]
         group_wait: 10s
         group_interval: 5m

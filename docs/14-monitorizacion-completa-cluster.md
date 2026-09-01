@@ -88,7 +88,7 @@ Aprovisionada por `pi-obs/config/grafana/alerting/undervoltage.yml`.
 - La regla (**Alerting → Alert rules → "Homelab Alerts" → "Raspberry Pi - Undervoltage detectado"**) consulta cada 10s y pasa a **Firing** en cuanto el valor es mayor que 0 en cualquier nodo (`for: 0s`, sin gracia).
 - `ryzen` no tiene esta métrica (no es una Raspberry Pi) — la regla no evalúa nada para ese nodo.
 
-**Importante — solo de consulta, no envía avisos activos:** sin *contact point* ni política de notificación (no hay SMTP ni ningún otro canal montado). Hay que entrar manualmente a **Alerting → Alert rules** para comprobar el estado.
+**Notificación proactiva** (mejora 4, `docs/34-ntfy-notificaciones.md`): conectada a ntfy vía `pi-obs/config/grafana/alerting/notification-policies.yml` (label `category=hardware`) — llega un push, no solo hace falta entrar a **Alerting → Alert rules** para enterarse.
 
 **Limitación conocida:** los picos de baja tensión muy breves pueden no quedar capturados si Prometheus no consultó las métricas justo en ese instante — garantiza detectar el caso sostenido, no necesariamente uno puntual.
 
@@ -96,4 +96,17 @@ Aprovisionada por `pi-obs/config/grafana/alerting/undervoltage.yml`.
 curl -s 'http://192.168.1.171:9090/api/v1/query?query=node_hwmon_in_lcrit_alarm_volts' | jq .
 ```
 
-> Alerta de espacio en disco (mismo patrón, pendiente de implementar) y canal de notificación proactivo (ntfy): ver `docs/22-mejoras-futuras.md`, puntos 3 y 4.
+### Espacio en disco bajo
+
+Mejora 3 (`docs/22-mejoras-futuras.md`), aprovisionada por `pi-obs/config/grafana/alerting/disk-space.yml`.
+
+**Cómo funciona:**
+
+- Condición: `(node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes) * 100 < 15` — menos del 15% libre en cualquier sistema de ficheros real (excluye `tmpfs`/`overlay`, deja pasar `ext4`/`vfat`/`nfs`, confirmado en vivo que son los únicos `fstype` presentes en el clúster, sin ruido de `squashfs`/`overlay` por contenedor).
+- Evalúa cada 1 minuto, `for: 5m` (a diferencia de undervoltage — el espacio en disco se acumula durante horas/días, no es un evento puntual, así que tiene sentido exigir que el problema persista un rato antes de avisar).
+- Incluye `/mnt/nfs-data` (el NFS de `ketekasko`, compartido por 5 de los 6 nodos) — al ser el mismo volumen remoto reportado desde cada nodo, si baja del umbral dispara una alerta por nodo (5 en paralelo) para el mismo problema real; comportamiento esperado, no un bug.
+- Notificación proactiva por ntfy igual que undervoltage (`category=disk`).
+
+```bash
+curl -s 'http://192.168.1.171:9090/api/v1/query?query=(node_filesystem_avail_bytes%7Bfstype%21~%22tmpfs%7Coverlay%22%7D%20%2F%20node_filesystem_size_bytes)%20*%20100' | jq .
+```

@@ -38,21 +38,19 @@ Nada — se mantiene este punto en el documento solo como constancia histórica 
 
 ---
 
-## 3. Alertas de espacio en disco
+## 3. ~~Alertas de espacio en disco~~ — hecho
 
-**Prioridad: media**
+**Prioridad: media** — **completado**
 
-### Qué hay hoy
+### Qué se implementó
 
-Prometheus ya recoge `node_filesystem_avail_bytes` en los 6 nodos — sin ninguna regla de alerta sobre ello. Solo existe la de undervoltage (`docs/14-monitorizacion-completa-cluster.md`).
+`pi-obs/config/grafana/alerting/disk-space.yml`, mismo patrón que `undervoltage.yml` (`docs/14-monitorizacion-completa-cluster.md`), condición literal propuesta aquí: `(node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes) * 100 < 15`. Verificado en vivo contra Prometheus antes de escribir la regla (no asumido): los `fstype` reales en los 6 nodos son `ext4`/`vfat`/`tmpfs`/`nfs`, sin `overlay`/`squashfs` que hubieran dado falsos positivos — ninguno está hoy cerca del umbral (mínimo real observado ~33% libre en raíces, ~98% libre en el NFS compartido `/mnt/nfs-data`), así que la regla se desplegó sin disparar nada. `for: 5m` e `interval: 1m` (a diferencia del `for: 0s`/10s de undervoltage) — el espacio en disco se acumula durante horas/días, no es un evento puntual como un corte de tensión.
 
-### Qué haría falta
+Punto 3 original ("¿solo panel, o correo/ntfy?"): decidido a favor de ntfy, ya disponible tras la mejora 4 — `category: disk` añadida al matcher de `pi-obs/config/grafana/alerting/notification-policies.yml` (`power|hardware` → `power|hardware|disk`), verificado en la UI real de Grafana (**Alerting → Notification policies**) que la ruta queda provisionada y apuntando a `ntfy-cluster-alerts`, y en **Alerting → Alert rules** que la regla evalúa 17 instancias (una por combinación nodo/sistema de ficheros real) en estado `Normal`.
 
-Mismo patrón que la alerta de undervoltage:
+### Qué hay hoy (histórico, previo a la implementación)
 
-1. `pi-obs/config/grafana/alerting/disk-space.yml`, condición tipo `(node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes) * 100 < 15`.
-2. Montar en `docker-compose.yml` de `pi-obs`, `docker compose up -d --force-recreate grafana`.
-3. Decidir: ¿solo panel, o correo/ntfy? Ver punto 4.
+Prometheus ya recogía `node_filesystem_avail_bytes` en los 6 nodos — sin ninguna regla de alerta sobre ello. Solo existía la de undervoltage (`docs/14-monitorizacion-completa-cluster.md`).
 
 ### Esfuerzo estimado
 Bajo — reutiliza infraestructura y patrón existentes.
@@ -67,7 +65,7 @@ Bajo — reutiliza infraestructura y patrón existentes.
 
 **ntfy** desplegado como stack Swarm (`docker-swarm/stacks/ntfy/`, no en `pi-utils`/nginx como se planteaba originalmente — ese plan es de antes del cierre de la migración a Swarm y de la retirada de `home.arpa`, mejoras 33/39/41). Sin `node.hostname` fijo — `node.labels.role == stateful` (`retaco`/`pinchi`, destino por defecto de cualquier servicio nuevo con estado, `docs/31-docker-swarm.md`). Expuesto en `ntfy.404labo.net` vía Traefik (labels de descubrimiento en el propio stack, mismo patrón que `markitdown`), auth propia con `NTFY_AUTH_DEFAULT_ACCESS=deny-all` (sin topics públicos). Desplegado y verificado en vivo (2026-09-01) en el clúster real, no solo en el repo: healthcheck sano, DNS cargado en Pi-hole, usuario/token del topic `homelab-alerts` creados con `ntfy user`/`ntfy access`/`ntfy token`.
 
-Conectado como *contact point* de Grafana (`pi-obs/config/grafana/alerting/ntfy-contactpoint.yml` + `notification-policies.yml`): las alertas de undervoltage y del SAI (`category=power|hardware`, `docs/33-nut-sai.md`) ya enrutan hacia ntfy — la futura alerta de disco (mejora 3, todavía pendiente) quedará cubierta sola en cuanto lleve la misma label. `shared/scripts/check-image-updates.sh` también publica por ntfy si se exporta `NTFY_TOKEN` (punto 5 original, opcional, implementado). **Incidente real encontrado y corregido probándolo de verdad con el botón "Test" de Grafana**: la primera versión del contact point usaba el token de ntfy como contraseña de HTTP Basic Auth — Grafana lo provisionó sin quejarse, pero dio `401 Unauthorized` real al enviar (los tokens de ntfy solo valen como `Authorization: Bearer`); corregido usando el campo dedicado "Authorization Header" de Grafana (`authorization_scheme`/`authorization_credentials`, soportado desde la 9.1, muy anterior a la 10.4.2 de este clúster). Confirmado end-to-end tras el fix: "Test alert sent." en Grafana y la notificación real recibida en la app de ntfy.
+Conectado como *contact point* de Grafana (`pi-obs/config/grafana/alerting/ntfy-contactpoint.yml` + `notification-policies.yml`): las alertas de undervoltage, del SAI (`docs/33-nut-sai.md`) y de espacio en disco (mejora 3, cerrada el mismo día, `category` en `power|hardware|disk`) ya enrutan hacia ntfy. `shared/scripts/check-image-updates.sh` también publica por ntfy si se exporta `NTFY_TOKEN` (punto 5 original, opcional, implementado). **Incidente real encontrado y corregido probándolo de verdad con el botón "Test" de Grafana**: la primera versión del contact point usaba el token de ntfy como contraseña de HTTP Basic Auth — Grafana lo provisionó sin quejarse, pero dio `401 Unauthorized` real al enviar (los tokens de ntfy solo valen como `Authorization: Bearer`); corregido usando el campo dedicado "Authorization Header" de Grafana (`authorization_scheme`/`authorization_credentials`, soportado desde la 9.1, muy anterior a la 10.4.2 de este clúster). Confirmado end-to-end tras el fix: "Test alert sent." en Grafana y la notificación real recibida en la app de ntfy.
 
 Documentación completa (despliegue, alta de usuarios/tokens, todos los sistemas de notificación disponibles —web/PWA/apps/CLI/API HTTP para suscripción externa—, y cómo conseguir push nativo de verdad en cada plataforma —Firebase/Android, relé de sondeo/iOS, Web Push/navegador, ninguno activado todavía—, más ejemplos concretos en Python/n8n para integrarlo desde fuera del clúster): `docs/34-ntfy-notificaciones.md`.
 
@@ -198,7 +196,7 @@ Los tres scripts (`shared/scripts/registry-garbage-collect.sh`, `registry-prune-
 1. **Garbage collection**: script listo, **solo ejecución manual** (sin cron) — el propio comando exige que el registry no reciba pushes mientras corre, automatizarlo sin supervisión era más riesgo que beneficio en un clúster con pocos pushes reales.
 2. **Retención de tags**: **3 versiones antiguas por imagen** (además de `latest`) — script propio (`registry-prune-tags.sh`, vía la API HTTP del registry), también solo manual.
 3. **Copia de seguridad**: script listo (`backup-registry.sh`, mismo patrón que `backup-vaultwarden.sh`) pero **sin ejecutar todavía** — decisión explícita, las imágenes son reconstruibles desde el código fuente.
-4. **Alerta de espacio en disco**: **diferida a la mejora 3** (alertas de espacio en disco genéricas) — no tiene sentido una alerta específica de registry antes de que exista la genérica por nodo; `retaco` queda cubierto sin trabajo adicional en cuanto se aborde esa mejora.
+4. **Alerta de espacio en disco**: cubierta por la mejora 3 (`docs/14-monitorizacion-completa-cluster.md`), cerrada el mismo día — la regla genérica por nodo ya vigila `retaco` (y el resto de nodos que montan `/mnt/nfs-data`, donde vive `registry` desde el 2026-08-31) sin necesidad de una alerta específica.
 
 ### Qué hay hoy (histórico, previo a la implementación)
 
@@ -1513,12 +1511,12 @@ Bajo para comprobarlo (una prueba controlada con `curl` desde fuera de la LAN de
 |---|---|---|---|---|
 | 1 | Automatizar las copias de seguridad y copiarlas fuera de nodo | Alta | Bajo–medio | — |
 | 2 | ~~`git init` del repo + remoto~~ | Alta | — | **Completado** |
-| 3 | Alerta de espacio en disco | Media | Bajo | Reutiliza patrón de `docs/14` |
+| 3 | ~~Alerta de espacio en disco~~ | Media | Bajo | **Completado** (2026-09-01) — `docs/14-monitorizacion-completa-cluster.md`; conectada a ntfy (mejora 4) |
 | 4 | ~~ntfy (notificaciones proactivas)~~ | Media | Medio | **Completado** (2026-09-01) — `docs/34-ntfy-notificaciones.md`; stack Swarm desplegado y verificado en vivo, conectado como contact point de Grafana |
 | 5 | ~~Integración NUT del SAI existente~~ | Media | Medio | **Completado** (2026-09-01) — `docs/33-nut-sai.md`; SAI conectado a `pi-obs` (no a `ryzen`), aviso proactivo ya conectado vía la mejora 4 (ntfy) |
 | 6 | Migrar tooling de mantenimiento a Ansible | Media | Medio-alto | Punto 2 (ya cumplido) |
 | 7 | Forgejo (repos + CI + artefactos), con GitHub como espejo | Media | Alto | Punto 2 (ya cumplido); esfuerzo separado, después de que la mejora 33 (Swarm) esté completa y el DNS resuelto |
-| 8 | ~~Registry: limpieza y garbage collection~~ | Media | Bajo | **Implementado (uso manual)** — `docs/29-registry-mantenimiento.md`; alerta de disco diferida a la mejora 3 |
+| 8 | ~~Registry: limpieza y garbage collection~~ | Media | Bajo | **Implementado (uso manual)** — `docs/29-registry-mantenimiento.md`; alerta de disco cubierta por la mejora 3 (ya completada) |
 | 9 | Tailscale: política de ACL | Baja | Bajo-medio | Tailscale ya desplegado (`docs/18`) |
 | 10 | ~~NAS UGREEN: migrar `nfs-data` a NFSv4~~ — completada | Baja | — | Investigado en real: UGOS Pro revierte `/etc/exports` solo, sin tocar la GUI — inviable. NFSv3 definitivo (`docs/21`) |
 | 11 | k6 para pruebas de carga automatizadas | Media | Bajo-medio | Prometheus/Grafana ya desplegados (`docs/08`) |
