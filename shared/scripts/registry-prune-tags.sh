@@ -125,5 +125,5 @@ if [ "${MODE}" = "--dry-run" ]; then
   echo "         REGISTRY_USER=... REGISTRY_PASSWORD=... bash registry-prune-tags.sh --apply ${KEEP}"
 else
   echo "[OK] ${TOTAL_PRUNED} tag(s) podados. Los blobs siguen en disco hasta ejecutar:"
-  echo "       bash registry-garbage-collect.sh retaco registry --apply"
+  echo "       bash registry-garbage-collect.sh --apply"
 fi

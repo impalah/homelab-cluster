@@ -440,7 +440,7 @@ Los documentos de `docs/` están numerados siguiendo el orden real en que hay qu
 | 26 | `docs/26-infisical-secretos.md` | Infisical (`retaco`): gestor de secretos para consumo entre máquinas — Postgres dedicado, Valkey reutilizado, `apikey-service` migrado como piloto. Decisiones formales en `docs/adr/` (0001: mecanismo de inyección; 0002: Postgres dedicado) |
 | 27 | `docs/27-authentik-sso.md` | Authentik (`retaco`): SSO/authn para personas — Postgres compartido con `postgres-main`, sin Redis, secretos vía Infisical desde el arranque. `prometheus.home.arpa` protegido con forward-auth como piloto |
 | 28 | `docs/28-capataz-consola-automatizacion.md` | Capataz (`pi-utils`): consola de estado y automatización del clúster, sustituye al panel estático de `index.home.arpa`. Login real con Authentik, frontend en contenedor propio |
-| 29 | `docs/29-registry-mantenimiento.md` | Mantenimiento de `registry.home.arpa`: limpieza y garbage collection de imágenes |
+| 29 | `docs/29-registry-mantenimiento.md` | Mantenimiento de `registry.404labo.net`: limpieza y garbage collection de imágenes, scripts reescritos para el registry como stack Swarm (2026-09-01) |
 | 30 | `docs/30-instalacion-pinchi.md` | Instalación de `pinchi` (nodo nuevo, 192.168.1.175): sistema base, usuario `u-forge`, Docker listo para Swarm sin inicializar todavía |
 | 31 | `docs/31-docker-swarm.md` | Migración completa a Docker Swarm (mejora 33): diseño, hoja de ruta por fases, incidentes reales, y el cierre conjunto con la retirada de `home.arpa` (mejora 41) |
 | 32 | `docs/32-manual-operaciones-swarm.md` | Manual de operaciones del día a día en Swarm (desplegar/parar/logs/secrets...), por CLI y paso a paso en Portainer, con capturas reales |
