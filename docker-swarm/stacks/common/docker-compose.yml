@@ -23,6 +23,26 @@
 # check-image-updates.sh) -- en pi-obs se deja como symlink al directorio
 # real para no tocar ese script; en el resto de nodos es un directorio vacío
 # nuevo (colector sin datos todavía, pero ya preparado para la mejora 36).
+#
+# ⚠️ BUG REAL encontrado y corregido (2026-09-01, verificando la mejora 36 en
+# vivo): los `ports:` de abajo estaban en sintaxis corta ("9100:9100" /
+# "8081:8080"), que en Swarm publica en `mode: ingress` POR DEFECTO -- una
+# petición a `<ip-de-un-nodo>:9100` puede reenviarla la malla de rutado a
+# node-exporter de OTRO nodo cualquiera de los 5, no necesariamente al de esa
+# IP. Confirmado de forma inequívoca comparando, vía `docker exec` (sin red
+# de por medio), el valor real de `node_apt_security_updates_pending` en
+# `pi-utils` (0) contra lo que Prometheus veía etiquetado como
+# `node="pi-utils"` (21, que en realidad era el valor real de `retaco`).
+# Afecta potencialmente a la atribución de nodo de TODAS las métricas de
+# node-exporter/cadvisor en estos 5 nodos desde la migración a Swarm, no
+# solo a la mejora 36 -- pasó desapercibido hasta ahora porque la mayoría de
+# métricas ya vigiladas (undervoltage, tamaños de disco) coinciden a menudo
+# entre nodos por casualidad, y una métrica con valores realmente distintos
+# por nodo lo hizo evidente. Corregido a `mode: host` (publica el puerto
+# directamente en la interfaz de red de CADA nodo, sin pasar por la malla)
+# -- el patrón oficialmente recomendado por Prometheus para node-exporter en
+# Swarm. Sin downside identificado: `pi-obs/config/prometheus.yml` ya
+# apunta a la IP fija de cada nodo, nunca dependió de la malla a propósito.
 version: "3.8"
 
 services:
@@ -40,7 +60,9 @@ services:
       - /:/rootfs:ro
       - /srv/homelab/node-exporter-textfile:/host/textfile:ro
     ports:
-      - "9100:9100"
+      - target: 9100
+        published: 9100
+        mode: host
     networks:
       - common-net
     pid: host
@@ -63,7 +85,9 @@ services:
       - /var/lib/docker/:/var/lib/docker:ro
       - /dev/disk/:/dev/disk:ro
     ports:
-      - "8081:8080"
+      - target: 8080
+        published: 8081
+        mode: host
     networks:
       - common-net
     privileged: true

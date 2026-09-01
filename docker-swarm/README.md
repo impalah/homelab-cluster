@@ -22,7 +22,9 @@ docker-swarm/
 │   ├── synthetic-db/            ← PoC de un solo nodo en pinchi, datos sintéticos
 │   └── common-services-check/   ← PoC de compatibilidad node-exporter/cadvisor con Swarm
 └── stacks/
-    ├── common/          ← node-exporter/cadvisor, mode: global (Fase 1, completada)
+    ├── common/          ← node-exporter/cadvisor, mode: global (Fase 1, completada); puertos en
+    │                        mode: host desde el 2026-09-01 (docs/31, incidente real de mode: ingress
+    │                        mezclando métricas entre nodos, encontrado implementando la mejora 36)
     ├── portainer/       ← agent-stack.yml oficial (agente, mode: global) (Fase 1, completada) —
     │                        no confundir con portainer-server/ más abajo (el servidor, Fase 4)
     ├── markitdown/      ← primer servicio de aplicación real, sin constraints (Fase 2, completada)

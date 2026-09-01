@@ -45,10 +45,18 @@ services:
       - "--path.rootfs=/rootfs"
       - "--path.sysfs=/host/sys"
       - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+      - "--collector.textfile.directory=/host/textfile"
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /:/rootfs:ro
+      # Mejora 36 (docs/22-mejoras-futuras.md): textfile collector -- mismo
+      # directorio uniforme que los 5 nodos Swarm (docker-swarm/stacks/common/),
+      # para que shared/scripts/check-os-updates.sh escriba aquí su métrica de
+      # parcheo pendiente/reinicio pendiente. ryzen no tenía el flag ni el
+      # bind-mount todavía -- confirmado real al auditar los 6 nodos para esta
+      # mejora, no asumido.
+      - /srv/homelab/node-exporter-textfile:/host/textfile:ro
     ports:
       - "9100:9100"
     networks:

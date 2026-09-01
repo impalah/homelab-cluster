@@ -2,7 +2,7 @@
   "id": null,
   "uid": "homelab-actualizaciones-pendientes",
   "title": "Actualizaciones pendientes",
-  "description": "Contenedores del clúster que NO se auto-actualizan (sin la label de Watchtower) y si el registro tiene una imagen más reciente para el mismo tag. Datos de shared/scripts/check-image-updates.sh (cron diario en pi-obs) — ver docs/16-mantenimiento-actualizaciones.md.",
+  "description": "Contenedores del clúster que NO se auto-actualizan (sin la label de Watchtower) y si el registro tiene una imagen más reciente para el mismo tag (shared/scripts/check-image-updates.sh, cron diario en pi-obs), más el estado de parcheo del sistema operativo por nodo (shared/scripts/check-os-updates.sh, cron local en cada nodo, mejora 36) — ver docs/16-mantenimiento-actualizaciones.md.",
   "tags": ["homelab", "mantenimiento"],
   "timezone": "browser",
   "schemaVersion": 39,
@@ -110,6 +110,154 @@
             "properties": [
               { "id": "custom.cellOptions", "value": { "type": "color-background" } },
               { "id": "custom.width", "value": 220 }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": { "show": false }
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Nodos con reinicio pendiente",
+      "description": "Mejora 36 — shared/scripts/check-os-updates.sh, cron local en cada nodo.",
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(node_reboot_required)",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          },
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 4,
+      "type": "table",
+      "title": "Parcheo del sistema operativo por nodo",
+      "description": "Mejora 36 — shared/scripts/check-os-updates.sh. node_apt_security_updates_pending cuenta paquetes -security con apt list --upgradable; node_reboot_required refleja /var/run/reboot-required.",
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 26 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "node_apt_security_updates_pending",
+          "instant": true,
+          "format": "table",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "node_reboot_required",
+          "instant": true,
+          "format": "table",
+          "refId": "B"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "node",
+            "mode": "outer"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time 1": true,
+              "Time 2": true,
+              "__name__ 1": true,
+              "__name__ 2": true,
+              "instance 1": true,
+              "instance 2": true,
+              "job 1": true,
+              "job 2": true
+            },
+            "indexByName": {},
+            "renameByName": {
+              "node": "Nodo",
+              "Value #A": "Actualizaciones de seguridad pendientes",
+              "Value #B": "Reinicio pendiente"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": {},
+            "sort": [{ "field": "Actualizaciones de seguridad pendientes", "desc": true }]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "align": "left", "cellOptions": { "type": "auto" } },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Reinicio pendiente" },
+            "properties": [
+              { "id": "custom.cellOptions", "value": { "type": "color-background" } },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": { "text": "No", "color": "green" },
+                      "1": { "text": "Sí", "color": "red" }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Actualizaciones de seguridad pendientes" },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "orange", "value": 1 },
+                    { "color": "red", "value": 20 }
+                  ]
+                }
+              },
+              { "id": "custom.cellOptions", "value": { "type": "color-background" } }
             ]
           }
         ]

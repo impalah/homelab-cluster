@@ -48,6 +48,18 @@ declare -A TARGETS=(
   [pi-obs]="local"
   [pi-sonar]="u-sonar@192.168.1.172"
   [pi-utils]="u-utils@192.168.1.173"
+  # Mejora 36, punto 5 (docs/22-mejoras-futuras.md): "continuación en Swarm"
+  # -- pinchi faltaba aquí desde que se incorporó al clúster (mejora 30,
+  # posterior a este script), así que cualquier tarea Swarm que aterrizara
+  # ahí (registry, ntfy...) quedaba invisible a esta vigilancia. Encontrado
+  # real al auditar los 7 nodos para esta mejora, no asumido. PENDIENTE:
+  # la clave SSH de pi-obs ("pi-obs-cluster-admin") todavía no está
+  # autorizada en pinchi (u-forge) -- el bucle de abajo lo trata como
+  # "nodo inalcanzable" (WARN, sin romper el resto) hasta que se autorice
+  # a mano; es una acción de seguridad (tocar authorized_keys en un nodo
+  # remoto) que se ha dejado fuera de este cambio a propósito, pendiente
+  # de confirmación explícita del usuario.
+  [pinchi]="u-forge@192.168.1.175"
 )
 
 # Script que se ejecuta EN cada nodo remoto: lista, para cada contenedor sin

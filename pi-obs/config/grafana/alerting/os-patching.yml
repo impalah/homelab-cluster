@@ -1,0 +1,154 @@
+apiVersion: 1
+
+# Mejora 36 (docs/22-mejoras-futuras.md): vigilancia y alertas del estado de
+# parcheo del sistema operativo -- mismo patrón que undervoltage.yml/
+# disk-space.yml, sobre las métricas que escribe
+# shared/scripts/check-os-updates.sh (cron local en cada nodo, textfile
+# collector de node-exporter).
+#
+# Tres reglas, no dos, para separar el caso de pi-dns (punto 4 de la
+# mejora: "cualquier alerta de reinicio pendiente en pi-dns merece más
+# visibilidad que en el resto" -- único punto de fallo del DNS de la LAN)
+# sin duplicar la alerta genérica para el resto de nodos: la regla general
+# de reinicio pendiente EXCLUYE pi-dns (`node!="pi-dns"`) y una regla
+# aparte, con severidad `critical` y una ventana `for` más corta, cubre
+# solo pi-dns. Ninguna de las dos reinicia nada -- solo avisa, mismo
+# principio ya fijado en docs/16-mantenimiento-actualizaciones.md
+# ("ningún nodo se reinicia solo").
+#
+# `for: 3d` en las reglas no urgentes -- el estado de parcheo se acumula
+# durante días, no es un evento puntual (mismo criterio que disk-space.yml);
+# 3 días da margen de sobra a que unattended-upgrades/el cron de este
+# mismo script hagan su trabajo normal sin generar ruido por una ejecución
+# puntual con timing raro. La de pi-dns usa `for: 1d` -- se prefiere saberlo
+# antes para el único nodo que es de verdad un punto único de fallo.
+#
+# Umbral de 20 actualizaciones de seguridad acumuladas: unattended-upgrades
+# corre a diario (docs/16) y solo instala parches `-security`, así que un
+# número que se mantiene alto varios días indica que algo está realmente
+# atascado (el timer parado, un paquete retenido, un fallo silencioso),
+# no el ritmo normal de publicación de parches -- confirmado en vivo
+# (2026-09-01) que un nodo sano típico está en el entorno de 20 antes de
+# la siguiente pasada, así que el umbral se fija por encima de ese ruido de
+# fondo en vez de a 0.
+groups:
+  - orgId: 1
+    name: os-patching
+    folder: Homelab Alerts
+    interval: 1h
+    rules:
+      - uid: os-reboot-required
+        title: "Reinicio pendiente tras parche del sistema"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: node_reboot_required{node!="pi-dns"}
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+        noDataState: OK
+        execErrState: Error
+        for: 3d
+        annotations:
+          summary: "{{ $labels.node }} tiene un reinicio pendiente"
+          description: >-
+            /var/run/reboot-required existe en {{ $labels.node }} desde hace
+            al menos 3 días -- probablemente un parche de kernel de
+            unattended-upgrades. Ningún nodo se reinicia solo
+            (docs/16-mantenimiento-actualizaciones.md); coordinar un
+            reinicio manual cuando convenga.
+        labels:
+          severity: warning
+          category: os
+
+      - uid: os-reboot-required-pi-dns
+        title: "Reinicio pendiente en pi-dns (punto único de fallo del DNS)"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: node_reboot_required{node="pi-dns"}
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+        noDataState: OK
+        execErrState: Error
+        for: 1d
+        annotations:
+          summary: "pi-dns tiene un reinicio pendiente -- único punto de fallo del DNS de la LAN"
+          description: >-
+            /var/run/reboot-required existe en pi-dns desde hace al menos
+            1 día. Coordinar el reinicio con cuidado
+            (docs/13-troubleshooting.md) -- pi-dns es el único servidor DNS
+            de toda la LAN y el subnet router de Tailscale
+            (docs/18-tailscale.md). Sigue sin reiniciarse solo.
+        labels:
+          severity: critical
+          category: os
+
+      - uid: os-security-updates-pending
+        title: "Actualizaciones de seguridad acumuladas"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: node_apt_security_updates_pending
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [20]
+        noDataState: OK
+        execErrState: Error
+        for: 3d
+        annotations:
+          summary: "{{ $labels.node }} lleva días acumulando actualizaciones de seguridad"
+          description: >-
+            {{ $labels.node }} tiene más de 20 paquetes con actualización de
+            seguridad pendiente, sostenido varios días -- unattended-upgrades
+            corre a diario, así que esto probablemente significa que el
+            timer está parado o algo bloquea la instalación, no el ritmo
+            normal de publicación de parches. Revisar
+            /var/log/unattended-upgrades/unattended-upgrades.log
+            (docs/16-mantenimiento-actualizaciones.md).
+        labels:
+          severity: warning
+          category: os
