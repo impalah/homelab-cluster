@@ -1505,6 +1505,88 @@ Bajo para comprobarlo (una prueba controlada con `curl` desde fuera de la LAN de
 
 ---
 
+## 47. Volúmenes Docker `type: nfs` en vez de montaje NFS manual por nodo — evaluar caso por caso
+
+**Prioridad: baja** (mejora de mecanismo de despliegue, ningún servicio está bloqueado hoy por el montaje manual)
+
+### Qué hay hoy
+
+La mejora 43 (cerrada 2026-08-31) auditó todos los bind-mounts del clúster y confirmó que **ningún stack de Swarm usa un volumen Docker gestionado** (`driver: local` o cualquier otro) — el 100% del estado real se sirve con bind-mounts de host. Para los tres servicios que ya usan almacenamiento respaldado por NFS (`registry`, `epub2pdf-service`, `pdf2chunks-service`), el mecanismo real es un montaje NFS a nivel de sistema operativo configurado a mano en el nodo (hoy solo en `retaco`) más un bind-mount de un subdirectorio de ese montaje — no un volumen Docker con `driver_opts: type=nfs`. Es la razón real por la que esos tres siguen con `constraints: node.hostname==retaco`: no por bloqueo de datos (el dato ya vive en el NAS, fuera de cualquier disco local), sino porque solo `retaco` tiene el montaje NFS preparado a mano.
+
+Docker soporta de forma nativa (desde 17.06, sin plugin externo) declarar un volumen con `driver: local` y `driver_opts: type: nfs`, que logra el mismo resultado pero gestionado por el propio daemon de cada nodo: monta el export la primera vez que una tarea con ese volumen aterriza ahí, de forma perezosa y por nodo, sin necesidad de configurar nada a mano de antemano en cada uno de los 5 managers.
+
+### Qué haría falta
+
+1. **Candidatos claros, sin riesgo de escritura concurrente real**: `registry` (blobs inmutables por hash de contenido), `epub2pdf-service` y `pdf2chunks-service` (ficheros de entrada/salida de conversión, sin bloqueo real). Para estos tres, sustituir el bind-mount + montaje manual por un volumen `type: nfs` permitiría además **retirar su `constraints: node.hostname==retaco`** y dejarlos flotar libremente entre los 5 managers — beneficio real y de bajo riesgo.
+2. **Verificar en vivo antes de generalizar nada**: que los `driver_opts` (dirección del NAS, versión NFS, opciones de montaje) sean consistentes entre nodos, y que los 5 managers tengan de verdad conectividad de red hacia `ketekasko` (hoy solo confirmada desde `retaco`).
+3. **Evaluar cada candidato adicional caso por caso — no aplicar el cambio en bloque a todos los servicios con estado.** En concreto, **`postgres-main`/`qdrant` quedan explícitamente fuera de esta mejora** salvo que se resuelva antes un mecanismo de *fencing*: a diferencia de `registry`/`epub2pdf-service`/`pdf2chunks-service`, son bases de datos de un solo escritor donde permitir que floten libremente introduce un riesgo que hoy NO existe — al estar pinnadas, es estructuralmente imposible que dos instancias escriban a la vez. Si Swarm reprograma la tarea por un fallo de heartbeat mientras el nodo viejo sigue realmente vivo (una partición de red, no un apagado real como el de `pi-sonar` esta semana), NFS no impide por sí solo que ambas instancias escriban a la vez sobre los mismos ficheros — sin *fencing*, sería un escenario real de corrupción, no solo de disponibilidad.
+4. Si el resultado con los tres candidatos iniciales es positivo, documentar el patrón (`driver_opts` reales, comprobaciones hechas) para que sirva de referencia al evaluar el resto de servicios con estado uno a uno — nunca como una migración automática a todos ellos.
+
+### Esfuerzo estimado
+Bajo para los tres candidatos iniciales (mecanismo ya probado conceptualmente, NAS y NFSv3 ya funcionando en el clúster). Evaluar cada servicio adicional caso por caso mantiene el esfuerzo total en medio — la parte cara no es la mecánica del volumen, sino decidir, servicio a servicio, si su patrón de escritura lo hace seguro.
+
+---
+
+## 48. Cockpit + libvirt en `ryzen` — gestión de máquinas virtuales, arranque/parada por Ansible
+
+**Prioridad: baja-media**
+
+### Qué hay hoy
+
+No existe ninguna infraestructura de máquinas virtuales en el clúster — todo es Docker (Swarm o Compose clásico). `ryzen`/`mole` es el único candidato real como host: es la máquina con más recursos (62 GiB RAM, 24 núcleos, dos GPUs, `docs/07-instalacion-ryzen.md`), la única con arquitectura x86_64 completa, y ya queda deliberadamente fuera del Swarm (mejora 37, cerrada) como nodo Compose independiente. Tiene acceso SSH ya activo, pero con alcance estrecho: `openssh-server` se instaló específicamente para que `pi-obs` pudiera ejecutar `check-image-updates.sh` por SSH con una clave dedicada (`pi-obs-cluster-admin`, `docs/16-mantenimiento-actualizaciones.md`), no como acceso administrativo general. `ryzen` es además el único nodo que se apaga cuando no se usa, con Wake-on-LAN ya operativo (`shared/scripts/wake-mole.sh`, `docs/19-wake-on-lan.md`).
+
+### Qué se busca
+
+1. **Cockpit**, con el módulo `cockpit-machines`, instalado en `ryzen` y desplegado de forma remota (sin necesidad de acceso físico a la máquina) — panel web para gestionar las VMs.
+2. **Acceso SSH a `ryzen`** más allá del uso puntual ya existente, para poder gestionar las máquinas virtuales de forma remota (CLI/`virsh`, o como paso previo a la automatización con Ansible).
+3. **Arranque y parada de máquinas virtuales mediante Ansible.**
+4. **`libvirt`** (`libvirtd` + `qemu-kvm` + `virsh`) como capa de gestión de las VMs — la pila estándar sobre la que trabaja también `cockpit-machines`.
+
+### Qué haría falta
+
+1. **Confirmar soporte de virtualización en `ryzen`** (VT-x/AMD-V activo en BIOS, `kvm-ok` o equivalente) — no verificado todavía; dato de partida obligatorio antes de instalar nada.
+2. **Cockpit rompe el patrón habitual de este repo.** Todo lo demás se despliega como contenedor (Swarm o Compose); Cockpit, en cambio, se instala normalmente como paquete nativo del sistema (systemd, acceso directo a `libvirtd`, interfaces de red, dispositivos de bloque) — meterlo en un contenedor complica innecesariamente el acceso a esos recursos del host sin aportar nada. Documentar explícitamente esta excepción al criterio "todo containerizado" cuando se aborde.
+3. **Decidir cómo se expone el panel de Cockpit** (puerto 9090, TLS propio): dado que da control total del host y de las VMs, el criterio de este clúster para superficies igual de sensibles ha sido Tailscale/LAN solamente, no público vía Traefik+`404labo.net` (mismo razonamiento ya aplicado a Pi-hole, mejora 41) — a confirmar, no asumir sin decidirlo explícitamente.
+4. **Modelo de acceso SSH a `ryzen`.** Los otros 5 nodos siguen el patrón "un usuario dedicado sin privilegios compartidos por nodo" (`CLAUDE.md`, tabla de acceso SSH) — `ryzen` no tiene ese patrón hoy porque se usa normalmente en local. Decidir si el acceso remoto para VMs/Ansible reutiliza la clave estrecha ya existente (`pi-obs-cluster-admin`, hoy con un propósito muy distinto) o si hace falta un usuario/clave dedicados, siguiendo el mismo criterio de aislamiento que el resto del clúster.
+5. **Red de las VMs**: bridge de red en el host (para que las VMs tengan IP real en la LAN) frente a NAT — si se opta por bridge, hace falta un plan de IPs coherente con `docs/02-plan-ip-y-dns.md` (IPs fijas ya asignadas a los 7 nodos existentes).
+6. **Almacenamiento de los discos de VM**: local en `ryzen` es lo razonable por defecto (no hace falta que floten entre nodos, a diferencia de la discusión de la mejora 47) — confirmar espacio disponible antes de comprometerse.
+7. **Arranque/parada por Ansible depende de la mejora 6** (migración del tooling a Ansible, no iniciada) — o, alternativamente, se podría escribir un playbook autocontenido solo para el ciclo de vida de las VMs sin esperar a la migración completa; a decidir cuál de las dos rutas compensa más cuando se aborde.
+8. **`ryzen` se apaga cuando no se usa** (único nodo así, `docs/19-wake-on-lan.md`) — cualquier automatización de arranque/parada de VMs por Ansible necesita contemplar que el host puede estar dormido, y encadenar `wake-mole.sh` como paso previo si hace falta.
+9. **Copias de seguridad**: los discos de VM son estado nuevo que respaldar, mismo criterio que el resto de servicios con estado (mejora 1) — no asumir que quedan cubiertos por algo ya existente.
+10. **Fuera de alcance por ahora, anotado por si aparece más adelante**: `ryzen` ya reparte sus dos GPUs entre pares de servicios Docker que nunca deben coincidir (`switch-llm-backend.sh`/`switch-gpu1-backend.sh`, `docs/07`) — si en algún momento se quisiera pasar una GPU completa a una VM (passthrough), chocaría con ese esquema de alternancia y necesitaría diseñarse aparte; no forma parte de esta mejora tal como se ha pedido.
+
+### Esfuerzo estimado
+Medio-alto — la instalación de Cockpit/libvirt en sí es mecánica, pero hay varias decisiones reales de arquitectura antes (exposición del panel, modelo de acceso SSH, red de las VMs) y una dependencia parcial de la mejora 6 (Ansible) para la parte de automatización.
+
+---
+
+## 49. k3s en `ryzen`, sobre máquinas virtuales — clúster Kubernetes aislado para aprendizaje/experimentación
+
+**Prioridad: baja**
+
+### Qué hay hoy
+
+`CLAUDE.md` fija como decisión de arquitectura explícita de todo este repo: el clúster está orquestado con **Docker Swarm, "explícitamente no Kubernetes"** (mejora 33/39, cerrada 2026-08-27). Esta mejora **no es una reconsideración de esa decisión** — el propio planteamiento del usuario ("usar las máquinas virtuales como nodos separados") lo deja claro: un clúster k3s aislado, corriendo dentro de VMs en `ryzen`, sin tocar ni sustituir ningún stack real de `docker-swarm/stacks/`. Vale la pena dejarlo dicho explícitamente aquí para que no se confunda con una migración cuando se retome: es un entorno paralelo de aprendizaje/experimentación, no una alternativa de producción.
+
+### Dependencia dura con la mejora 48
+
+"Usar las máquinas virtuales como nodos separados" exige que exista la infraestructura de VMs primero — **esta mejora no puede empezar antes de que la mejora 48 (Cockpit + libvirt en `ryzen`) esté al menos parcialmente resuelta.** No tiene sentido secuenciarla antes.
+
+### Qué haría falta
+
+1. **Número de nodos y reparto de recursos**: k3s admite 1 server + N agents — incluso un clúster mínimo de 3 nodos (1 server + 2 agents) ya permite practicar escenarios multi-nodo reales. Cada VM compite por la misma RAM/CPU de `ryzen` (62 GiB / 24 núcleos, mejora 30) que ya reparten los servicios Docker existentes (Ollama/vLLM/whisper/ComfyUI) — dimensionar dejando margen real, no solo lo que sobre en el momento de medir.
+2. **Red aislada de las VMs** (mismo punto abierto que la mejora 48, punto 5): decidir si los nodos k3s llevan IP real de LAN (bridge) o quedan en una red NAT interna sin salir a la LAN salvo lo estrictamente necesario — para un entorno de aprendizaje, NAT interno es probablemente suficiente y evita ocupar IPs fijas del plan existente (`docs/02-plan-ip-y-dns.md`).
+3. **Aislamiento del resto del clúster real**: mismo criterio que ya separa "Compose clásico" de "Swarm" en este repo (`CLAUDE.md`, sección de arquitectura — sin red Docker compartida entre los dos mundos, todo por LAN real si hace falta) — este tercer mundo (k3s) debería quedar igual de aislado, sin compartir red con `docker-swarm/stacks/` ni con las redes bridge de los nodos Compose.
+4. **Registry privado ya reutilizable tal cual**: `registry.404labo.net` no es específico de Docker Swarm — cualquier `containerd` (el runtime de k3s) puede tirar de ahí sin montar un registro nuevo. Ojo con el mismo tipo de problema ya visto dos veces en este repo (`docs/31-docker-swarm.md`, incidente de CAs): si la imagen base de los nodos k3s no trae el almacén de CAs del sistema con el certificado de `404labo.net` ya confiado, el pull fallará con el mismo `x509: certificate signed by unknown authority` — comprobarlo desde el principio en vez de redescubrirlo.
+5. **Aprovisionamiento**: instalación estándar vía `curl -sfL https://get.k3s.io | sh -` en el server y `K3S_URL`/`K3S_TOKEN` en los agents — encaja de forma natural como playbook de Ansible (sinergia real con la mejora 6 y con el punto 7 de la mejora 48, aunque ninguna de las dos esté hecha todavía) en vez de aprovisionar cada VM a mano.
+6. **GPU, fuera de alcance salvo que se pida explícitamente**: mismo punto abierto que la mejora 48 (punto 10) — si algún día un workload de k3s quisiera GPU, haría falta *passthrough* real de una de las dos GPUs de `ryzen`, hoy repartidas entre servicios Docker vía `switch-llm-backend.sh`/`switch-gpu1-backend.sh`. No asumir disponibilidad sin diseñarlo aparte.
+7. **Alcance real a decidir cuando se retome**: ¿es un entorno permanente (encendido junto con `ryzen`) o efímero (se crea/destruye para practicar y no vive entre sesiones)? Cambia bastante el diseño de almacenamiento (el `local-path-provisioner` por defecto de k3s no sobrevive a borrar la VM) y si merece la pena automatizar el ciclo de vida completo con Ansible o basta con un procedimiento manual documentado.
+
+### Esfuerzo estimado
+Medio-alto, y no antes de la mejora 48 — la instalación de k3s en sí es rápida una vez hay VMs disponibles; lo que lleva tiempo es decidir el alcance real (permanente vs. efímero) y el aislamiento de red respecto al clúster de producción.
+
+---
+
 ## Resumen
 
 | # | Mejora | Prioridad | Esfuerzo | Depende de |
@@ -1555,5 +1637,8 @@ Bajo para comprobarlo (una prueba controlada con `curl` desde fuera de la LAN de
 | 44 | Pendiente de revisión — `sonarqube` se cuelga arrancando `infisical run` en `pinchi` | Media | Bajo-medio | Movido de vuelta a `pi-sonar` sin pérdida de datos; red/DNS/TLS/CA/allowlisting ya descartados como causa, falta sesión de depuración específica antes de reintentar el traslado |
 | 45 | Dashboards de Grafana por servicio | Media | Medio | Hoy solo existe `actualizaciones-pendientes.json`; datos ya disponibles (cadvisor/node-exporter/Loki para todos, `postgres-exporter` para postgres-main) sin ningún panel armado — decidir 1 dashboard por stack vs. plantilla parametrizable antes de empezar |
 | 46 | Verificar si `toggle-direct-access.sh` cierra de verdad el acceso en los 5 managers, no solo en el nodo "asignado" | Media | Bajo-medio | Ningún servicio queda ya en `mode: host` tras la revisión de constraints (2026-08-31) -- confirmado en vivo que la routing mesh responde igual desde cualquier manager; falta comprobar si `DOCKER-USER` intercepta ese tráfico reenviado o lo bypasa |
+| 47 | Volúmenes Docker `type: nfs` en vez de montaje NFS manual por nodo | Baja | Bajo-medio | NAS/NFSv3 ya funcionando (`docs/21`); candidatos claros: `registry`/`epub2pdf-service`/`pdf2chunks-service` (permitiría retirarles el `constraints`); `postgres-main`/`qdrant` explícitamente excluidos sin resolver antes el riesgo de doble escritor (*fencing*) — evaluación caso por caso, no migración en bloque |
+| 48 | Cockpit + libvirt en `ryzen` — gestión de VMs, arranque/parada por Ansible | Baja-media | Medio-alto | `ryzen` ya fuera del Swarm (mejora 37) y con Wake-on-LAN (mejora 19); acceso SSH hoy solo de alcance estrecho (`docs/16`); arranque/parada por Ansible depende de la mejora 6 (no iniciada) |
+| 49 | k3s en `ryzen` sobre VMs — clúster Kubernetes aislado para aprendizaje | Baja | Medio-alto | Depende por completo de la mejora 48 (necesita las VMs primero); entorno paralelo, no sustituye la decisión explícita de "Docker Swarm, no Kubernetes" (mejora 33/39, `CLAUDE.md`) |
 
 Ninguna de estas mejoras es urgente ni bloqueante — el clúster funciona correctamente sin ellas.
