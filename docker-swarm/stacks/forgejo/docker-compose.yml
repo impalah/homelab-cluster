@@ -1,0 +1,178 @@
+# Mejora 7 (docs/22-mejoras-futuras.md): Forgejo autoalojado, GitHub como
+# espejo. Primera ronda de implementación (2026-09-03) -- SOLO instalación
+# núcleo (web + git HTTPS/SSH), decidida explícitamente "poco a poco" con el
+# usuario. La migración de repos (7.2) y Forgejo Actions/CI (7.3) quedan
+# para rondas posteriores, sin tocar aquí.
+#
+# Nace directamente como stack Swarm -- sin legado Compose que migrar (a
+# diferencia de la mayoría de servicios con estado de la Fase 4,
+# docs/31-docker-swarm.md). Se aplica ya el patrón consolidado en la
+# mejora 47: volumen Docker `driver: local` + `driver_opts: type: nfs`
+# desde el primer despliegue, sin bind-mount transitorio ni constraint de
+# nodo -- portable entre los 5 managers desde el día uno. `vers=3`
+# obligatorio (NFSv4 roto en este NAS, ver docs/21-configuracion-nas-ugreen.md).
+#
+# Imagen ROOTLESS (`codeberg.org/forgejo/forgejo:16.0.3-rootless`), no la
+# variante root -- uid/gid 1000 fijo de fábrica, coherente con el resto del
+# clúster (n8n/SonarQube ya corren como 1000, ver CLAUDE.md "Bind-mount
+# ownership"). Directorio de datos real de esta imagen: `/var/lib/gitea`
+# (no `/data`, eso es solo la variante root) -- ahí monta el volumen NFS.
+# Directorio preparado a mano antes del primer despliegue:
+# `sudo mkdir -p /mnt/nfs-data/forgejo/data && sudo chown -R 1000:1000
+# /mnt/nfs-data/forgejo` en un manager con /mnt/nfs-data montado (retaco) --
+# un mkdir simple hereda la ACL propia de UGOS del directorio padre
+# correctamente (docs/21), pero como con cualquier otro directorio nuevo en
+# el NAS, root (vía sudo) es quien tiene que crearlo/chown-earlo la primera
+# vez.
+#
+# Base de datos: Postgres en postgres-main (retaco), rol aislado propio
+# (`create-postgres-db.sh postgres-main dbadmin forgejo forgejo`), mismo
+# patrón que n8n/SonarQube/apikey-service -- NO SQLite embebido (habría sido
+# el mismo tipo de riesgo, escritura real y frecuente, que la mejora 47
+# decidió evitar para bases de datos activas, a diferencia del SQLite
+# vestigial de n8n-aux/open-webui).
+#
+# SSH de Git en el puerto 2222 -- publicado DIRECTO (`mode: ingress`, sin
+# pasar por Traefik: SSH no es HTTP, Traefik necesitaría un entrypoint TCP
+# dedicado que no existe hoy) -- mismo mecanismo de bypass ya usado por
+# `registry` (protocolo Docker, tampoco HTTP) para su propio puerto. La
+# imagen rootless ya escucha SSH en 2222 por defecto (no puede bindear el
+# 22 privilegiado sin root) -- se fija explícito de todos modos para no
+# depender de un valor por defecto no versionado en este fichero.
+#
+# FORGEJO__database__PASSWD NO vive aquí -- se inyecta vía Infisical
+# (path /forgejo/, secreto llamado literalmente `FORGEJO__database__PASSWD`,
+# mismo mecanismo que N8N_ENCRYPTION_KEY en n8n-main) -- infisical run
+# reexporta cada secreto como variable de entorno con su mismo nombre, así
+# que el entrypoint nativo de Forgejo (que lee FORGEJO__* para generar
+# app.ini en el primer arranque) lo recoge sin cambios.
+#
+# INSTALL_LOCK=true -- evita el asistente web de instalación (todo
+# preconfigurado por variables de entorno), igual de necesario aquí que en
+# cualquier servicio expuesto a internet vía Traefik.
+#
+# Entrypoint: se antepone el login de Infisical al entrypoint NATIVO de la
+# imagen rootless (`/usr/local/bin/docker-entrypoint.sh`, que renderiza
+# app.ini desde las FORGEJO__* y luego arranca `gitea web`) en vez de
+# invocar el binario `gitea` directamente -- ese script hace el bootstrap
+# real (environment-to-ini, permisos), saltárselo rompería el primer
+# arranque.
+version: "3.8"
+
+services:
+  forgejo:
+    image: codeberg.org/forgejo/forgejo:16.0.3-rootless
+    user: "1000:1000"
+    environment:
+      FORGEJO__database__DB_TYPE: postgres
+      FORGEJO__database__HOST: postgresql.404labo.net:5432
+      FORGEJO__database__NAME: forgejo
+      FORGEJO__database__USER: forgejo
+      FORGEJO__server__DOMAIN: forgejo.404labo.net
+      FORGEJO__server__ROOT_URL: https://forgejo.404labo.net/
+      FORGEJO__server__HTTP_PORT: "3000"
+      FORGEJO__server__SSH_DOMAIN: forgejo.404labo.net
+      FORGEJO__server__SSH_PORT: "2222"
+      FORGEJO__server__SSH_LISTEN_PORT: "2222"
+      FORGEJO__security__INSTALL_LOCK: "true"
+      # Mismo hallazgo que el resto del clúster -- el binario CLI de
+      # Infisical (Go) no trae almacén de CAs del sistema, necesita
+      # SSL_CERT_FILE explícito aunque infisical.404labo.net use cert real
+      # de Let's Encrypt.
+      INFISICAL_DOMAIN: https://infisical.404labo.net/api
+      SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
+    volumes:
+      - forgejo-data:/var/lib/gitea
+      - /srv/homelab/infisical/infisical-cli/infisical:/usr/local/bin/infisical:ro
+    configs:
+      # homelab-ca-bundle-v1: compartido con el resto de stacks del
+      # clúster -- ver docker-swarm/stacks/authentik/docker-compose.yml
+      # para la explicación completa.
+      - source: homelab-ca-bundle-v1
+        target: /etc/ssl/certs/homelab-ca.crt
+    secrets:
+      - source: forgejo-infisical-client-id-v1
+        target: forgejo-infisical-client-id
+      - source: forgejo-infisical-client-secret-v1
+        target: forgejo-infisical-client-secret
+      - source: forgejo-infisical-project-id-v1
+        target: forgejo-infisical-project-id
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        CLIENT_ID=$$(cat /run/secrets/forgejo-infisical-client-id) &&
+        CLIENT_SECRET=$$(cat /run/secrets/forgejo-infisical-client-secret) &&
+        PROJECT_ID=$$(cat /run/secrets/forgejo-infisical-project-id) &&
+        TOKEN=$$(infisical login --method=universal-auth \
+          --client-id="$$CLIENT_ID" \
+          --client-secret="$$CLIENT_SECRET" \
+          --plain --silent) &&
+        exec infisical run --token="$$TOKEN" --projectId="$$PROJECT_ID" --env=prod --path=/forgejo/ -- \
+          /usr/local/bin/docker-entrypoint.sh
+    healthcheck:
+      # /api/healthz -- endpoint estándar de Forgejo/Gitea, sin auth.
+      # OJO: el JSON real lleva espacio tras los dos puntos ("status": "pass",
+      # no "status":"pass") -- un primer intento sin el espacio hizo que el
+      # healthcheck fallara siempre pese a que /api/healthz respondía bien
+      # (confirmado en vivo, 2026-09-03), y Swarm mataba/reprogramaba la
+      # tarea cada ~2-3 min (start_period + reintentos) creyéndola no sana.
+      test: ["CMD-SHELL", "wget -q --tries=1 -O - http://127.0.0.1:3000/api/healthz | grep -q '\"status\": \"pass\"' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      # Generoso -- primer arranque incluye migraciones de esquema contra
+      # Postgres, no solo el arranque normal del binario.
+      start_period: 90s
+    ports:
+      - target: 2222
+        published: 2222
+        mode: ingress
+    networks:
+      - forgejo-net
+      - traefik-public
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        mode: non-blocking
+        max-buffer-size: 4m
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.forgejo-404labo-net.rule=Host(`forgejo.404labo.net`)"
+        - "traefik.http.routers.forgejo-404labo-net.entrypoints=websecure"
+        - "traefik.http.routers.forgejo-404labo-net.tls=true"
+        - "traefik.http.routers.forgejo-404labo-net.service=forgejo"
+        - "traefik.http.services.forgejo.loadbalancer.server.port=3000"
+
+networks:
+  forgejo-net:
+    driver: overlay
+    attachable: true
+  traefik-public:
+    external: true
+    name: traefik_traefik-public
+
+configs:
+  homelab-ca-bundle-v1:
+    external: true
+
+secrets:
+  forgejo-infisical-client-id-v1:
+    external: true
+  forgejo-infisical-client-secret-v1:
+    external: true
+  forgejo-infisical-project-id-v1:
+    external: true
+
+volumes:
+  forgejo-data:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: "addr=192.168.1.180,rw,vers=3"
+      device: ":/volume1/nfs-data/forgejo/data"

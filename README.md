@@ -56,12 +56,18 @@ el servicio "viva" ahí.
 | infisical.404labo.net       | retaco.404labo.net     | 8006            |
 | authentik.404labo.net       | retaco.404labo.net     | 9000            |
 | ntfy.404labo.net            | retaco/pinchi (`role=stateful`, sin nodo fijo) | 80  |
+| forgejo.404labo.net         | cualquiera de los 5 managers (sin `constraints`) | 3000 |
 
 `home.404labo.net` sirve el frontend de **Capataz** (consola de estado y automatización del
 clúster) — contenedor propio (`capataz-frontend`) en `pi-utils`, junto a `capataz-api`/
 `capataz-runner`. `capataz-api` tiene también su propio hostname en vez de exponerse solo por
 IP:puerto — lo usa el propio `capataz-frontend` para reenviar `/api/`. Ver
 `docs/28-capataz-consola-automatizacion.md`.
+
+`forgejo.404labo.net` (mejora 7, instalación núcleo, 2026-09-03) sirve solo HTTPS — el acceso Git
+por SSH usa el puerto `2222` directo (`git@<ip-de-cualquier-manager>:2222`, no un hostname vía
+Traefik: SSH no es HTTP, sin entrypoint TCP dedicado hoy), mismo bypass ya usado por `registry`
+para su propio protocolo no-HTTP.
 
 Tres hostnames que existían bajo `home.arpa` se retiraron sin sustituto al cerrar la mejora 41
 (2026-08-28), por diseño: `pihole` (panel publicado directo en la LAN por IP:puerto,

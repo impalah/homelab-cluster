@@ -60,6 +60,7 @@ de aplicación), pero cualquier IP del Swarm serviría igual. Certificado real d
 | `infisical.404labo.net` | `192.168.1.175` | Infisical (gestor de secretos) en retaco — auth propia, no protegido con apikey-service. Ver `docs/26-infisical-secretos.md` | 8006 |
 | `authentik.404labo.net` | `192.168.1.175` | Authentik (SSO/authn para personas) en retaco — auth propia, no protegido con apikey-service. Ver `docs/27-authentik-sso.md` | 9000 |
 | `ntfy.404labo.net` | `192.168.1.175` | ntfy (mejora 4) — `node.labels.role == stateful` (retaco/pinchi, sin nodo fijo), auth propia (`NTFY_AUTH_DEFAULT_ACCESS=deny-all`), no protegido con apikey-service (los clientes ntfy no mandan `X-Api-Key`). Ver `docs/34-ntfy-notificaciones.md` | 80 |
+| `forgejo.404labo.net` | `192.168.1.175` | Forgejo (mejora 7, instalación núcleo, 2026-09-03) — sin `constraints` de nodo (volumen NFS, cualquiera de los 5 managers), auth propia, no protegido con apikey-service. Git por SSH aparte, puerto 2222 directo (no vía Traefik/DNS, protocolo no-HTTP) | 3000 |
 
 **Retirados sin sustituto de hostname** (mejora 41, cierre): `old.index.404labo.net` (panel estático
 original, superseded por Capataz, mejora 15), `apikey.404labo.net` (gestión de API keys — acceso

@@ -143,17 +143,25 @@ Medio-alto — por volumen, no por dificultad. Abordar incrementalmente.
 
 Todo el código vive en GitHub. Intención: migrar a Forgejo autoalojado como sistema principal, GitHub como espejo mientras haga falta.
 
-**Decisión de secuenciación (2026-08-24)**: se planteó abordar Forgejo como parte de la migración a Docker Swarm (mejora 33, `docs/31-docker-swarm.md`) — servicio nuevo, sin legado Compose, buena validación de bajo riesgo del patrón `constraints`+bind-mount. El usuario decidió sacarlo de esa migración explícitamente: Forgejo se aborda en su propio esfuerzo, **después** de que el clúster esté migrado a Swarm por completo y el DNS esté resuelto — no antes, no mezclado con la migración a Swarm. Sin dependencia técnica añadida hacia la mejora 33 más allá de esto.
+**Decisión de secuenciación (2026-08-24)**: se planteó abordar Forgejo como parte de la migración a Docker Swarm (mejora 33, `docs/31-docker-swarm.md`) — servicio nuevo, sin legado Compose, buena validación de bajo riesgo del patrón `constraints`+bind-mount. El usuario decidió sacarlo de esa migración explícitamente: Forgejo se aborda en su propio esfuerzo, **después** de que el clúster esté migrado a Swarm por completo y el DNS esté resuelto — no antes, no mezclado con la migración a Swarm. Sin dependencia técnica añadida hacia la mejora 33 más allá de esto. Con el Swarm cerrado (mejora 33/39) y el DNS ya en `404labo.net` (mejora 41), esta precondición está cumplida — se retoma el 2026-09-03.
 
-### Qué haría falta
+### 7.1 Instalación — primera ronda (2026-09-03), solo núcleo
 
-#### 7.1 Instalación
+Abordada explícitamente "poco a poco" (petición del usuario) — esta ronda cubre únicamente Forgejo en sí (web + git HTTPS/SSH), no la migración de repos (7.2) ni Forgejo Actions/CI (7.3), que quedan para rondas de decisión posteriores. Fichero: `docker-swarm/stacks/forgejo/docker-compose.yml`.
 
-1. Nodo: `pi-utils` (encaja por rol, pero puede pedir más recursos) o `retaco` (siempre encendido, ya multi-tenant — probablemente la opción más sensata).
-2. Base de datos: Postgres, `create-postgres-db.sh postgres-main dbadmin forgejo forgejo`, mismo patrón que n8n/SonarQube/apikeys.
-3. `forgejo.home.arpa` mediante nginx, mismo procedimiento de siempre.
-4. SSH de Forgejo en puerto alternativo (`2222`, no `22` — ya usado por el `sshd` de administración de cada nodo).
-5. Copia de seguridad del árbol de repos (`/data/git`) aparte de la base de datos.
+Decisiones tomadas (todas confirmadas por el usuario antes de tocar nada):
+
+1. **Docker Swarm desde el primer despliegue, sin Compose clásico** — el planteamiento original de este documento (nodo fijo `pi-utils`/`retaco`) queda superado por el patrón consolidado en la mejora 47: volumen Docker `driver: local` + `driver_opts: type: nfs` contra el NAS (`ketekasko`, `/volume1/nfs-data/forgejo/data`), portable entre los 5 managers **sin `constraints` de nodo** desde el día uno — no hay legado que migrar, así que no hace falta pasar primero por bind-mount+nodo fijo como sí tuvo sentido para los servicios de la Fase 4.
+2. **Base de datos: Postgres en `postgres-main`** (rol aislado `forgejo`/BD `forgejo`, creado ya con `create-postgres-db.sh postgres-main dbadmin forgejo forgejo`), no SQLite embebido — mismo criterio que el resto del clúster: SQLite tendría escritura real y frecuente aquí (a diferencia del SQLite vestigial que sí se aceptó en n8n-aux/open-webui en la mejora 47).
+3. **Imagen rootless** (`codeberg.org/forgejo/forgejo:16.0.3-rootless`, versión fijada, no `latest`) — uid/gid 1000 de fábrica, coherente con el resto del clúster (n8n/SonarQube). Directorio de datos real de esta variante: `/var/lib/gitea`, no `/data`.
+4. **Git por SSH en el puerto 2222**, además de HTTPS — publicado directo (`mode: ingress`, sin pasar por Traefik, mismo bypass que ya usa `registry` para su propio protocolo no-HTTP). La imagen rootless ya escucha ahí por defecto (no puede bindear el 22 privilegiado sin root).
+5. Secretos (contraseña de Postgres, credenciales de Infisical) — mismo patrón que el resto del clúster: `docker secret` + `infisical run`, nunca en claro en este repo.
+
+**Hecho y verificado en vivo (2026-09-03)** — instalación núcleo completa, `https://forgejo.404labo.net` accesible y con usuario admin funcionando. Documentación completa (arquitectura, comandos exactos, operación) en su propio documento: `docs/36-forgejo-repositorios-git.md`, no repetida aquí.
+
+Ejecutado por Claude de punta a punta en esta ronda (incluidos los pasos que en la mejora 45 habían quedado como acción manual del usuario — aquí, con acceso a `claude-in-chrome`, Claude pudo operar también la UI de Infisical/Pi-hole): directorio NFS preparado y con owner correcto; rol y base de datos Postgres creados; proyecto/carpeta/secreto en Infisical; identidad de máquina + client secret; los tres `docker secret` en Swarm; registro DNS cargado en Pi-hole; `docker stack deploy`; y, con el usuario ejecutando solo el paso con contraseña (por norma de seguridad, Claude no maneja contraseñas), el alta del usuario administrador.
+
+**Incidente real encontrado y resuelto durante el despliegue**: el `healthcheck` del compose comparaba la respuesta de `/api/healthz` contra el patrón `"status":"pass"` (sin espacio), pero el JSON real de Forgejo lleva espacio tras los dos puntos (`"status": "pass"`) — el healthcheck fallaba siempre pese a que el servicio respondía bien, y Swarm mataba y reprogramaba la tarea cada ~2-3 minutos creyéndola no sana (síntoma colateral: el router de Traefik nunca llegaba a aparecer, lo que inicialmente hizo sospechar —incorrectamente— de un problema de red/labels). Detalle completo de la investigación y el arreglo en `docs/36-forgejo-repositorios-git.md`.
 
 #### 7.2 Migración incremental, GitHub como espejo
 
@@ -1644,7 +1652,7 @@ Medio-alto, y no antes de la mejora 48 — la instalación de k3s en sí es ráp
 | 4 | ~~ntfy (notificaciones proactivas)~~ | Media | Medio | **Completado** (2026-09-01) — `docs/34-ntfy-notificaciones.md`; stack Swarm desplegado y verificado en vivo, conectado como contact point de Grafana |
 | 5 | ~~Integración NUT del SAI existente~~ | Media | Medio | **Completado** (2026-09-01) — `docs/33-nut-sai.md`; SAI conectado a `pi-obs` (no a `ryzen`), aviso proactivo ya conectado vía la mejora 4 (ntfy) |
 | 6 | Migrar tooling de mantenimiento a Ansible | Media | Medio-alto | Punto 2 (ya cumplido) |
-| 7 | Forgejo (repos + CI + artefactos), con GitHub como espejo | Media | Alto | Punto 2 (ya cumplido); esfuerzo separado, después de que la mejora 33 (Swarm) esté completa y el DNS resuelto |
+| 7 | Forgejo (repos + CI + artefactos), con GitHub como espejo | Media | Alto | Instalación núcleo hecha y verificada (2026-09-03, `docs/36-forgejo-repositorios-git.md`) — pendiente: migración de repos (7.2) y Actions/CI (7.3) en rondas futuras |
 | 8 | ~~Registry: limpieza y garbage collection~~ | Media | Bajo | **Implementado (uso manual)** — `docs/29-registry-mantenimiento.md`; alerta de disco cubierta por la mejora 3 (ya completada) |
 | 9 | Tailscale: política de ACL | Baja | Bajo-medio | Tailscale ya desplegado (`docs/18`) |
 | 10 | ~~NAS UGREEN: migrar `nfs-data` a NFSv4~~ — completada | Baja | — | Investigado en real: UGOS Pro revierte `/etc/exports` solo, sin tocar la GUI — inviable. NFSv3 definitivo (`docs/21`) |
