@@ -80,7 +80,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     configs:
-      - source: traefik-dynamic-routes-v10
+      - source: traefik-dynamic-routes-v11
         target: /etc/traefik/dynamic/routes.yml
     secrets:
       # Versión real en el clúster puede ir por delante de esta -- mejora 41
@@ -131,8 +131,16 @@ configs:
   # a :19002. v9 (2026-08-31): backend de portainer movido de pi-utils a
   # pinchi. v10 (2026-08-31): backend de vaultwarden movido de pi-utils a
   # pinchi (192.168.1.175) -- servicio reubicado por fiabilidad de disco,
-  # ver docker-swarm/stacks/vaultwarden/docker-compose.yml.
-  traefik-dynamic-routes-v10:
+  # ver docker-swarm/stacks/vaultwarden/docker-compose.yml. v10 se preparó
+  # en el mismo cambio que liberó los constraints de nodo de la mejora 43
+  # pero nunca llegó a desplegarse -- detectado el 2026-09-03 al caerse
+  # pi-utils. v11 (2026-09-03): además de desplegar v10 por fin, corrige los
+  # otros cuatro backends que se quedaron apuntando a pi-utils tras la
+  # mejora 43 sin actualizar (index/capataz-frontend, capataz-api, rsshub,
+  # n8n-aux, crawl4ai-scraper) -- movidos a retaco (192.168.1.174), mismo
+  # patrón que openwebui/n8n/qdrant/infisical/authentik/registry. Ver
+  # incidente en docs/31-docker-swarm.md.
+  traefik-dynamic-routes-v11:
     file: ./dynamic/routes.yml
 
 secrets:

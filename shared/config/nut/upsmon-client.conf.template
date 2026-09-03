@@ -12,11 +12,26 @@ MONITOR sai@192.168.1.171 1 monuser ${NUT_MONUSER_PASSWORD} secondary
 # usuario sin privilegios.
 RUN_AS_USER root
 
+# MINSUPPLIES 1 se mantiene (no se toca pese al incidente de abajo): con un
+# unico SAI monitorizado, es el valor minimo que tiene sentido -- bajarlo a
+# 0 desactivaria por completo la proteccion de "me he quedado sin poder
+# confirmar el estado del SAI", que es justo lo que salva a este nodo si
+# pi-obs (donde vive upsd) muere de verdad en un corte real antes de poder
+# emitir el FSD. El problema real no era MINSUPPLIES, era DEADTIME (ver
+# comentario de abajo).
 MINSUPPLIES 1
 SHUTDOWNCMD "/usr/local/bin/nut-shutdown-host.sh"
 NOTIFYCMD "/usr/local/bin/nut-notify.sh"
 POLLFREQ 5
 POLLFREQALERT 5
 HOSTSYNC 15
-DEADTIME 15
+# DEADTIME 60, no 15 (2026-09-03, ver docs/31-docker-swarm.md, incidente de
+# caida de pi-utils del 2026-09-01): un reinicio normal del contenedor
+# nut-server en pi-obs corta la comunicacion unos ~4s -- con DEADTIME 15,
+# combinado con MINSUPPLIES 1, upsmon interpreto ese blip como "SAI
+# potencialmente critico" y disparo un apagado real via SHUTDOWNCMD, sin
+# que hubiera ningun problema de alimentacion real. 60s da margen de sobra
+# para una reconexion normal (~15x lo observado) sin renunciar a la
+# proteccion real: un corte de luz de verdad dura minutos, no segundos.
+DEADTIME 60
 FINALDELAY 15

@@ -8,13 +8,20 @@ MONITOR sai@localhost 1 monuser ${NUT_MONUSER_PASSWORD} primary
 # permiso real del dispositivo USB montado desde el host.
 RUN_AS_USER root
 
+# MINSUPPLIES 1: mismo razonamiento que en shared/config/nut/
+# upsmon-client.conf.template -- no se toca, el ajuste real es DEADTIME.
 MINSUPPLIES 1
 SHUTDOWNCMD "/usr/local/bin/nut-shutdown-host.sh"
 NOTIFYCMD "/usr/local/bin/nut-notify.sh"
 POLLFREQ 5
 POLLFREQALERT 5
 HOSTSYNC 15
-DEADTIME 15
+# DEADTIME 60, no 15 (2026-09-03) -- mismo motivo y mismo incidente que
+# shared/config/nut/upsmon-client.conf.template (docs/31-docker-swarm.md):
+# aunque aqui el monitor es local (localhost, no cruza red), un blip
+# interno del driver/upsd de unos segundos podria disparar el mismo falso
+# positivo -- se sube por consistencia y la misma tolerancia.
+DEADTIME 60
 # pi-obs aloja el propio upsd -- interesa que sea de los ultimos nodos en
 # perder comunicacion de verdad (si se apaga el antes, el resto de upsmon
 # remotos se quedan sin servidor al que preguntar) -- FINALDELAY mayor que

@@ -242,11 +242,19 @@ http:
     index:
       loadBalancer:
         servers:
-          - url: "http://192.168.1.173:8090"
+          # 192.168.1.174 (retaco), no .173 (pi-utils) -- constraint de nodo
+          # liberado en la mejora 43 (2026-08-31, ver
+          # docker-swarm/stacks/capataz/docker-compose.yml), pero esta URL se
+          # quedó apuntando a pi-utils sin actualizar; detectado al caerse
+          # pi-utils el 2026-09-03 y romper home.404labo.net con 502 pese a
+          # que Swarm ya había reprogramado capataz-frontend a otro nodo --
+          # ver docs/31-docker-swarm.md.
+          - url: "http://192.168.1.174:8090"
     capataz-api:
       loadBalancer:
         servers:
-          - url: "http://192.168.1.173:8000"
+          # Mismo caso que "index" de arriba -- ver comentario.
+          - url: "http://192.168.1.174:8000"
     openwebui:
       loadBalancer:
         servers:
@@ -296,11 +304,15 @@ http:
     rsshub:
       loadBalancer:
         servers:
-          - url: "http://192.168.1.173:1200"
+          # 192.168.1.174 (retaco), no .173 (pi-utils) -- mismo caso que
+          # "index" arriba: constraint liberado en la mejora 43, URL no
+          # actualizada hasta el incidente del 2026-09-03.
+          - url: "http://192.168.1.174:1200"
     n8n-aux:
       loadBalancer:
         servers:
-          - url: "http://192.168.1.173:5679"
+          # Mismo caso que "rsshub" de arriba.
+          - url: "http://192.168.1.174:5679"
     portainer:
       loadBalancer:
         servers:
@@ -344,7 +356,9 @@ http:
     crawl4ai-scraper:
       loadBalancer:
         servers:
-          - url: "http://192.168.1.173:8002"
+          # 192.168.1.174 (retaco), no .173 (pi-utils) -- mismo caso que
+          # "index" arriba.
+          - url: "http://192.168.1.174:8002"
     prometheus:
       loadBalancer:
         servers:
