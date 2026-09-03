@@ -40,6 +40,25 @@ scrape_configs:
           node: retaco
           db: postgres-main
 
+  # Qdrant — /metrics real (colecciones, puntos, latencia de búsqueda),
+  # protegido por la misma API key que el resto de la API de Qdrant (acepta
+  # "Authorization: Bearer <key>", confirmado en vivo -- no hace falta el
+  # header "api-key" propietario). El valor real vive en Infisical
+  # (/qdrant/, QDRANT__SERVICE__API_KEY) y aquí se referencia como un
+  # secret de Swarm aparte (qdrant-metrics-token-v1) porque este contenedor
+  # de Prometheus no tiene wrapper de infisical -- mismo valor, dos sitios,
+  # ver docs/22-mejoras-futuras.md (mejora 45) para el procedimiento manual
+  # de creación del secret (paso pendiente, no automatizado).
+  - job_name: qdrant-retaco
+    scheme: http
+    authorization:
+      type: Bearer
+      credentials_file: /run/secrets/qdrant-metrics-token
+    static_configs:
+      - targets: ["192.168.1.174:6333"]
+        labels:
+          node: retaco
+
   # NUT exporter — SAI fisico conectado por USB a pi-obs, ver docs/33-nut-sai.md.
   # metrics_path/params distintos del resto porque druggeri/nut_exporter expone
   # las metricas en /ups_metrics (no /metrics) y necesita el nombre de la UPS

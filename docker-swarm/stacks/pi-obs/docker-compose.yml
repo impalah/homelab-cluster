@@ -78,6 +78,9 @@ services:
       - "9090:9090"
     networks:
       - pi-obs-net
+    secrets:
+      - source: qdrant-metrics-token-v1
+        target: qdrant-metrics-token
     logging: *loki-logging
     deploy: *pi-obs-deploy
 
@@ -217,4 +220,12 @@ secrets:
   postgres-exporter-dsn-v1:
     external: true
   nut-exporter-password-v1:
+    external: true
+  qdrant-metrics-token-v1:
+    # Mismo valor que QDRANT__SERVICE__API_KEY en Infisical (/qdrant/) --
+    # Qdrant acepta "Authorization: Bearer <key>" además de su header
+    # propietario "api-key", así que Prometheus puede usarlo tal cual con
+    # `authorization.credentials_file` nativo, sin tocar el propio stack de
+    # qdrant. Creación manual pendiente (mejora 45, docs/22-mejoras-futuras.md):
+    #   printf '<valor real>' | docker secret create qdrant-metrics-token-v1 -
     external: true

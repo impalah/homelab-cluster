@@ -27,7 +27,7 @@ Solo accesible desde la LAN o vía Tailscale (mismo criterio que el resto de pan
 Antes de entrar en el manual, un resumen de lo que ya existe y que irás viendo en detalle en los siguientes documentos — para no confundir "cómo funciona Grafana en general" con "qué es específico de este homelab":
 
 - **3 datasources** aprovisionadas por fichero (`pi-obs/config/grafana/datasources.yml`): Prometheus, Loki, Tempo.
-- **5 dashboards ya importados** de la comunidad de Grafana: Node Exporter Full, Docker/cAdvisor, PostgreSQL Overview, Loki Logs, más uno propio del clúster ("Actualizaciones pendientes").
+- **8 dashboards**: 4 importados de la comunidad de Grafana (Node Exporter Full, Docker/cAdvisor, PostgreSQL Overview, Loki Logs) más cuatro propios del clúster ("Actualizaciones pendientes", "Servicio (genérico)" — plantilla parametrizable embebible por URL —, "apikey-service" y "Qdrant").
 - **8 reglas de alerta** ya activas, agrupadas en una carpeta "Homelab Alerts" (disco, hardware/alimentación, parcheo del SO, batería del SAI), todas conectadas a un canal de notificaciones real: **ntfy** (mejora 4 del backlog, `docs/34-ntfy-notificaciones.md`).
 
 Todo esto se gestiona **por fichero** (aprovisionamiento), no a mano desde la UI — un punto importante que se explica con detalle en el documento 06 de este manual, porque cambia cómo se debe tocar la configuración de este clúster en concreto frente a una instalación de Grafana genérica.
