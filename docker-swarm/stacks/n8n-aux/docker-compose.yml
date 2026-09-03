@@ -22,6 +22,16 @@
 # ⚠️ N8N_ENCRYPTION_KEY es irreversible una vez fijada (CLAUDE.md) -- NO
 # vive aquí, se inyecta vía Infisical (path /n8n-aux/) exactamente igual que
 # en el Compose clásico que sustituye.
+#
+# Mejora 47 (2026-09-03): bind-mount contra /mnt/nfs-data/n8n-aux/data
+# sustituido por volumen Docker driver: local + driver_opts: type: nfs --
+# mismo dato real en el NAS (el database.sqlite+-wal+-shm activo incluido),
+# sin mover nada. Esto NO cambia el riesgo ya aceptado mas arriba -- el
+# SQLite ya corria sobre este mismo NFS antes del cambio (bind-mount
+# OS-level), sigue corriendo sobre el mismo NFS despues (volumen nativo);
+# el mecanismo de montaje es indistinto para ese riesgo, solo cambia si el
+# nodo necesita /etc/fstab preparado a mano de antemano o no. vers=3
+# obligatorio (NFSv4 roto en este NAS).
 version: "3.8"
 
 services:
@@ -56,7 +66,7 @@ services:
       SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
       INFISICAL_DOMAIN: https://infisical.404labo.net/api
     volumes:
-      - /mnt/nfs-data/n8n-aux/data:/home/node/.n8n
+      - n8n-aux-data:/home/node/.n8n
       - /srv/homelab/infisical/infisical-cli/infisical:/usr/local/bin/infisical:ro
     configs:
       # homelab-ca-bundle-v1: compartido con 10 stacks más (2026-08-31,
@@ -115,3 +125,11 @@ secrets:
     external: true
   n8n-aux-infisical-project-id-v1:
     external: true
+
+volumes:
+  n8n-aux-data:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: "addr=192.168.1.180,rw,vers=3"
+      device: ":/volume1/nfs-data/n8n-aux/data"

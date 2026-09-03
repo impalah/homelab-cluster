@@ -68,6 +68,17 @@
 # contenido DISTINTO (verificado, no asumido) -- se quedan fuera de este
 # config compartido, sin tocar. El binario de `infisical` (130 MB) sigue
 # sin poder ser `docker config` (límite 500 KB) -- se queda como bind-mount.
+#
+# Mejora 47 (2026-09-03): bind-mounts contra /mnt/nfs-data/authentik/
+# {data,certs} sustituidos por volúmenes Docker `driver: local` +
+# `driver_opts: type: nfs` -- mismo dato real en el NAS, mismo mecanismo ya
+# validado con registry/epub2pdf-service/pdf2chunks-service. `vers=3`
+# obligatorio (NFSv4 roto en este NAS, docs/21-configuracion-nas-ugreen.md).
+# El montaje OS-level en /etc/fstab de los 5 managers NO se retira -- sigue
+# siendo el mecanismo real para cualquier otro servicio que aún no haya
+# migrado a volumen nativo. La ACL de UGOS (solo UID 1000/gid 10 escriben)
+# sigue aplicando igual que con el bind-mount -- Authentik ya corre como
+# UID 1000 por defecto, sin cambios necesarios aquí.
 version: "3.8"
 
 x-authentik-common: &authentik-common
@@ -103,7 +114,7 @@ services:
     <<: *authentik-common
     volumes:
       - /srv/homelab/infisical/infisical-cli/infisical:/usr/local/bin/infisical:ro
-      - /mnt/nfs-data/authentik/data:/data
+      - authentik-data:/data
     configs:
       - source: homelab-ca-bundle-v1
         target: /etc/ssl/certs/homelab-ca.crt
@@ -147,8 +158,8 @@ services:
     <<: *authentik-common
     volumes:
       - /srv/homelab/infisical/infisical-cli/infisical:/usr/local/bin/infisical:ro
-      - /mnt/nfs-data/authentik/data:/data
-      - /mnt/nfs-data/authentik/certs:/certs
+      - authentik-data:/data
+      - authentik-certs:/certs
     configs:
       - source: homelab-ca-bundle-v1
         target: /etc/ssl/certs/homelab-ca.crt
@@ -192,3 +203,17 @@ secrets:
     external: true
   authentik-infisical-project-id-v1:
     external: true
+
+volumes:
+  authentik-data:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: "addr=192.168.1.180,rw,vers=3"
+      device: ":/volume1/nfs-data/authentik/data"
+  authentik-certs:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: "addr=192.168.1.180,rw,vers=3"
+      device: ":/volume1/nfs-data/authentik/certs"

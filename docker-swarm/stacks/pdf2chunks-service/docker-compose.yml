@@ -4,12 +4,21 @@
 # explícita del usuario, mismo motivo y mismo cambio que
 # `epub2pdf-service`) -- ya no es cierto que solo `retaco` tenga el
 # montaje NFS del NAS (`ketekasko:/volume1/nfs-data` en `/mnt/nfs-data`):
-# se montó en los 5 managers del Swarm el mismo día. El proceso corre como
-# root (`uid=0`), así que la ACL propia de UGOS (ver
-# `docs/21-configuracion-nas-ugreen.md`) no es problema. Sin migración de
-# datos que hacer -- los volúmenes ya estaban en NFS de siempre, el pin
-# solo existía por la disponibilidad del punto de montaje. Sin secretos
-# (nunca los tuvo).
+# se montó en los 5 managers del Swarm el mismo día.
+#
+# Mejora 47 (2026-09-03, piloto de la migración): bind-mounts contra
+# /mnt/nfs-data/pdf2chunks/{input,output} sustituidos por volúmenes Docker
+# `driver: local` + `driver_opts: type: nfs` -- mismo dato real en el NAS
+# (`ketekasko:/volume1/nfs-data/pdf2chunks/...`), sin mover ni un byte, pero
+# ya no depende de que el nodo tenga el montaje OS-level en /etc/fstab: el
+# propio daemon de Docker monta el export la primera vez que una tarea
+# aterriza ahí, en cualquiera de los 5 managers, sin preparación previa.
+# `vers=3` obligatorio (NFSv4 no funciona en este NAS -- pseudo-root roto,
+# ver docs/21-configuracion-nas-ugreen.md). El proceso sigue corriendo como
+# root (`uid=0`), así que la ACL propia de UGOS no es problema, igual que
+# con el bind-mount anterior. El montaje OS-level en /etc/fstab de los 5
+# managers NO se retira -- `authentik` (fuera de alcance de esta mejora)
+# sigue dependiendo de él para /mnt/nfs-data/authentik/{data,certs}.
 version: "3.8"
 
 services:
@@ -25,8 +34,8 @@ services:
       PDF2CHUNKS_CHUNKING_STRATEGY: fixed_size
       PDF2CHUNKS_OUTPUT_FORMAT: json
     volumes:
-      - /mnt/nfs-data/pdf2chunks/input:/data/input:ro
-      - /mnt/nfs-data/pdf2chunks/output:/data/output
+      - pdf2chunks-input:/data/input:ro
+      - pdf2chunks-output:/data/output
     ports:
       - "8004:8004"
     networks:
@@ -39,6 +48,24 @@ services:
         max-buffer-size: 4m
     deploy:
       replicas: 1
+      placement:
+        constraints:
+          # Hallazgo real durante la mejora 47 (2026-09-03), no relacionado
+          # con el volumen NFS: la imagen registry.404labo.net/pdf2chunks-
+          # service es solo amd64 (`docker manifest inspect`, un único
+          # platform "amd64") -- sin esta constraint, Swarm intenta
+          # programarla en cualquiera de los 5 managers, incluidos los 3
+          # Raspberry Pi (arm64), donde falla con "no matching manifest for
+          # linux/arm64/v8" en bucle. retaco y pinchi son los únicos nodos
+          # x86_64 del clúster (docs/07/docs/30). No estaba cubierto antes
+          # porque el `constraints: node.hostname==retaco` original ya lo
+          # resolvía de forma incidental. Ojo al valor exacto: la imagen se
+          # etiqueta "amd64" (convención de manifests OCI), pero
+          # `docker node inspect --format '{{.Description.Platform.Architecture}}'`
+          # devuelve "x86_64" -- son dos vocabularios distintos, la
+          # constraint tiene que usar el segundo o Swarm rechaza los 5 nodos
+          # con "scheduling constraints not satisfied" (confirmado en vivo).
+          - node.platform.arch == x86_64
       restart_policy:
         condition: on-failure
 
@@ -46,3 +73,17 @@ networks:
   pdf2chunks-net:
     driver: overlay
     attachable: true
+
+volumes:
+  pdf2chunks-input:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: "addr=192.168.1.180,rw,vers=3"
+      device: ":/volume1/nfs-data/pdf2chunks/input"
+  pdf2chunks-output:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: "addr=192.168.1.180,rw,vers=3"
+      device: ":/volume1/nfs-data/pdf2chunks/output"

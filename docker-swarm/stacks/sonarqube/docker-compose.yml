@@ -42,6 +42,13 @@
 # verdad queda como decisión aparte y deliberada, no de rebote -- mismo
 # criterio ya aplicado a este servicio en Compose clásico (nunca
 # auto-actualizar, ver docs/16-mantenimiento-actualizaciones.md).
+#
+# Mejora 47 (2026-09-03): SOLO `extensions/` pasa a volumen Docker
+# `driver: local` + `driver_opts: type: nfs` -- `data/` (índice real de
+# Elasticsearch) y el `constraints: node.hostname==pi-sonar` NO se tocan,
+# siguen fuera de alcance por el mismo motivo de siempre (categoría de
+# riesgo de postgres-main/qdrant, ver cabecera de este fichero). `vers=3`
+# obligatorio.
 version: "3.8"
 
 services:
@@ -61,7 +68,7 @@ services:
       SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
     volumes:
       - /srv/homelab/pi-sonar/sonarqube/data:/opt/sonarqube/data
-      - /mnt/nfs-data/sonarqube/extensions:/opt/sonarqube/extensions
+      - sonarqube-extensions:/opt/sonarqube/extensions
       - /srv/homelab/infisical/infisical-cli/infisical:/usr/local/bin/infisical:ro
       - type: tmpfs
         target: /opt/sonarqube/logs
@@ -146,3 +153,11 @@ secrets:
     external: true
   sonarqube-infisical-project-id-v1:
     external: true
+
+volumes:
+  sonarqube-extensions:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: "addr=192.168.1.180,rw,vers=3"
+      device: ":/volume1/nfs-data/sonarqube/extensions"

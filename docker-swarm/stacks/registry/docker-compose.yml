@@ -25,6 +25,19 @@
 # con acceso al swarm, los secrets se montan como fichero. El htpasswd
 # sigue siendo un bind-mount de fichero real (ya lo era en Compose clásico,
 # no es un secreto rotable vía Infisical hoy).
+#
+# Mejora 47 (2026-09-03): bind-mounts contra /mnt/nfs-data/registry/{data,
+# auth} sustituidos por volúmenes Docker `driver: local` + `driver_opts:
+# type: nfs` -- mismo patrón validado primero con pdf2chunks-service/
+# epub2pdf-service (mismo dato real en el NAS, los 32G de blobs no se
+# mueven ni un byte, solo cambia cómo el nodo monta el export). `vers=3`
+# obligatorio (NFSv4 roto en este NAS, ver
+# docs/21-configuracion-nas-ugreen.md). Sin constraint de arquitectura --
+# a diferencia de epub2pdf-service/pdf2chunks-service, la imagen oficial
+# `registry:2.8.3` sí es multi-arch (amd64/arm/arm64/ppc64le/s390x,
+# confirmado con `docker manifest inspect`), puede correr en cualquiera de
+# los 5 managers sin restricción. El montaje OS-level de los 5 managers en
+# /etc/fstab NO se retira -- `authentik` sigue dependiendo de él.
 version: "3.8"
 
 services:
@@ -45,8 +58,8 @@ services:
       - source: registry-http-secret-v1
         target: registry-http-secret
     volumes:
-      - /mnt/nfs-data/registry/data:/var/lib/registry
-      - /mnt/nfs-data/registry/auth:/auth:ro
+      - registry-data:/var/lib/registry
+      - registry-auth:/auth:ro
     ports:
       - "5000:5000"
     networks:
@@ -70,3 +83,17 @@ networks:
 secrets:
   registry-http-secret-v1:
     external: true
+
+volumes:
+  registry-data:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: "addr=192.168.1.180,rw,vers=3"
+      device: ":/volume1/nfs-data/registry/data"
+  registry-auth:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: "addr=192.168.1.180,rw,vers=3"
+      device: ":/volume1/nfs-data/registry/auth"

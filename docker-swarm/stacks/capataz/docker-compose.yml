@@ -39,6 +39,12 @@
 # externo de Capataz, fuera de alcance aquí -- ver mejora 43,
 # docs/22-mejoras-futuras.md.
 #
+# Mejora 47 (2026-09-03): el bind-mount de api-alembic pasa a volumen
+# Docker `driver: local` + `driver_opts: type: nfs` (mismo dato real en el
+# NAS, mismo mecanismo que registry/authentik/etc., `vers=3` obligatorio).
+# `user: "1000:10"` sigue igual de necesario -- la ACL de UGOS no cambia
+# por el mecanismo de montaje, solo por quién escribe/lee.
+#
 # `ports: mode: host` en capataz-api (8000) y capataz-frontend (8090) pasa a
 # `mode: ingress` -- confirmado por grep en los 25 stacks que ningún otro
 # servicio publica esos puertos hoy (Traefik ya usa 18090 para su propio
@@ -115,7 +121,7 @@ services:
       SSL_CERT_FILE: /run/ca-certs/ca-bundle.pem
     user: "1000:10"
     volumes:
-      - /mnt/nfs-data/capataz/api-alembic:/app/alembic:ro
+      - capataz-api-alembic:/app/alembic:ro
       - type: tmpfs
         target: /tmp
         tmpfs:
@@ -339,3 +345,11 @@ secrets:
     external: true
   capataz-ansible-vault-password-v1:
     external: true
+
+volumes:
+  capataz-api-alembic:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: "addr=192.168.1.180,rw,vers=3"
+      device: ":/volume1/nfs-data/capataz/api-alembic"

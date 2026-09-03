@@ -3,14 +3,25 @@
 # `constraints: node.hostname==retaco` RETIRADO (2026-08-31, decisión
 # explícita del usuario) -- ya no es cierto que solo `retaco` tenga el
 # montaje NFS del NAS (`ketekasko:/volume1/nfs-data` en `/mnt/nfs-data`):
-# se montó en los 5 managers del Swarm el mismo día (a petición del
-# usuario, NAS protegido con SAI y considerado infraestructura esencial del
-# clúster). El proceso corre como root (`uid=0`), así que la ACL propia de
-# UGOS (ver `docs/21-configuracion-nas-ugreen.md`) no es problema. Sin
-# migración de datos que hacer -- los volúmenes ya estaban en NFS de
-# siempre, el pin solo existía por la disponibilidad del punto de montaje,
-# no por los datos en sí. Sin secretos (nunca los tuvo, .env sin overrides
-# -- valores por defecto tal cual estaban en Compose clásico).
+# se montó en los 5 managers del Swarm el mismo día.
+#
+# Mejora 47 (2026-09-03): bind-mounts contra
+# /mnt/nfs-data/epub2pdf/{input,output} sustituidos por volúmenes Docker
+# `driver: local` + `driver_opts: type: nfs` -- mismo patrón validado con
+# pdf2chunks-service (mismo dato real en el NAS, sin mover nada, ya no
+# depende del montaje OS-level en /etc/fstab). `vers=3` obligatorio (NFSv4
+# roto en este NAS, ver docs/21-configuracion-nas-ugreen.md). El montaje
+# OS-level de los 5 managers NO se retira -- `authentik` sigue
+# dependiendo de él.
+#
+# `node.platform.arch == x86_64` añadido de paso: la imagen de
+# epub2pdf-service también es solo amd64 (confirmado con `docker manifest
+# inspect`, un único platform "amd64") -- mismo hallazgo real que en
+# pdf2chunks-service, sin esta constraint Swarm intenta programarla en los
+# 3 nodos Raspberry Pi (arm64) y falla en bucle. El valor de la constraint
+# es "x86_64" (lo que devuelve `docker node inspect`), no "amd64" (lo que
+# dice el manifest de la imagen) -- confirmado en vivo, son vocabularios
+# distintos.
 version: "3.8"
 
 services:
@@ -21,8 +32,8 @@ services:
       EPUB2PDF_LOG_FORMAT: json
       EPUB2PDF_CONVERSION_TIMEOUT_SECONDS: "300"
     volumes:
-      - /mnt/nfs-data/epub2pdf/input:/data/input:ro
-      - /mnt/nfs-data/epub2pdf/output:/data/output
+      - epub2pdf-input:/data/input:ro
+      - epub2pdf-output:/data/output
     ports:
       - "8003:8003"
     networks:
@@ -35,6 +46,9 @@ services:
         max-buffer-size: 4m
     deploy:
       replicas: 1
+      placement:
+        constraints:
+          - node.platform.arch == x86_64
       restart_policy:
         condition: on-failure
 
@@ -42,3 +56,17 @@ networks:
   epub2pdf-net:
     driver: overlay
     attachable: true
+
+volumes:
+  epub2pdf-input:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: "addr=192.168.1.180,rw,vers=3"
+      device: ":/volume1/nfs-data/epub2pdf/input"
+  epub2pdf-output:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: "addr=192.168.1.180,rw,vers=3"
+      device: ":/volume1/nfs-data/epub2pdf/output"

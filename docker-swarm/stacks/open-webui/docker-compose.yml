@@ -28,6 +28,15 @@
 # routing mesh aunque el DNS resuelva a otro nodo que el que ejecuta la
 # tarea de verdad -- mismo mecanismo que ya usan `sonarqube.404labo.net`/
 # `portainer.404labo.net`.
+#
+# Mejora 47 (2026-09-03): el bind-mount de /app/backend/data pasa a volumen
+# Docker `driver: local` + `driver_opts: type: nfs` -- mismo dato real en
+# el NAS (incluidos los `webui.db*`/`vector_db` residuales de arriba, sin
+# tocar), mismo mecanismo que el resto de esta pasada. El `tmpfs` de
+# `cache/` superpuesto DENTRO de esa misma ruta se mantiene exactamente
+# igual -- Docker monta ambos por separado y el tmpfs sigue tapando el
+# volumen NFS en ese subdirectorio concreto, sin ningún cambio de
+# comportamiento. `vers=3` obligatorio.
 version: "3.8"
 
 services:
@@ -47,7 +56,7 @@ services:
       QDRANT_URI: http://qdrant.404labo.net:6333
       INFISICAL_DOMAIN: https://infisical.404labo.net/api
     volumes:
-      - /mnt/nfs-data/open-webui/data:/app/backend/data
+      - open-webui-data:/app/backend/data
       - type: tmpfs
         target: /app/backend/data/cache
         tmpfs:
@@ -122,3 +131,11 @@ secrets:
     external: true
   open-webui-infisical-project-id-v1:
     external: true
+
+volumes:
+  open-webui-data:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: "addr=192.168.1.180,rw,vers=3"
+      device: ":/volume1/nfs-data/open-webui/data"

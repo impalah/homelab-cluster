@@ -11,6 +11,10 @@
 # root (`uid=0`), sin problema de ACL. El binario de `infisical` pasa a la
 # ruta compartida multi-arquitectura (mismo mecanismo que `authentik`/
 # `bifrost`/etc.).
+#
+# Mejora 47 (2026-09-03): el bind-mount pasa a volumen Docker
+# `driver: local` + `driver_opts: type: nfs` -- mismo dato real en el NAS,
+# mismo mecanismo que el resto de esta pasada. `vers=3` obligatorio.
 version: "3.8"
 
 services:
@@ -24,7 +28,7 @@ services:
       INFISICAL_DOMAIN: https://infisical.404labo.net/api
       SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
     volumes:
-      - /mnt/nfs-data/open-terminal-mcp/home:/home/user
+      - open-terminal-mcp-home:/home/user
       - /srv/homelab/infisical/infisical-cli/infisical:/usr/local/bin/infisical:ro
     configs:
       # homelab-ca-bundle-v1: compartido con 10 stacks más (2026-08-31,
@@ -83,3 +87,11 @@ secrets:
     external: true
   open-terminal-mcp-infisical-project-id-v1:
     external: true
+
+volumes:
+  open-terminal-mcp-home:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: "addr=192.168.1.180,rw,vers=3"
+      device: ":/volume1/nfs-data/open-terminal-mcp/home"

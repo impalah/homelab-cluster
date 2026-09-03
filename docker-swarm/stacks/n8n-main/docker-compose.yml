@@ -23,6 +23,11 @@
 # `postgresql.404labo.net`, alias DNS directo (Pi-hole, sin pasar por
 # Traefik -- protocolo Postgres, no HTTP) que resuelve siempre a la IP real
 # de retaco.
+#
+# Mejora 47 (2026-09-03): bind-mount contra /mnt/nfs-data/n8n-main/data
+# sustituido por volumen Docker driver: local + driver_opts: type: nfs --
+# mismo dato real en el NAS (vestigial, sin riesgo real, ver arriba), mismo
+# mecanismo que el resto de esta pasada. vers=3 obligatorio.
 version: "3.8"
 
 services:
@@ -61,7 +66,7 @@ services:
       SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
       INFISICAL_DOMAIN: https://infisical.404labo.net/api
     volumes:
-      - /mnt/nfs-data/n8n-main/data:/home/node/.n8n
+      - n8n-main-data:/home/node/.n8n
       - /srv/homelab/infisical/infisical-cli/infisical:/usr/local/bin/infisical:ro
     configs:
       # homelab-ca-bundle-v1: compartido con 10 stacks más (2026-08-31,
@@ -120,3 +125,11 @@ secrets:
     external: true
   n8n-main-infisical-project-id-v1:
     external: true
+
+volumes:
+  n8n-main-data:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: "addr=192.168.1.180,rw,vers=3"
+      device: ":/volume1/nfs-data/n8n-main/data"
