@@ -169,13 +169,132 @@ Ejecutado por Claude de punta a punta en esta ronda (incluidos los pasos que en 
 2. Resto, repo a repo, empezando por los menos críticos.
 3. **Forgejo como fuente de verdad, GitHub como espejo de solo lectura** (*push mirror*) — evita conflictos de sincronización bidireccional.
 
-#### 7.3 CI (Forgejo Actions)
+#### 7.3 CI (Forgejo Actions) — runners, primera ronda (2026-09-04)
 
-1. Activar Actions a nivel de instancia.
-2. `forgejo-runner` en `ryzen` (más CPU).
-3. Acceso a Docker si se build-ean imágenes (docker-in-docker o `docker.sock`, misma decisión de superficie que `portainer-agent`/`watchtower`).
-4. Sintaxis compatible en buena parte con GitHub Actions.
-5. Integración con SonarQube (`docs/09-instalacion-pi3-sonarqube.md`) — un paso `sonar-scanner` cierra el círculo de calidad.
+Dos runners, decisión explícita del usuario (2026-09-04), ambos con modo de ejecución `docker://`
+(cada job en un contenedor nuevo vía sidecar `docker:dind` propio, **nunca** el socket Docker real
+del host en ninguno de los dos — ver justificación de seguridad más abajo):
+
+1. **`forgejo-runner-pinchi`** — siempre en ejecución, **runner por defecto**. Corre en Compose
+   CLÁSICO directo en el host (`pinchi/docker-compose.yml`, junto a `nut-upsmon`), NO como stack
+   Swarm — la intención inicial era un stack Swarm de verdad (decisión original del usuario),
+   descartada tras una prueba real en vivo, ver el aparte de más abajo ("Por qué no es un stack
+   Swarm"). Etiquetas `docker`/`ubuntu-latest`/`ubuntu-22.04` (imágenes
+   `ghcr.io/catthehacker/ubuntu:act-latest`/`act-22.04`) — recoge cualquier workflow que no pida
+   explícitamente otra cosa. `restart: unless-stopped` basta para "siempre en ejecución" incluida
+   la persistencia tras un reinicio del host.
+2. **`forgejo-runner-ryzen`** — lanzamiento manual, Compose clásico
+   (`ryzen/docker-compose.forgejo-runner.yml`, mismo patrón que `switch-llm-backend.sh`: nunca
+   arranca solo). Etiqueta propia y distinta, `ryzen` (no comparte `ubuntu-latest`/`docker` con
+   pinchi a propósito) — así los workflows genéricos van siempre al runner por defecto, y este
+   solo recibe jobs que lo pidan explícitamente (`runs-on: ryzen`), sin competir por trabajos
+   normales cuando esté encendido. Pensado para CPU/RAM libres cuando el nodo ya está arriba por
+   otro motivo, no para tenerlo encendido solo para CI.
+
+**Por qué `forgejo-runner-pinchi` NO es un stack Swarm, pese a ser la decisión inicial**: probado
+en vivo (2026-09-04) como stack Swarm real primero — falló en crash-loop. **Docker Swarm no puede
+ejecutar contenedores privilegiados, en ningún caso.** `privileged: true` se ignora en silencio
+("Ignoring unsupported options: privileged" en el propio `docker stack deploy`). Se intentó
+reconstruir el mismo conjunto de permisos a mano (`cap_add: [ALL]` + `security_opt:
+[seccomp=unconfined, apparmor=unconfined]` + bind-mount de `/sys/fs/cgroup`, todo verificado antes
+por separado con `docker run` normal, donde sí funciona) — `cap_add` **sí** se aplica en modo
+Swarm, pero `security_opt` **también** se ignora en silencio ("Ignoring unsupported options:
+security_opt"), y sin él el perfil seccomp por defecto bloquea `mount()`, syscall imprescindible
+para que un `dockerd` anidado arranque. Confirmado además que `docker service create --help` ni
+siquiera tiene un flag `--security-opt` — no es una limitación de sintaxis del compose, el propio
+modelo de Swarm no expone ese control. Limitación real y documentada de Swarm en general (Docker-
+in-Docker no funciona en modo Swarm), no específica de este clúster — y coincide, además, con un
+hallazgo ya real y anterior en este mismo repo: `pinchi/docker-compose.yml` ya existía por el
+mismo motivo exacto para `nut-upsmon` (mejora 5, `docs/33-nut-sai.md`, 2026-09-01), que necesita
+`privileged: true` para D-Bus real. Se optó por añadir `forgejo-runner-pinchi` + su sidecar `dind`
+a ese mismo fichero en vez de crear un stack Swarm nuevo — la excepción de `pinchi` a estar
+gestionado por Swarm ya existía, esto la reutiliza en vez de duplicarla. Coherente con lo que el
+usuario ya había anticipado en la petición original de este punto ("si no es posible usar Docker
+Swarm, pinchi es el nodo más adecuado").
+
+**Decisión de seguridad tomada explícitamente (2026-09-04): sin acceso a GPU en ningún runner.**
+Se evaluó montar el socket Docker real de `ryzen` para que los jobs pudieran pedir `--gpus` igual
+que `ollama`/`vllm` — descartado: cualquier workflow con permiso de escritura sobre un repo con
+Actions tendría entonces control total del host mientras el runner esté arriba (equivalente a
+acceso root), y el modelo de amenaza de Forgejo Actions asume que quien puede hacer push a un repo
+puede ejecutar código arbitrario en el runner que lo sirve. Los dos runners usan el mismo sidecar
+`docker:dind` aislado — si en el futuro hace falta GPU en CI (tests de `whisper-service`/`vllm`,
+por ejemplo), revisar esta decisión aparte, con los ojos abiertos sobre ese coste.
+
+**Registro: OFFLINE, no interactivo** (`forgejo forgejo-cli actions register --name <nombre>
+--secret <40 hex>`, disponible desde Forgejo ≥ 1.21) — permite generar el secreto nosotros mismos
+y registrar ambos runners desde dentro del propio contenedor `forgejo` (que ya trae el binario
+`forgejo` y el CLI de `infisical` embebidos) sin depender de la UI web ni de un token de un solo
+uso. Comando idempotente — reejecutarlo con el mismo secreto no rompe nada. Los dos runners están
+registrados **sin `--scope`** (globales, visibles para todos los repos de la instancia) — el
+filtrado de qué runner ejecuta qué job se hace por etiquetas (`runs-on:`), no por scope.
+
+**Credenciales — sin Infisical en ninguno de los dos**, a propósito. La idea inicial era usar
+Infisical al menos para `forgejo-runner-pinchi` (por ser, en teoría, un stack Swarm declarativo) —
+al pasar también a Compose clásico (ver más arriba), esa justificación desapareció, así que se
+simplificó para quedar simétrico con `ryzen`: `.env` real (no versionado, solo en el host) con
+`FORGEJO_RUNNER_UUID`/`FORGEJO_RUNNER_TOKEN`, `.env.example` con placeholders versionado
+(`pinchi/.env.example`, junto a `NUT_MONUSER_PASSWORD`; `ryzen/.env.forgejo-runner.example`,
+aparte del `.env.example` del stack de IA). De paso evita depender de que `pinchi`/`ryzen` tengan
+sincronizados el binario y la CA de Infisical (no es el caso de `ryzen` hoy).
+
+*(Nota histórica: durante el diseño se llegaron a crear las carpetas `/forgejo-runner-pinchi/` y
+`/forgejo-runner-ryzen/` en Infisical —proyecto `forgejo`, entorno `prod`— con estos mismos
+secretos dentro, incluyendo ampliar el rol de la identidad de máquina a Admin para poder crearlas
+desde CLI sin acceso a la UI. Al descartarse Infisical para ambos runners, esas carpetas se
+borraron de nuevo — no quedó nada huérfano.)*
+
+**Validado en vivo de punta a punta (2026-09-04) para los dos runners**: contenedor arrancado,
+registrado y visible `online` en la tabla `action_runner` de Postgres; desde dentro de la red
+anidada del propio `dind` (`docker -H tcp://127.0.0.1:2375 run ghcr.io/catthehacker/ubuntu:act-
+latest ...`), resolución DNS correcta de `forgejo.404labo.net` contra Pi-hole
+(`--dns=192.168.1.170` explícito en el `dockerd` del sidecar — sin esto los contenedores de cada
+job no resuelven `*.404labo.net`, un `dockerd` anidado no hereda el DNS del host) y `HTTP/2 200`
+real contra `/api/healthz`. El de `ryzen` se probó primero y se paró después (arranque manual es
+la idea — no se deja corriendo de fondo); el de `pinchi` se dejó arriba (es el runner por
+defecto, siempre en ejecución).
+
+**Caché de Actions desactivada a propósito en esta primera ronda** (`cache.enabled: false` en los
+dos) — la caché la sirve el propio proceso `runner`, pero los contenedores de cada job viven
+*dentro* de la red anidada de `dind`, no en la red del runner; alcanzar ese proxy desde ahí
+necesitaría fijar `cache.host` a una IP alcanzable desde esa red anidada, no investigado todavía.
+Sin caché, los jobs no aceleran `npm ci`/`pip install` entre ejecuciones — funcionalmente
+correcto, solo más lento. Revisar cuando el uso real de Actions lo justifique.
+
+**Hecho y verificado en vivo (2026-09-04)** — los dos runners desplegados y `online`:
+`forgejo-runner-pinchi` arriba de forma permanente (`pinchi/docker-compose.yml`, junto a
+`nut-upsmon`), `forgejo-runner-ryzen` parado tras la prueba (arranque manual, ver
+`ryzen/docker-compose.forgejo-runner.yml`).
+
+**Pendiente de esta ronda**:
+1. Probar con un workflow real, no solo con `docker run` a mano — `container.docker_host:
+   "automount"` ya está puesto en los dos runners (para que un `step:` pueda hacer `docker
+   build`/`buildx push` dentro de un job, necesario en cuanto la mejora 7.2 traiga este mismo
+   repo y su `make build` de `services/`), sin probar todavía con un workflow de verdad.
+2. Integración con SonarQube (`docs/09-instalacion-pi3-sonarqube.md`) — un paso `sonar-scanner`
+   cierra el círculo de calidad. No abordado en esta ronda.
+3. Cerrar `DISABLE_REGISTRATION` (ver hallazgo de seguridad más abajo, en 7.4) — evaluado y
+   descartado para esta ronda a petición explícita del usuario (2026-09-04); queda pendiente para
+   una ronda posterior.
+
+**Investigado (2026-09-03), sin implementar todavía — dónde corre el runner y cómo se define, para cuando se aborde este punto de verdad:**
+
+- **El runner es un proceso totalmente aparte del servidor Forgejo** — binario/imagen distinto (`forgejo-runner`), instalado donde se quiera (binario + `systemd`, o contenedor con la imagen `data.forgejo.org/forgejo/runner:<versión>`). Es el runner quien se conecta *hacia fuera* a `forgejo.404labo.net` — sin puerto entrante ni DNS propio que gestionar, solo salida HTTPS. Encaja como servicio Compose clásico en `ryzen` (candidato ya apuntado en el punto 2), no como stack Swarm.
+- **Registro**: el token se genera desde la UI de Forgejo, con el alcance elegido explícitamente — instancia completa (`/admin/actions/runners`, solo admin), una organización, un usuario, o un repositorio concreto (`Configuración del repo → Acciones → Nodos`, ya visto en `docs/forgejo/03-repositorios.md`). El alcance determina qué workflows puede recoger ese runner en concreto. El comando clásico `forgejo-runner register` está deprecado a favor de un subcomando más nuevo (`actions register`) — confirmar la sintaxis exacta en la documentación oficial en el momento de implementarlo, no fiarse de una nota de hace tiempo.
+- **Configuración del runner** (qué etiquetas acepta, modo de ejecución, caché, credenciales de conexión) vive en un `config.yaml` **local a la máquina del runner** (generado con `forgejo-runner generate-config`) — no en el almacenamiento de Forgejo, así que no interfiere con el volumen NFS de la mejora 7.4.
+- **Cómo se ejecutan los steps de un job — esto es lo que resuelve de verdad el punto 3**: cada "etiqueta" del runner mapea un nombre (el que usa `runs-on:` en el workflow) a un modo de ejecución: `docker://imagen`/`lxc://...` (cada job arranca en un contenedor aislado nuevo — necesita que el runner tenga acceso a Docker, vía un sidecar `docker:dind` propio, **no** el `docker.sock` real del host, mismo criterio de aislamiento ya aplicado en este clúster a `portainer-agent`/registry) o `host` (los pasos corren directos en el SO del runner, **sin aislamiento** — advertencia explícita de la documentación oficial: "un solo job puede destruir el host de forma permanente"). Decisión para cuando se implemente: `docker://` con `dind` en un contenedor propio, nunca `host` como modo por defecto ni el `docker.sock` real de `ryzen`.
+- **No hace falta un runner activo todo el rato — el modelo es "pull", el runner conecta hacia fuera**: mientras no haya ningún runner conectado con las etiquetas que pide un job, ese job se queda en estado `waiting` en la cola indefinidamente (no falla, no se pierde). Esto habilita varias formas de operar sin gasto de recursos permanente, de menos a más automatizado:
+  1. **Manual** — sin runner por defecto; se arranca el contenedor a mano justo antes de necesitar CI, recoge lo pendiente, se para después. Sin configuración especial.
+  2. **Aprovechando el Wake-on-LAN ya existente de `ryzen`** (`docs/19-wake-on-lan.md`, `shared/scripts/wake-mole.sh`) — si el runner vive ahí, "despertar `ryzen` + arrancar el runner" es una extensión natural del mismo gesto que ya se usa para las tareas de GPU.
+  3. **Runners efímeros bajo demanda, sin intervención manual** — un script/temporizador que consulta `GET /api/v1/repos/<owner>/<repo>/actions/runners/jobs` buscando jobs en `waiting`, y cuando encuentra uno, registra un runner con `ephemeral: true` y lo lanza con `forgejo-runner one-job` apuntando a ese job — Forgejo lo borra solo al terminar, nada queda residente. Existe una variante "nativa" vía KEDA (tiene un *scaler* específico para Forgejo), pero requiere Kubernetes — este clúster no lo usa hoy (aparte está la mejora, todavía no iniciada, de k3s sobre VMs en el backlog, sin relación con esta decisión).
+  - **Recomendación**: opción 1 o 2 de sobra para el uso esporádico esperado en un homelab — la 3 es infraestructura real a construir/mantener por un beneficio (latencia cero) que probablemente no compensa todavía. Revisar si el uso de Actions crece.
+  - **Decisión (2026-09-03)**: lanzamiento manual (opción 1) — arrancar el runner a mano en el nodo que convenga en cada momento, sin fijarlo de antemano a `ryzen` en concreto. Sin más desarrollo por ahora; se retoma cuando se aborde 7.3 de verdad.
+- **Persistencia de lo instalado durante un job (Docker, `aws cli`, cualquier paquete) — depende por completo del modo de ejecución de arriba**: con `docker://` (el modo elegido para este clúster), cada job arranca un contenedor **nuevo** desde la imagen indicada y ese contenedor se destruye al terminar — todo lo instalado en los `steps:` desaparece con él, el siguiente job vuelve a partir limpio, sin deriva de estado ni conflictos entre proyectos (mismo modelo que los runners alojados de GitHub Actions). Matices:
+  - La **imagen base** sí queda cacheada por capas en el sidecar `docker:dind` entre jobs (por rendimiento, evita redescargarla) — pero es solo el punto de partida; ningún job hereda lo que instaló uno anterior, todos parten del mismo contenido de la imagen.
+  - Para cachear algo entre ejecuciones **a propósito** (dependencias de `npm`/`pip`/`cargo` para acelerar builds), la vía correcta es la acción `cache` (compatible con la de GitHub Actions) — persistencia explícita, con clave y alcance, no un efecto colateral.
+  - Para tener herramientas siempre disponibles sin reinstalarlas en cada job (`aws cli` de forma estable, por ejemplo), la vía correcta es construir una imagen propia con eso ya incluido y publicarla en `registry.404labo.net` (ya operativo, `docs/29-registry-mantenimiento.md`) — estado persistente pero versionado y controlado por quien lo construye, no una acumulación silenciosa.
+  - **Con `host` (descartado como modo por defecto, ver arriba) el problema sí es real**: sin ningún contenedor de por medio, lo que instale un job se queda en el sistema operativo del runner para siempre, hasta que alguien lo desinstale o reinstale la máquina a mano — la razón de fondo detrás del aviso oficial ya citado ("un solo job puede destruir el host de forma permanente").
+- **⚠️ Sistema operativo del runner — hallazgo importante antes de comprometerse a "todo en Forgejo"**: `forgejo-runner` **solo tiene soporte oficial para Linux** (amd64/arm64) — confirmado en la propia documentación de instalación del proyecto, no es una limitación menor. Windows existe como binario **no oficial**, mantenido por la comunidad (`Crown0815/forgejo-runner-windows`), y el propio repo "oficial-experimental" en `code.forgejo.org/windows/runner` se autodescribe como *"alpha release, should not be considered secure enough to deploy in production"*. macOS no tiene ni siquiera eso — solo una discusión abierta en el proyecto sobre si algún día se soportará. Además, por licencia de Apple, macOS no se puede virtualizar fuera de hardware Apple real (por eso GitHub/Codemagic/Bitrise mantienen granjas de Macs físicos para sus runners macOS) — no hay atajo software posible, a diferencia de Windows, donde la única barrera es la madurez del runner, no la licencia. **Ningún nodo actual del clúster es hardware Apple** (`docs/01-topologia.md`) — para builds de iOS/macOS haría falta comprar un Mac real; no hay alternativa autoalojada. Si en algún momento hace falta compilar apps iOS/macOS o Windows nativo, la opción más alineada con el plan ya existente de la mejora 7 (GitHub como espejo) es un **híbrido**: Linux en Forgejo Actions autoalojado, y esos jobs concretos disparados en GitHub Actions sobre el propio espejo (GitHub ya tiene runners macOS/Windows oficiales y maduros) — no añade una dependencia nueva, GitHub ya iba a seguir ahí de todos modos. Para Windows autoalojado sin depender de GitHub, la alternativa es una VM Windows (encajaría con la mejora, todavía no iniciada, de Cockpit+libvirt en `ryzen`) corriendo el runner no oficial, asumiendo conscientemente el riesgo "alpha".
 
 #### 7.4 Almacenamiento de artefactos
 
@@ -187,6 +306,17 @@ Lo que sigue pendiente de esta sección original:
 
 1. Si además se quiere un Package Registry integrado en el propio Forgejo (OCI, npm, PyPI, genérico, Debian, Maven...) en vez del `registry:2` standalone actual, evaluarlo cuando llegue esa fase — no es urgente mientras el `registry:2` cumpla.
 2. Automatizar el propio `make build` (disparo por webhook/CI en vez de manual) — sigue siendo un comando que hay que correr a mano tras cada cambio de código; eso es lo que de verdad falta para llamarlo "CI" y no solo "registry con build manual".
+
+**Investigado (2026-09-03), sin implementar todavía — dónde dejan artefactos las Forgejo Actions y los adjuntos de releases, y qué hace falta configurar cuando llegue la 7.3:**
+
+Dos mecanismos distintos, ambos ya soportados por Forgejo, ninguno de los dos activado a propósito hoy (no hay ningún `forgejo-runner` registrado — sin runner, "Actions" no ejecuta nada aunque esté "activo" a nivel de instancia por defecto desde Forgejo 1.21):
+
+- **Adjuntos de releases/incidencias** (equivalente a subir ficheros a un release de GitHub) — sección `[attachment]` de `app.ini`. Confirmado en vivo contra esta instancia: `PATH = /var/lib/gitea/data/attachments` (sin override explícito en el `app.ini` desplegado, todo por defecto). Límites por defecto: `FILE_MAX_SIZE = 50` (MB por adjunto) y `MAX_FILES = 5` por subida — bajos comparados con los releases de GitHub (varios GB); si algún día se suben binarios grandes a un release, subir `FILE_MAX_SIZE` vía `FORGEJO__attachment__FILE_MAX_SIZE` en el compose.
+- **Artefactos de Forgejo Actions** (equivalente a `actions/upload-artifact` de GitHub Actions — build outputs de un job, no confundir con los adjuntos de arriba) — sección `[actions]`, `ARTIFACT_RETENTION_DAYS = 90` por defecto (se borran solos pasado ese plazo, configurable; `-1` los deja indefinidamente). Confirmado en vivo: los directorios `actions_artifacts/`, `actions_log/` y `actions_id_token/` **ya existen** en el contenedor real (`/var/lib/gitea/actions_artifacts`, etc.), creados automáticamente al arrancar aunque Actions no tenga ningún runner registrado todavía.
+
+**Lo importante para cuando llegue la 7.3**: tanto los adjuntos como los artefactos de Actions (y también el Package Registry del punto 1, si se activa: `/var/lib/gitea/packages`, mismo patrón) viven bajo `/var/lib/gitea/`, que es **el mismo volumen NFS único** ya provisionado en la instalación núcleo de la mejora 7 (`docs/36-forgejo-repositorios-git.md`). Es decir: **no hace falta ningún volumen ni configuración de almacenamiento nueva** para que Actions guarde sus artefactos o para que funcionen los adjuntos de releases — ya está cubierto. Si el volumen NFS se quedara corto algún día, Forgejo soporta redirigir cualquiera de estas categorías a un backend S3/MinIO por separado (`[storage.attachments]`, `[storage.artifacts]`, etc., con `STORAGE_TYPE = minio` + `MINIO_ENDPOINT`/`MINIO_BUCKET`/credenciales) — no evaluado, no es necesario a la escala actual de este clúster.
+
+**Hallazgo aparte, no relacionado con artefactos pero encontrado durante esta revisión**: `DISABLE_REGISTRATION = false` en el `app.ini` desplegado — el auto-registro público de cuentas está abierto en esta instancia. Mitigado hoy porque Forgejo solo es alcanzable desde la LAN/Tailscale (`docs/36-forgejo-repositorios-git.md`), pero no fue una decisión deliberada documentada — revisar si se quiere cerrar (`FORGEJO__service__DISABLE_REGISTRATION=true`) antes de dar por cerrada la mejora 7 del todo.
 
 ### Esfuerzo estimado
 Alto — sobre todo por el volumen de migrar repositorios uno a uno, montar/probar CI, y decidir la estrategia de sincronización con calma. Abordar por fases.
@@ -1652,7 +1782,7 @@ Medio-alto, y no antes de la mejora 48 — la instalación de k3s en sí es ráp
 | 4 | ~~ntfy (notificaciones proactivas)~~ | Media | Medio | **Completado** (2026-09-01) — `docs/34-ntfy-notificaciones.md`; stack Swarm desplegado y verificado en vivo, conectado como contact point de Grafana |
 | 5 | ~~Integración NUT del SAI existente~~ | Media | Medio | **Completado** (2026-09-01) — `docs/33-nut-sai.md`; SAI conectado a `pi-obs` (no a `ryzen`), aviso proactivo ya conectado vía la mejora 4 (ntfy) |
 | 6 | Migrar tooling de mantenimiento a Ansible | Media | Medio-alto | Punto 2 (ya cumplido) |
-| 7 | Forgejo (repos + CI + artefactos), con GitHub como espejo | Media | Alto | Instalación núcleo hecha y verificada (2026-09-03, `docs/36-forgejo-repositorios-git.md`) — pendiente: migración de repos (7.2) y Actions/CI (7.3) en rondas futuras |
+| 7 | Forgejo (repos + CI + artefactos), con GitHub como espejo | Media | Alto | Instalación núcleo hecha y verificada (2026-09-03, `docs/36-forgejo-repositorios-git.md`). Runners (7.3) desplegados y verificados en vivo (2026-09-04): `forgejo-runner-pinchi` (por defecto, siempre arriba) + `forgejo-runner-ryzen` (manual) — ambos Compose clásico, no Swarm (ver detalle en 7.3, límite real de Swarm con contenedores privilegiados) — pendiente: probar con un workflow real, SonarQube, cerrar `DISABLE_REGISTRATION`; migración de repos (7.2) sigue en rondas futuras |
 | 8 | ~~Registry: limpieza y garbage collection~~ | Media | Bajo | **Implementado (uso manual)** — `docs/29-registry-mantenimiento.md`; alerta de disco cubierta por la mejora 3 (ya completada) |
 | 9 | Tailscale: política de ACL | Baja | Bajo-medio | Tailscale ya desplegado (`docs/18`) |
 | 10 | ~~NAS UGREEN: migrar `nfs-data` a NFSv4~~ — completada | Baja | — | Investigado en real: UGOS Pro revierte `/etc/exports` solo, sin tocar la GUI — inviable. NFSv3 definitivo (`docs/21`) |

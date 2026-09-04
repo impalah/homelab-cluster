@@ -1,0 +1,126 @@
+name: homelab-ryzen-forgejo-runner
+
+# =============================================================================
+# Mejora 7.3 (docs/22-mejoras-futuras.md): segundo runner de Forgejo Actions,
+# LANZADO A MANO en ryzen -- decisión explícita del usuario (2026-09-04): un
+# runner siempre encendido en `pinchi` (Swarm, docker-swarm/stacks/
+# forgejo-runner-pinchi/) más este, manual, para cuando ryzen esté encendido
+# y sobre capacidad de CPU/RAM libre para CI. Mismo patrón que
+# switch-llm-backend.sh: nunca arranca solo, siempre `docker compose -f
+# docker-compose.forgejo-runner.yml up -d` a propósito.
+#
+# SIN acceso a GPU para los contenedores de cada job -- decidido
+# explícitamente (2026-09-04): la alternativa (montar el socket Docker real
+# del host para que los jobs puedan pedir --gpus, igual que ollama/vllm) daría
+# a cualquier workflow con push a un repo con Actions control total del host
+# mientras el runner esté arriba (equivalente a root). Se prefiere el mismo
+# sidecar `docker:dind` aislado que en pinchi -- más CPU/RAM libres para CI,
+# sin GPU, coherente entre los dos runners. Si en el futuro hace falta GPU en
+# CI (p.ej. tests de whisper-service/vllm), revisar esta decisión aparte.
+#
+# SIN Infisical, a propósito -- a diferencia del runner de pinchi (stack
+# Swarm declarativo). ryzen no tiene el binario ni la CA de Infisical
+# sincronizados (no es de los nodos que ya lo usan) y este runner lo arranca
+# a mano el propio operador cada vez -- mismo patrón que el resto de
+# ryzen/.env (secretos reales solo en el host, `.env.forgejo-runner.example`
+# versionado con placeholders). Añadir Infisical aquí sería una dependencia
+# nueva sin beneficio real para algo que ya requiere intervención manual.
+#
+# Registro OFFLINE en Forgejo ya hecho en vivo (2026-09-04, mismo mecanismo
+# que pinchi: `forgejo forgejo-cli actions register --name
+# forgejo-runner-ryzen --secret <secreto>`) -- UUID/TOKEN resultantes van en
+# el .env real de este host, ver .env.forgejo-runner.example.
+#
+# Label distintiva `ryzen` (no comparte `ubuntu-latest`/`docker` con pinchi a
+# propósito) -- así los workflows genéricos (runs-on: ubuntu-latest) van
+# siempre al runner por defecto de pinchi, y este runner solo recibe jobs que
+# lo pidan explícitamente (runs-on: ryzen), sin competir por trabajos
+# normales cuando esté encendido.
+#
+# cache.enabled: false -- misma limitación que pinchi (contenedores de job
+# viven en la red anidada de dind, cache.host no investigado todavía).
+#
+# Arranque manual:
+#   cd ryzen && docker compose -f docker-compose.forgejo-runner.yml up -d
+# Parada manual:
+#   cd ryzen && docker compose -f docker-compose.forgejo-runner.yml down
+# =============================================================================
+
+x-logging: &loki-logging
+  driver: loki
+  options:
+    loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+    loki-external-labels: "node=ryzen"
+    mode: non-blocking
+    max-buffer-size: 4m
+
+services:
+  dind:
+    image: docker:28-dind
+    container_name: forgejo-runner-ryzen-dind
+    restart: unless-stopped
+    logging: *loki-logging
+    privileged: true
+    environment:
+      DOCKER_TLS_CERTDIR: ""
+    # Mismos flags que el sidecar de pinchi -- ver docker-swarm/stacks/
+    # forgejo-runner-pinchi/docker-compose.yml para el porqué de cada uno.
+    command: ["dockerd", "-H", "tcp://0.0.0.0:2375", "--tls=false", "--dns=192.168.1.170"]
+    volumes:
+      - forgejo-runner-ryzen-dind-data:/var/lib/docker
+    networks:
+      - forgejo-runner-ryzen-net
+
+  runner:
+    image: data.forgejo.org/forgejo/runner:13.1.0
+    container_name: forgejo-runner-ryzen
+    restart: unless-stopped
+    logging: *loki-logging
+    depends_on:
+      - dind
+    env_file:
+      - .env.forgejo-runner
+    environment:
+      DOCKER_HOST: tcp://dind:2375
+    # config.yml se genera a partir de FORGEJO_RUNNER_UUID/FORGEJO_RUNNER_TOKEN
+    # (en .env.forgejo-runner, real, no versionado) -- mismo formato de
+    # fichero que pinchi, pero sin Infisical de por medio.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        cat > /data/config.yml <<CFG
+        log:
+          level: info
+        runner:
+          file: .runner
+          capacity: 2
+          timeout: 3h
+          insecure: false
+          labels:
+            - "ryzen:docker://ghcr.io/catthehacker/ubuntu:act-latest"
+        cache:
+          enabled: false
+        container:
+          network: ""
+          docker_host: "automount"
+          valid_volumes: []
+        server:
+          connections:
+            forgejo:
+              url: https://forgejo.404labo.net/
+              uuid: $${FORGEJO_RUNNER_UUID}
+              token: $${FORGEJO_RUNNER_TOKEN}
+        CFG
+        exec forgejo-runner daemon --config /data/config.yml
+    networks:
+      - forgejo-runner-ryzen-net
+
+networks:
+  forgejo-runner-ryzen-net:
+    name: forgejo-runner-ryzen-net
+    driver: bridge
+
+volumes:
+  forgejo-runner-ryzen-dind-data:
+    name: forgejo-runner-ryzen-dind-data

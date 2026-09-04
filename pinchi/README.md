@@ -15,6 +15,15 @@ apaga este host si el SAI físico del clúster, conectado a `pi-obs`, ordena un 
 batería crítica) — necesita `privileged: true` de verdad, que Swarm ignora en silencio, así
 que no podía ser un servicio Swarm más. No migra ningún otro servicio a Compose clásico.
 
+**Segunda excepción, mejora 7.3 (`docs/22-mejoras-futuras.md`, 2026-09-04)**: el mismo fichero
+suma ahora `forgejo-runner-pinchi` (+ su sidecar `dind`) — runner por defecto de Forgejo
+Actions, siempre en ejecución. Iba a ser un stack Swarm de verdad; descartado tras confirmar en
+vivo que Swarm ignora en silencio **tanto** `privileged` **como** `security_opt` (sin este
+último, el `mount()` que necesita un `dockerd` anidado queda bloqueado por el seccomp por
+defecto, sin ninguna vía de escape dentro de Swarm) — mismo síntoma exacto ya visto aquí con
+`nut-upsmon`, confirmado esta vez además con `docker service create --help`, que ni siquiera
+tiene un flag `--security-opt`.
+
 - IP estática (Netplan), paquetes base, Docker Engine + Compose plugin instalados.
 - Usuario de administración dedicado `u-forge` (sudo sin contraseña, clave SSH, mismo patrón que el resto de nodos) — acceso remoto por contraseña deshabilitado.
 - Docker Swarm: unido como manager (mejora 33) — sin servicios pinnados propios, recibe carga vía routing mesh.

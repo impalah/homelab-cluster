@@ -5,11 +5,25 @@ name: homelab-pinchi
 # propio de este nodo. Hasta ahora pinchi era Swarm-only (docs/30-instalacion-
 # pinchi.md, docs/32-manual-operaciones-swarm.md): sin servicios pinnados,
 # solo recibía carga vía routing mesh. Este fichero NO forma parte de esa
-# migración ni la revierte -- existe únicamente para nut-upsmon (cliente NUT,
-# ver docs/33-nut-sai.md), que necesita `privileged: true` de verdad y por
-# tanto no puede ser un servicio Swarm (docker stack deploy ignora
-# privileged/devices en silencio, confirmado en
-# docker-swarm/stacks/common/docker-compose.yml).
+# migración ni la revierte -- existe únicamente para servicios que necesitan
+# algo que Swarm no puede dar:
+#
+# - nut-upsmon (cliente NUT, ver docs/33-nut-sai.md) -- `privileged: true`
+#   de verdad, imprescindible para el D-Bus real del host.
+# - forgejo-runner-pinchi + su sidecar dind (mejora 7.3, docs/22-mejoras-
+#   futuras.md) -- runner POR DEFECTO de Forgejo Actions, siempre en
+#   ejecución. Iba a ser un stack Swarm de verdad (decisión inicial del
+#   usuario), descartado tras una prueba en vivo: Swarm ignora en silencio
+#   TANTO `privileged` COMO `security_opt` (sin este último, el perfil
+#   seccomp por defecto bloquea `mount()`, que un `dockerd` anidado
+#   necesita para arrancar) -- `docker service create --help` ni siquiera
+#   tiene un flag `--security-opt`, no es un problema de sintaxis del
+#   compose. Mismo síntoma exacto ya confirmado aquí mismo para nut-upsmon,
+#   solo que ese necesitaba D-Bus y este necesita dind.
+#
+# En ambos casos: `docker stack deploy` ignora `privileged`/`devices`/
+# `security_opt` en silencio (confirmado en vivo dos veces, con dos
+# servicios distintos), por eso viven aquí en vez de en docker-swarm/stacks/.
 # =============================================================================
 
 x-logging: &loki-logging
@@ -52,7 +66,89 @@ services:
     networks:
       - pinchi-net
 
+  # ---------------------------------------------------------------------------
+  # forgejo-runner-pinchi-dind — sidecar Docker-in-Docker AISLADO (no se monta
+  # el socket Docker real del host) para el modo `docker://` del runner de
+  # abajo. Mismo patrón que ryzen/docker-compose.forgejo-runner.yml -- ver
+  # ese fichero para el porqué de cada flag del `command`.
+  # ---------------------------------------------------------------------------
+  forgejo-runner-pinchi-dind:
+    image: docker:28-dind
+    container_name: forgejo-runner-pinchi-dind
+    logging: *loki-logging
+    restart: unless-stopped
+    privileged: true
+    environment:
+      DOCKER_TLS_CERTDIR: ""
+    command: ["dockerd", "-H", "tcp://0.0.0.0:2375", "--tls=false", "--dns=192.168.1.170"]
+    volumes:
+      - forgejo-runner-pinchi-dind-data:/var/lib/docker
+    networks:
+      - pinchi-net
+
+  # ---------------------------------------------------------------------------
+  # forgejo-runner-pinchi — runner POR DEFECTO de Forgejo Actions, siempre en
+  # ejecución (mejora 7.3). Etiquetas genéricas (docker/ubuntu-latest/
+  # ubuntu-22.04) -- recoge cualquier workflow que no pida explícitamente
+  # otra cosa; el runner manual de ryzen usa una etiqueta propia (`ryzen`)
+  # para no competir por trabajos normales. Registro OFFLINE ya hecho en vivo
+  # (`forgejo forgejo-cli actions register --name forgejo-runner-pinchi
+  # --secret ...`) -- UUID/TOKEN resultantes van en .env real (no
+  # versionado), ver .env.example. Sin Infisical a propósito -- ver cabecera
+  # del fichero y ryzen/docker-compose.forgejo-runner.yml (mismo motivo:
+  # Compose clásico, no un stack Swarm declarativo).
+  # cache.enabled: false -- los contenedores de cada job viven en la red
+  # anidada de dind, cache.host no investigado todavía.
+  # ---------------------------------------------------------------------------
+  forgejo-runner-pinchi:
+    image: data.forgejo.org/forgejo/runner:13.1.0
+    container_name: forgejo-runner-pinchi
+    logging: *loki-logging
+    restart: unless-stopped
+    depends_on:
+      - forgejo-runner-pinchi-dind
+    env_file:
+      - .env
+    environment:
+      DOCKER_HOST: tcp://forgejo-runner-pinchi-dind:2375
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        cat > /data/config.yml <<CFG
+        log:
+          level: info
+        runner:
+          file: .runner
+          capacity: 2
+          timeout: 3h
+          insecure: false
+          labels:
+            - "docker:docker://ghcr.io/catthehacker/ubuntu:act-latest"
+            - "ubuntu-latest:docker://ghcr.io/catthehacker/ubuntu:act-latest"
+            - "ubuntu-22.04:docker://ghcr.io/catthehacker/ubuntu:act-22.04"
+        cache:
+          enabled: false
+        container:
+          network: ""
+          docker_host: "automount"
+          valid_volumes: []
+        server:
+          connections:
+            forgejo:
+              url: https://forgejo.404labo.net/
+              uuid: $${FORGEJO_RUNNER_UUID}
+              token: $${FORGEJO_RUNNER_TOKEN}
+        CFG
+        exec forgejo-runner daemon --config /data/config.yml
+    networks:
+      - pinchi-net
+
 networks:
   pinchi-net:
     name: pinchi-net
     driver: bridge
+
+volumes:
+  forgejo-runner-pinchi-dind-data:
+    name: forgejo-runner-pinchi-dind-data
