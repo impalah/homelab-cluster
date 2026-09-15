@@ -1772,62 +1772,6 @@ Medio-alto, y no antes de la mejora 48 — la instalación de k3s en sí es ráp
 
 ---
 
-## Resumen
-
-| # | Mejora | Prioridad | Esfuerzo | Depende de |
-|---|---|---|---|---|
-| 1 | Automatizar las copias de seguridad y copiarlas fuera de nodo | Alta | Bajo–medio | — |
-| 2 | ~~`git init` del repo + remoto~~ | Alta | — | **Completado** |
-| 3 | ~~Alerta de espacio en disco~~ | Media | Bajo | **Completado** (2026-09-01) — `docs/14-monitorizacion-completa-cluster.md`; conectada a ntfy (mejora 4) |
-| 4 | ~~ntfy (notificaciones proactivas)~~ | Media | Medio | **Completado** (2026-09-01) — `docs/34-ntfy-notificaciones.md`; stack Swarm desplegado y verificado en vivo, conectado como contact point de Grafana |
-| 5 | ~~Integración NUT del SAI existente~~ | Media | Medio | **Completado** (2026-09-01) — `docs/33-nut-sai.md`; SAI conectado a `pi-obs` (no a `ryzen`), aviso proactivo ya conectado vía la mejora 4 (ntfy) |
-| 6 | Migrar tooling de mantenimiento a Ansible | Media | Medio-alto | Punto 2 (ya cumplido) |
-| 7 | Forgejo (repos + CI + artefactos), con GitHub como espejo | Media | Alto | Instalación núcleo hecha y verificada (2026-09-03, `docs/36-forgejo-repositorios-git.md`). Runners (7.3) desplegados y verificados en vivo (2026-09-04): `forgejo-runner-pinchi` (por defecto, siempre arriba) + `forgejo-runner-ryzen` (manual) — ambos Compose clásico, no Swarm (ver detalle en 7.3, límite real de Swarm con contenedores privilegiados) — pendiente: probar con un workflow real, SonarQube, cerrar `DISABLE_REGISTRATION`; migración de repos (7.2) sigue en rondas futuras |
-| 8 | ~~Registry: limpieza y garbage collection~~ | Media | Bajo | **Implementado (uso manual)** — `docs/29-registry-mantenimiento.md`; alerta de disco cubierta por la mejora 3 (ya completada) |
-| 9 | Tailscale: política de ACL | Baja | Bajo-medio | Tailscale ya desplegado (`docs/18`) |
-| 10 | ~~NAS UGREEN: migrar `nfs-data` a NFSv4~~ — completada | Baja | — | Investigado en real: UGOS Pro revierte `/etc/exports` solo, sin tocar la GUI — inviable. NFSv3 definitivo (`docs/21`) |
-| 11 | k6 para pruebas de carga automatizadas | Media | Bajo-medio | Prometheus/Grafana ya desplegados (`docs/08`) |
-| 12 | RAG de libros en PDF desde Open WebUI | Media | Medio | `markitdown-service`, Qdrant y Ollama ya desplegados |
-| 13 | Copiar logs/métricas de pi-obs al NAS | Media | Medio | NFS del NAS ya montado (`docs/21`) |
-| 14 | Evaluar Floci como emulador local de AWS | Media | Bajo | — |
-| 15 | ~~Panel de control de servicios + estado en `index.home.arpa`~~ | Media | — | **Completado** — `docs/28-capataz-consola-automatizacion.md`; Capataz sustituye la página estática, login real vía Authentik |
-| 16 | ~~Sistema de secretos programático (Infisical)~~ | Media | — | **Completado** — `docs/26-infisical-secretos.md`; solo `apikey-service` migrado, resto en mejora 28 |
-| 17 | ~~Open Terminal en modo MCP (Open WebUI + n8n)~~ | Media | — | **Completado** — `docs/24-open-terminal-mcp.md` |
-| 18 | OpenClaw — asistente personal de IA autoalojado | Media | Medio | Ollama ya desplegado si se apunta a modelos locales |
-| 19 | Opencode — agente de código open source para terminal | Media | Bajo | Ollama ya desplegado si se apunta a modelos locales |
-| 20 | LiteLLM — proxy unificado hacia AWS Bedrock, conectado a Open WebUI | Media | Medio | Cuenta/IAM de AWS; Open WebUI ya desplegado; alternativa a mejora 21 |
-| 21 | ~~Bifrost — gateway hacia AWS Bedrock, conectado a Open WebUI~~ | Media | — | **Completado** — `docs/23-bifrost-gateway-llm.md` |
-| 22 | Coste de llamadas LLM (Bifrost) en Grafana, con vigilancia y alarmas | Media | Bajo-medio | Bifrost ya desplegado (`docs/23`, expone `bifrost_cost_total`); Prometheus/Grafana ya desplegados (`docs/08`); alerta conectable a ntfy (mejora 4, ya disponible) |
-| 23 | ~~Mover `logs.db`/`config.db` de Bifrost a Postgres centralizado~~ | Media | — | **Completado** — `docs/23-bifrost-gateway-llm.md` |
-| 24 | ~~Servidor Valkey (compatible Redis) securizado — key-value + pub/sub~~ | Media | — | **Completado** — `docs/25-valkey-cache.md` |
-| 25 | ~~Authentik — authn/authz centralizado, piloto en Prometheus~~ | Media | — | **Completado** — `docs/27-authentik-sso.md`; solo Prometheus protegido, resto en mejora 29 |
-| 26 | Investigar tool-calling fiable — modelos locales (Ollama) y Bedrock/Claude (Bifrost) | Media | Medio | Open Terminal MCP ya desplegado (mejora 17, `docs/24`); ningún modelo probado completa una llamada de herramienta hoy |
-| 27 | Activar TLS en `postgres-main` | Media | Medio-alto | CA interna ya desplegada (`docs/15`); patrón ya probado con Valkey (mejora 24, `docs/25`) |
-| 28 | ~~Migrar el resto de servicios del clúster a Infisical~~ | Media | — | **Completado (parcial)** — `docs/26-infisical-secretos.md`; 9 servicios migrados, `registry`/`postgres-exporter`/`whisper-service`/`vllm` quedan para más adelante |
-| 29 | Integrar Authentik en el resto de paneles (OIDC nativo: Grafana, Portainer...) | Media | Medio | Authentik ya desplegado y patrón forward-auth validado (mejora 25, `docs/27`) |
-| 30 | Entorno de notebooks en el clúster (code-server / JupyterLab) para estudios de datos | Baja-media | Bajo-medio | Postgres/Qdrant y NFS del NAS ya disponibles; Authentik (mejora 25) para protegerlo; solo compensa si hace falta ejecución que sobreviva a la sesión de escritorio |
-| 31 | Nexus (u alternativa) como repositorio centralizado de paquetes, integrado con Forgejo | Baja | Medio | Forgejo (mejora 7) para la integración de CI; NFS del NAS ya disponible; experimento deliberado, no cubre carencia operativa hoy |
-| 32 | ~~Dominio real + certificados Let's Encrypt (sustituye CA interna)~~ | Media | Medio-alto | **Completado** (2026-08-28, cierre mejora 41) — DNS-01 automatizado vía Route53/`dns_aws`, renovación por cron + rotación automática del secret de Traefik; CA interna reducida a un único consumidor (Valkey) |
-| 33 | ~~Migrar el clúster a Docker Swarm, progresivamente~~ | Baja-media | Alto | **Completado** (2026-08-27) — `docs/31-docker-swarm.md`; `ryzen` (mejora 37) y `pi-dns` (mejora 39) quedan fuera del swarm |
-| 34 | GitOps para las aplicaciones del clúster (propuestas a evaluar) | Media | Medio-alto | Depende de la propuesta elegida; sinergia con mejora 33 (ya completada) |
-| 35 | ~~Sustituir `nginx` por Traefik, integrado con Docker Swarm~~ | Media | Alto | **Completado** (2026-08-28, cierre mejora 41) — `docker-swarm/stacks/traefik/`; `nginx` en `pi-dns` decomisionado del todo |
-| 36 | ~~Vigilancia y alertas del estado de parcheo de los nodos (SO), y su continuación en Swarm~~ | Media | Bajo | **Completado** (2026-09-01) — `docs/16-mantenimiento-actualizaciones.md` sección 1.3; de paso, corregido un bug real de `mode: ingress` mezclando métricas entre nodos (`docs/31-docker-swarm.md`) |
-| 37 | ~~`ryzen` (mole) fuera del clúster Swarm — operativa como nodo Compose independiente~~ | Baja-media | Bajo | **Completado** — decisión de alcance de la mejora 33, confirmada estable |
-| 38 | Capacity planning con datos reales — `mem_limit`/`cpus` a partir de picos en Prometheus | Media | Bajo-medio | cAdvisor/Prometheus ya desplegados (`docs/04`, `docs/08`); inventario de servicios ya hecho (`docs/01`); GPU de `ryzen` queda fuera |
-| 39 | ~~`pi-dns` fuera del clúster Swarm — solo DNS/Tailscale; Traefik en modo `global` dentro del swarm~~ | Media | Medio-alto | **Completado** — `apikey-service` migrado al Swarm (mejora 41, cierre), la copia local de `pi-dns` retirada |
-| 40 | DNS secundario del clúster — resolución de `*.404labo.net` sin depender solo de `pi-dns` | Media | Bajo-medio | Config de Unbound/Pi-hole ya versionada; alcance de sincronización (Pi-hole completo vs. solo Unbound) queda como decisión abierta |
-| 41 | ~~Retirar `*.home.arpa` por completo — todo bajo `404labo.net`~~ | Media | Medio | **Completado** (2026-08-28) — `home.arpa` retirado de Pi-hole/Traefik/Unbound, `nginx` decomisionado, ver `docs/31-docker-swarm.md` |
-| 42 | Alertas de disponibilidad de nodos y servicios | Media | Bajo | Prometheus/Grafana Alerting ya desplegados, mismo patrón que la alerta de undervoltage (`docs/14`); canal de notificación real ya disponible (mejora 4, ntfy) — solo falta añadir el matcher correspondiente a `pi-obs/config/grafana/alerting/notification-policies.yml` |
-| 43 | ~~Auditoría de bind-mounts en Docker Swarm — evaluar alternativas a la fijación por nodo y a los puertos en `mode: host`~~ | Media | Medio | **Completado** (2026-08-31) — Bifrost/Capataz/Infisical revisados y redesplegados (`docker config` + `mode: ingress` donde no había colisión real); NFS-backed volumes evaluados y descartados por ahora, sin medir, sin urgencia real |
-| 44 | Pendiente de revisión — `sonarqube` se cuelga arrancando `infisical run` en `pinchi` | Media | Bajo-medio | Movido de vuelta a `pi-sonar` sin pérdida de datos; red/DNS/TLS/CA/allowlisting ya descartados como causa, falta sesión de depuración específica antes de reintentar el traslado |
-| 45 | ~~Dashboards de Grafana por servicio~~ | Media | Medio | **Completado** (2026-09-03) — plantilla genérica `homelab-servicio-generico` (38 servicios, Swarm + Compose clásico unificados) + dashboards a medida de `apikey-service` (auditoría OTLP real) y `qdrant` (recursos/logs + métricas nativas reales vía API key de solo lectura) |
-| 46 | Verificar si `toggle-direct-access.sh` cierra de verdad el acceso en los 5 managers, no solo en el nodo "asignado" | Media | Bajo-medio | Ningún servicio queda ya en `mode: host` tras la revisión de constraints (2026-08-31) -- confirmado en vivo que la routing mesh responde igual desde cualquier manager; falta comprobar si `DOCKER-USER` intercepta ese tráfico reenviado o lo bypasa |
-| 47 | ~~Volúmenes Docker `type: nfs` en vez de montaje NFS manual por nodo~~ | Baja | Bajo-medio | **Completado** (2026-09-03), 10 servicios migrados en dos pasadas: `registry`/`epub2pdf-service`/`pdf2chunks-service` (+ constraint de arquitectura x86_64 en los dos con imagen solo-amd64) y `authentik`/`capataz`/`n8n-main`/`n8n-aux`/`open-terminal-mcp`/`open-webui`/`sonarqube` (solo `extensions/`) — mismo dato real en el NAS, sin migración de bytes. `postgres-main`/`qdrant`/`sonarqube data/` siguen explícitamente fuera sin resolver antes el *fencing* |
-| 48 | Cockpit + libvirt en `ryzen` — gestión de VMs, arranque/parada por Ansible | Baja-media | Medio-alto | `ryzen` ya fuera del Swarm (mejora 37) y con Wake-on-LAN (mejora 19); acceso SSH hoy solo de alcance estrecho (`docs/16`); arranque/parada por Ansible depende de la mejora 6 (no iniciada) |
-| 49 | k3s en `ryzen` sobre VMs — clúster Kubernetes aislado para aprendizaje | Baja | Medio-alto | Depende por completo de la mejora 48 (necesita las VMs primero); entorno paralelo, no sustituye la decisión explícita de "Docker Swarm, no Kubernetes" (mejora 33/39, `CLAUDE.md`) |
-| 50 | Cudy R700 como router principal — gateway/DHCP/firewall/NAT del homelab | Baja | Medio | Guía completa en `docs/cudy.R700.router.md`; decisión pendiente sobre direccionamiento (mantener `192.168.1.0/24` vs. la `192.168.10.0/24` de la guía) antes de tocar nada — ver detalle en la sección 50 |
-| 51 | Migrar las 4 Raspberry Pi (`pi-dns`/`pi-obs`/`pi-sonar`/`pi-utils`) de Ubuntu Server a Alpine Linux | Baja-media | Medio-alto | Factible (investigado 2026-09-15, soporte RPi5 confirmado desde Alpine 3.19) — se beneficia de la mejora 40 (DNS secundario) antes de tocar `pi-dns` y de cerrar la mejora 44 antes de `pi-sonar`; media docena de `shared/scripts/*.sh` a reescribir (apt/systemd → apk/OpenRC) |
-
 ## 50. Cudy R700 como router principal — gateway, DHCP, firewall y NAT del homelab
 
 **Prioridad: baja**
@@ -1909,3 +1853,90 @@ El ahorro real está en la **base del sistema operativo** (Alpine: unos 130-180 
 ### Esfuerzo estimado
 
 Medio-alto — no por dificultad técnica de cada paso individual (bien acotada, sin incógnitas grandes tras la investigación de esta ronda), sino por el número de nodos con roles distintos (2 managers Swarm "tranquilos", 1 con un bug abierto encima, y 1 crítico sin redundancia) y por tener que reescribir media docena de scripts operativos que hoy asumen Ubuntu/apt/systemd. Sin dependencia dura de ninguna otra mejora, pero **se beneficia mucho de la mejora 40 (DNS secundario) antes de la fase 4**, y de cerrar la mejora 44 antes de la fase 3.
+
+---
+
+## 52. Aplicar el procedimiento estándar de acceso SSH (`docs/38`) — usuario único `admin`, claves por nodo, script de conexión
+
+**Prioridad: media**
+
+### Qué hay ya
+
+`docs/38-acceso-ssh-nodos.md` fija el procedimiento completo (instalación/configuración por SO — Ubuntu Server, Ubuntu Desktop, Alpine Linux —, endurecimiento de `sshd`, almacenamiento de claves en Infisical con respaldo en Vaultwarden, aplicable a SSH a pelo y a Ansible) — este es el trabajo real para aplicarlo, no descrito ahí a propósito, para no mezclar el "cómo debería ser" con el "qué falta hacer".
+
+**Decisión explícita del usuario (2026-09-15), que cambia el modelo original de este documento**: en vez de un usuario distinto por nodo (`u-data`, `u-dns`...), un **único usuario `admin`, idéntico en los 7 nodos** — prioriza la predictibilidad (`ssh admin@<ip>` siempre, sin tabla que consultar) sobre la trazabilidad por nombre de cuenta. El aislamiento real entre nodos sigue viniendo de la clave SSH (distinta por nodo, sin cambios respecto al diseño original de `docs/38`), no del nombre de usuario.
+
+### Qué falta
+
+1. **Dar de alta `admin` en los 7 nodos, incluido `ryzen`** — hoy `ryzen` no tiene ningún usuario de administración dedicado (se opera como `linus`), y los otros 6 tienen usuarios antiguos con nombre distinto. Seguir `docs/38` sección 3.4: crear `admin` como cuenta **nueva** en cada nodo, verificar de punta a punta, y solo entonces retirar el usuario antiguo (`u-data`/`u-dns`/`u-obs`/`u-sonar`/`u-utils`/`u-forge`) — nunca al revés, para no perder acceso a ningún nodo a medio migrar.
+2. **Una clave `ed25519` propia por nodo** (no la compartida de hoy) — auditado en vivo (`docs/38` sección 2): hoy una sola clave (`~/.ssh/id_ed25519` en `ryzen`) abre los 6 usuarios existentes. Con el cambio a `admin`, esto se resuelve de la misma pasada: cada nodo recibe su clave nueva junto con su cuenta `admin` nueva.
+3. **Crear el proyecto `ssh-access` en Infisical** (carpeta `/ssh-access/<nodo>/` por nodo, secreto `PRIVATE_KEY`) y subir ahí cada clave nueva conforme se genera.
+4. **Copia de respaldo en Vaultwarden** de cada clave, como vía de emergencia si Infisical (en `retaco`) no está disponible.
+5. **Escribir `shared/scripts/ssh-node.sh`** — el envoltorio de los tres comandos sueltos descritos en `docs/38` sección 5.4 (`ssh-agent` + `infisical secrets get ... | ssh-add -` + `ssh admin@<ip>`), para que conectar a un nodo sea un solo comando; puede resolver `<nodo>` → IP internamente, así ni la IP hace falta recordar.
+6. Actualizar `docs/01-topologia.md` (tabla de acceso SSH — usuario `admin` en los 7 nodos) y `shared/scripts/toggle-direct-access.sh` (mapa `NODE_SSH`) en cuanto la migración de cada nodo esté verificada, no antes.
+
+### Esfuerzo estimado
+
+Medio — sin incógnitas técnicas (todo ya validado conceptualmente contra mecanismos que este clúster ya usa, Infisical y Vaultwarden), pero son 7 nodos a dar de alta/migrar uno a uno sin cortar el acceso a ninguno mientras se hace (crear `admin` nuevo, verificar, solo entonces retirar la cuenta vieja donde exista — nunca al revés). Sin dependencias de otras mejoras.
+
+---
+
+## Resumen
+
+| # | Mejora | Prioridad | Esfuerzo | Depende de |
+|---|---|---|---|---|
+| 1 | Automatizar las copias de seguridad y copiarlas fuera de nodo | Alta | Bajo–medio | — |
+| 2 | ~~`git init` del repo + remoto~~ | Alta | — | **Completado** |
+| 3 | ~~Alerta de espacio en disco~~ | Media | Bajo | **Completado** (2026-09-01) — `docs/14-monitorizacion-completa-cluster.md`; conectada a ntfy (mejora 4) |
+| 4 | ~~ntfy (notificaciones proactivas)~~ | Media | Medio | **Completado** (2026-09-01) — `docs/34-ntfy-notificaciones.md`; stack Swarm desplegado y verificado en vivo, conectado como contact point de Grafana |
+| 5 | ~~Integración NUT del SAI existente~~ | Media | Medio | **Completado** (2026-09-01) — `docs/33-nut-sai.md`; SAI conectado a `pi-obs` (no a `ryzen`), aviso proactivo ya conectado vía la mejora 4 (ntfy) |
+| 6 | Migrar tooling de mantenimiento a Ansible | Media | Medio-alto | Punto 2 (ya cumplido) |
+| 7 | Forgejo (repos + CI + artefactos), con GitHub como espejo | Media | Alto | Instalación núcleo hecha y verificada (2026-09-03, `docs/36-forgejo-repositorios-git.md`). Runners (7.3) desplegados y verificados en vivo (2026-09-04): `forgejo-runner-pinchi` (por defecto, siempre arriba) + `forgejo-runner-ryzen` (manual) — ambos Compose clásico, no Swarm (ver detalle en 7.3, límite real de Swarm con contenedores privilegiados) — pendiente: probar con un workflow real, SonarQube, cerrar `DISABLE_REGISTRATION`; migración de repos (7.2) sigue en rondas futuras |
+| 8 | ~~Registry: limpieza y garbage collection~~ | Media | Bajo | **Implementado (uso manual)** — `docs/29-registry-mantenimiento.md`; alerta de disco cubierta por la mejora 3 (ya completada) |
+| 9 | Tailscale: política de ACL | Baja | Bajo-medio | Tailscale ya desplegado (`docs/18`) |
+| 10 | ~~NAS UGREEN: migrar `nfs-data` a NFSv4~~ — completada | Baja | — | Investigado en real: UGOS Pro revierte `/etc/exports` solo, sin tocar la GUI — inviable. NFSv3 definitivo (`docs/21`) |
+| 11 | k6 para pruebas de carga automatizadas | Media | Bajo-medio | Prometheus/Grafana ya desplegados (`docs/08`) |
+| 12 | RAG de libros en PDF desde Open WebUI | Media | Medio | `markitdown-service`, Qdrant y Ollama ya desplegados |
+| 13 | Copiar logs/métricas de pi-obs al NAS | Media | Medio | NFS del NAS ya montado (`docs/21`) |
+| 14 | Evaluar Floci como emulador local de AWS | Media | Bajo | — |
+| 15 | ~~Panel de control de servicios + estado en `index.home.arpa`~~ | Media | — | **Completado** — `docs/28-capataz-consola-automatizacion.md`; Capataz sustituye la página estática, login real vía Authentik |
+| 16 | ~~Sistema de secretos programático (Infisical)~~ | Media | — | **Completado** — `docs/26-infisical-secretos.md`; solo `apikey-service` migrado, resto en mejora 28 |
+| 17 | ~~Open Terminal en modo MCP (Open WebUI + n8n)~~ | Media | — | **Completado** — `docs/24-open-terminal-mcp.md` |
+| 18 | OpenClaw — asistente personal de IA autoalojado | Media | Medio | Ollama ya desplegado si se apunta a modelos locales |
+| 19 | Opencode — agente de código open source para terminal | Media | Bajo | Ollama ya desplegado si se apunta a modelos locales |
+| 20 | LiteLLM — proxy unificado hacia AWS Bedrock, conectado a Open WebUI | Media | Medio | Cuenta/IAM de AWS; Open WebUI ya desplegado; alternativa a mejora 21 |
+| 21 | ~~Bifrost — gateway hacia AWS Bedrock, conectado a Open WebUI~~ | Media | — | **Completado** — `docs/23-bifrost-gateway-llm.md` |
+| 22 | Coste de llamadas LLM (Bifrost) en Grafana, con vigilancia y alarmas | Media | Bajo-medio | Bifrost ya desplegado (`docs/23`, expone `bifrost_cost_total`); Prometheus/Grafana ya desplegados (`docs/08`); alerta conectable a ntfy (mejora 4, ya disponible) |
+| 23 | ~~Mover `logs.db`/`config.db` de Bifrost a Postgres centralizado~~ | Media | — | **Completado** — `docs/23-bifrost-gateway-llm.md` |
+| 24 | ~~Servidor Valkey (compatible Redis) securizado — key-value + pub/sub~~ | Media | — | **Completado** — `docs/25-valkey-cache.md` |
+| 25 | ~~Authentik — authn/authz centralizado, piloto en Prometheus~~ | Media | — | **Completado** — `docs/27-authentik-sso.md`; solo Prometheus protegido, resto en mejora 29 |
+| 26 | Investigar tool-calling fiable — modelos locales (Ollama) y Bedrock/Claude (Bifrost) | Media | Medio | Open Terminal MCP ya desplegado (mejora 17, `docs/24`); ningún modelo probado completa una llamada de herramienta hoy |
+| 27 | Activar TLS en `postgres-main` | Media | Medio-alto | CA interna ya desplegada (`docs/15`); patrón ya probado con Valkey (mejora 24, `docs/25`) |
+| 28 | ~~Migrar el resto de servicios del clúster a Infisical~~ | Media | — | **Completado (parcial)** — `docs/26-infisical-secretos.md`; 9 servicios migrados, `registry`/`postgres-exporter`/`whisper-service`/`vllm` quedan para más adelante |
+| 29 | Integrar Authentik en el resto de paneles (OIDC nativo: Grafana, Portainer...) | Media | Medio | Authentik ya desplegado y patrón forward-auth validado (mejora 25, `docs/27`) |
+| 30 | Entorno de notebooks en el clúster (code-server / JupyterLab) para estudios de datos | Baja-media | Bajo-medio | Postgres/Qdrant y NFS del NAS ya disponibles; Authentik (mejora 25) para protegerlo; solo compensa si hace falta ejecución que sobreviva a la sesión de escritorio |
+| 31 | Nexus (u alternativa) como repositorio centralizado de paquetes, integrado con Forgejo | Baja | Medio | Forgejo (mejora 7) para la integración de CI; NFS del NAS ya disponible; experimento deliberado, no cubre carencia operativa hoy |
+| 32 | ~~Dominio real + certificados Let's Encrypt (sustituye CA interna)~~ | Media | Medio-alto | **Completado** (2026-08-28, cierre mejora 41) — DNS-01 automatizado vía Route53/`dns_aws`, renovación por cron + rotación automática del secret de Traefik; CA interna reducida a un único consumidor (Valkey) |
+| 33 | ~~Migrar el clúster a Docker Swarm, progresivamente~~ | Baja-media | Alto | **Completado** (2026-08-27) — `docs/31-docker-swarm.md`; `ryzen` (mejora 37) y `pi-dns` (mejora 39) quedan fuera del swarm |
+| 34 | GitOps para las aplicaciones del clúster (propuestas a evaluar) | Media | Medio-alto | Depende de la propuesta elegida; sinergia con mejora 33 (ya completada) |
+| 35 | ~~Sustituir `nginx` por Traefik, integrado con Docker Swarm~~ | Media | Alto | **Completado** (2026-08-28, cierre mejora 41) — `docker-swarm/stacks/traefik/`; `nginx` en `pi-dns` decomisionado del todo |
+| 36 | ~~Vigilancia y alertas del estado de parcheo de los nodos (SO), y su continuación en Swarm~~ | Media | Bajo | **Completado** (2026-09-01) — `docs/16-mantenimiento-actualizaciones.md` sección 1.3; de paso, corregido un bug real de `mode: ingress` mezclando métricas entre nodos (`docs/31-docker-swarm.md`) |
+| 37 | ~~`ryzen` (mole) fuera del clúster Swarm — operativa como nodo Compose independiente~~ | Baja-media | Bajo | **Completado** — decisión de alcance de la mejora 33, confirmada estable |
+| 38 | Capacity planning con datos reales — `mem_limit`/`cpus` a partir de picos en Prometheus | Media | Bajo-medio | cAdvisor/Prometheus ya desplegados (`docs/04`, `docs/08`); inventario de servicios ya hecho (`docs/01`); GPU de `ryzen` queda fuera |
+| 39 | ~~`pi-dns` fuera del clúster Swarm — solo DNS/Tailscale; Traefik en modo `global` dentro del swarm~~ | Media | Medio-alto | **Completado** — `apikey-service` migrado al Swarm (mejora 41, cierre), la copia local de `pi-dns` retirada |
+| 40 | DNS secundario del clúster — resolución de `*.404labo.net` sin depender solo de `pi-dns` | Media | Bajo-medio | Config de Unbound/Pi-hole ya versionada; alcance de sincronización (Pi-hole completo vs. solo Unbound) queda como decisión abierta |
+| 41 | ~~Retirar `*.home.arpa` por completo — todo bajo `404labo.net`~~ | Media | Medio | **Completado** (2026-08-28) — `home.arpa` retirado de Pi-hole/Traefik/Unbound, `nginx` decomisionado, ver `docs/31-docker-swarm.md` |
+| 42 | Alertas de disponibilidad de nodos y servicios | Media | Bajo | Prometheus/Grafana Alerting ya desplegados, mismo patrón que la alerta de undervoltage (`docs/14`); canal de notificación real ya disponible (mejora 4, ntfy) — solo falta añadir el matcher correspondiente a `pi-obs/config/grafana/alerting/notification-policies.yml` |
+| 43 | ~~Auditoría de bind-mounts en Docker Swarm — evaluar alternativas a la fijación por nodo y a los puertos en `mode: host`~~ | Media | Medio | **Completado** (2026-08-31) — Bifrost/Capataz/Infisical revisados y redesplegados (`docker config` + `mode: ingress` donde no había colisión real); NFS-backed volumes evaluados y descartados por ahora, sin medir, sin urgencia real |
+| 44 | Pendiente de revisión — `sonarqube` se cuelga arrancando `infisical run` en `pinchi` | Media | Bajo-medio | Movido de vuelta a `pi-sonar` sin pérdida de datos; red/DNS/TLS/CA/allowlisting ya descartados como causa, falta sesión de depuración específica antes de reintentar el traslado |
+| 45 | ~~Dashboards de Grafana por servicio~~ | Media | Medio | **Completado** (2026-09-03) — plantilla genérica `homelab-servicio-generico` (38 servicios, Swarm + Compose clásico unificados) + dashboards a medida de `apikey-service` (auditoría OTLP real) y `qdrant` (recursos/logs + métricas nativas reales vía API key de solo lectura) |
+| 46 | Verificar si `toggle-direct-access.sh` cierra de verdad el acceso en los 5 managers, no solo en el nodo "asignado" | Media | Bajo-medio | Ningún servicio queda ya en `mode: host` tras la revisión de constraints (2026-08-31) -- confirmado en vivo que la routing mesh responde igual desde cualquier manager; falta comprobar si `DOCKER-USER` intercepta ese tráfico reenviado o lo bypasa |
+| 47 | ~~Volúmenes Docker `type: nfs` en vez de montaje NFS manual por nodo~~ | Baja | Bajo-medio | **Completado** (2026-09-03), 10 servicios migrados en dos pasadas: `registry`/`epub2pdf-service`/`pdf2chunks-service` (+ constraint de arquitectura x86_64 en los dos con imagen solo-amd64) y `authentik`/`capataz`/`n8n-main`/`n8n-aux`/`open-terminal-mcp`/`open-webui`/`sonarqube` (solo `extensions/`) — mismo dato real en el NAS, sin migración de bytes. `postgres-main`/`qdrant`/`sonarqube data/` siguen explícitamente fuera sin resolver antes el *fencing* |
+| 48 | Cockpit + libvirt en `ryzen` — gestión de VMs, arranque/parada por Ansible | Baja-media | Medio-alto | `ryzen` ya fuera del Swarm (mejora 37) y con Wake-on-LAN (mejora 19); acceso SSH hoy solo de alcance estrecho (`docs/16`); arranque/parada por Ansible depende de la mejora 6 (no iniciada) |
+| 49 | k3s en `ryzen` sobre VMs — clúster Kubernetes aislado para aprendizaje | Baja | Medio-alto | Depende por completo de la mejora 48 (necesita las VMs primero); entorno paralelo, no sustituye la decisión explícita de "Docker Swarm, no Kubernetes" (mejora 33/39, `CLAUDE.md`) |
+| 50 | Cudy R700 como router principal — gateway/DHCP/firewall/NAT del homelab | Baja | Medio | Guía completa en `docs/cudy.R700.router.md`; decisión pendiente sobre direccionamiento (mantener `192.168.1.0/24` vs. la `192.168.10.0/24` de la guía) antes de tocar nada — ver detalle en la sección 50 |
+| 51 | Migrar las 4 Raspberry Pi (`pi-dns`/`pi-obs`/`pi-sonar`/`pi-utils`) de Ubuntu Server a Alpine Linux | Baja-media | Medio-alto | Factible (investigado 2026-09-15, soporte RPi5 confirmado desde Alpine 3.19) — se beneficia de la mejora 40 (DNS secundario) antes de tocar `pi-dns` y de cerrar la mejora 44 antes de `pi-sonar`; media docena de `shared/scripts/*.sh` a reescribir (apt/systemd → apk/OpenRC) |
+| 52 | Aplicar el procedimiento de acceso SSH (`docs/38`) — usuario único `admin` en los 7 nodos, claves por nodo en Infisical, `ssh-node.sh` | Media | Medio | Procedimiento ya escrito (`docs/38-acceso-ssh-nodos.md`); falta dar de alta `admin` en los 7 nodos (incluido `ryzen`) y retirar los 6 usuarios antiguos una vez verificado |
+
+
+Ninguna de estas mejoras es urgente ni bloqueante — el clúster funciona correctamente sin ellas.
