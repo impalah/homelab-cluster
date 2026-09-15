@@ -136,3 +136,26 @@ Otras notas del piloto:
 - `CAPATAZ_CORS_ORIGINS=https://index.home.arpa` — en la práctica el navegador llama en same-origin (todo pasa por el proxy de `index.home.arpa`), pero se fija igualmente por higiene.
 - El token de Portainer usado en `secrets/portainer_token` fue proporcionado directamente por el usuario (no se creó un usuario técnico dedicado en Portainer en este pase — pendiente si se quiere acotar su alcance más adelante, ver `docs/07-operations.en.md` sección "Portainer Token" del propio repo de Capataz).
 - `secrets/*` desplegados con `chmod 644` (no `600`) — documentado así por el propio Capataz: los contenedores corren como uid `10001`, no como el usuario del host que hace el bind mount.
+
+## Catálogo v2: conectores y recursos (api 0.1.10 / runner 0.1.3 / frontend 0.1.16, 2026-09-11)
+
+Capataz pasó al modelo de su ADR-008 (`docs/adr/008-connectors-and-resources.es.md` del repo de Capataz): las URLs de Portainer/Grafana/Loki/Prometheus ya no son variables `CAPATAZ_*_URL` sino **conectores** del catálogo, y las credenciales (token de Portainer, clave SSH, `known_hosts`, contraseña de Vault) son **recursos** cifrados en PostgreSQL. Lo que cambió en el clúster (`docker-swarm/stacks/capataz/docker-compose.yml` ya lo refleja):
+
+- **Clave maestra**: Docker secret `capataz-resources-master-key-v1` (clave Fernet), montado como `resources_master_key` en `capataz-api` y `capataz-runner`. Se creó con `docker secret create` desde un fichero generado en el puesto de desarrollo; **hay que guardar una copia fuera del clúster** — un secret de Swarm no se puede volver a leer, y sin la clave los recursos guardados son irrecuperables (habría que volver a subirlos).
+- **Recursos del catálogo**: `capataz-catalog-v5` (formato v2) declara los cuatro recursos con `source: {file: <nombre>}`, que la api lee de `/run/capataz-resources/` **en cada arranque** — por eso los secrets de siempre (`capataz-portainer-token-v1`, `capataz-runner-ssh-private-key-v1`, `capataz-runner-known-hosts-v1`, `capataz-ansible-vault-password-v1`) se montan ahora en la **api** con target absoluto `/run/capataz-resources/<nombre>` (Swarm lo admite; comprobado en vivo) y **ya no en el runner**, que descifra lo que necesita de la base de datos en cada ejecución. Rotar el token o la clave se puede hacer desde la propia UI (Catálogo → Recursos → Reemplazar contenido), sin tocar el clúster.
+- **Variables retiradas** de api y runner: `CAPATAZ_PORTAINER_URL`, `CAPATAZ_GRAFANA_URL`, `CAPATAZ_PROMETHEUS_URL`, `CAPATAZ_STATUS_CACHE_TTL_SECONDS`.
+- **Migraciones**: `20260912_0008`/`0009` copiadas al volumen NFS `capataz-api-alembic` (la `0009` convierte los servicios y es irreversible). Procedimiento para copiar migraciones nuevas sin checkout en ningún nodo:
+
+  ```bash
+  tar -C api/alembic -cf - versions/<fichero>.py \
+    | docker --context swarm-manager run --rm -i -v capataz_capataz-api-alembic:/dst alpine tar -C /dst -xf -
+  ```
+
+### Procedimiento de despliegue que funcionó (y los dos tropiezos)
+
+1. `bash shared/scripts/fix-dns-resolver.sh all` **antes** de desplegar. En este despliegue `retaco` y `pi-utils` tenían `systemd-resolved` pegado en `1.1.1.1`: su daemon de Docker no resolvía `registry.404labo.net`, las tareas nuevas quedaban `Rejected` con `No such image: ...@sha256:...` y, como los tres servicios usan `stop-first`, el update se pausaba **con el servicio sin tareas** (caída real del frontend durante unos minutos, recuperada con `docker service rollback capataz_capataz-frontend`, que tira de la imagen anterior ya cacheada en el nodo). Ver `docs/13-troubleshooting.md`.
+2. `make build` (api/runner) y `make docker-build` (frontend) en el repo de Capataz; resolver el digest de la versión publicada (`docker buildx imagetools inspect registry.404labo.net/<imagen>:<versión>`) y desplegar **por digest** (`docker service update --image registry.404labo.net/<imagen>@sha256:... --with-registry-auth`) — con `:latest` Swarm no redespliega nada si el string de la imagen no cambia.
+3. Orden: api (aplica las migraciones e importa el catálogo al arrancar) → runner → frontend.
+4. Verificación: `https://home.404labo.net/` 200, `/config.js` sin secretos, `/api/v1/auth/me` sin token → `403`, y `/api/v1/openapi.json` con las rutas nuevas `/api/v1/connectors` y `/api/v1/resources`.
+
+Pendiente ajeno a este despliegue: `pi-obs` (Prometheus, Loki) y `pi-sonar` estaban apagados/inaccesibles — mientras `pi-obs` no vuelva, las métricas de Capataz salen vacías (`Prometheus query failed: All connection attempts failed` en los logs de la api).

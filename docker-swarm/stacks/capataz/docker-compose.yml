@@ -80,6 +80,21 @@
 # spec de Compose no expone esas opciones para tmpfs largo (solo
 # `size`/`mode`), aceptado como pérdida menor de endurecimiento defensivo,
 # no una regresión funcional.
+#
+# Capataz api 0.1.10 / runner 0.1.3 (2026-09-11, ADR-008 del repo de Capataz,
+# "connectors and resources", catálogo v2): las URLs de Portainer/Grafana/
+# Prometheus dejan de ser variables CAPATAZ_*_URL -- ahora son "conectores" del
+# catálogo -- y las credenciales (token de Portainer, clave SSH, known_hosts,
+# vault) pasan a ser "recursos" cifrados en PostgreSQL con la clave maestra
+# `capataz-resources-master-key-v1` (Fernet, montada en api y runner como
+# `resources_master_key`). El catálogo (`capataz-catalog-v5`, formato v2)
+# declara esos recursos con `source: {file: <nombre>}`, que la api lee de
+# /run/capataz-resources/ en cada arranque: por eso los cuatro secrets de
+# siempre se montan en la api como ficheros ahí (target absoluto, Swarm lo
+# admite), y el runner ya NO recibe ninguno -- descifra lo que necesita de la
+# base de datos por ejecución. Las migraciones nuevas (0008/0009) se copian al
+# volumen NFS capataz-api-alembic, como las anteriores. Ver
+# docs/28-capataz-consola-automatizacion.md.
 version: "3.8"
 
 services:
@@ -106,9 +121,6 @@ services:
       CAPATAZ_CORS_ORIGINS: https://index.404labo.net
       CAPATAZ_CELERY_QUEUE: automation
       CAPATAZ_CELERY_CONCURRENCY: "2"
-      CAPATAZ_PORTAINER_URL: https://portainer.404labo.net
-      CAPATAZ_GRAFANA_URL: https://grafana.404labo.net
-      CAPATAZ_PROMETHEUS_URL: https://prometheus.404labo.net
       CAPATAZ_AUTH_MODE: oidc
       CAPATAZ_OIDC_ISSUER: https://authentik.404labo.net/application/o/capataz/
       CAPATAZ_OIDC_AUDIENCE: capataz
@@ -117,7 +129,6 @@ services:
       CAPATAZ_INITIAL_CATALOG_YAML_PATH: /app/catalog/services.example.yaml
       CAPATAZ_HTTP_TIMEOUT_SECONDS: "5"
       CAPATAZ_HEALTH_ALLOWED_HOST_SUFFIXES: .404labo.net
-      CAPATAZ_STATUS_CACHE_TTL_SECONDS: "30"
       SSL_CERT_FILE: /run/ca-certs/ca-bundle.pem
     user: "1000:10"
     volumes:
@@ -127,7 +138,7 @@ services:
         tmpfs:
           size: 67108864
     configs:
-      - source: capataz-catalog-v1
+      - source: capataz-catalog-v5
         target: /app/catalog/services.example.yaml
       - source: capataz-alembic-ini-v1
         target: /app/alembic.ini
@@ -140,10 +151,21 @@ services:
         target: database_url
       - source: capataz-redis-url-v2
         target: redis_url
-      - source: capataz-portainer-token-v1
-        target: portainer_token
       - source: capataz-cognito-client-secret-v1
         target: cognito_client_secret
+      - source: capataz-resources-master-key-v1
+        target: resources_master_key
+      # Orígenes {file: ...} de los recursos del catálogo v5 (CAPATAZ_RESOURCES_DIR,
+      # /run/capataz-resources por defecto). Directorio propio, nunca /run/secrets:
+      # así un catálogo no puede importar database_url como recurso.
+      - source: capataz-portainer-token-v1
+        target: /run/capataz-resources/portainer_token
+      - source: capataz-runner-ssh-private-key-v1
+        target: /run/capataz-resources/runner_ssh_private_key
+      - source: capataz-runner-known-hosts-v1
+        target: /run/capataz-resources/runner_known_hosts
+      - source: capataz-ansible-vault-password-v1
+        target: /run/capataz-resources/ansible_vault_password
     ports:
       - target: 8000
         published: 8000
@@ -189,9 +211,6 @@ services:
       CAPATAZ_LOG_JSON: "false"
       CAPATAZ_CELERY_QUEUE: automation
       CAPATAZ_CELERY_CONCURRENCY: "2"
-      CAPATAZ_PORTAINER_URL: https://portainer.404labo.net
-      CAPATAZ_GRAFANA_URL: https://grafana.404labo.net
-      CAPATAZ_PROMETHEUS_URL: https://prometheus.404labo.net
       SSL_CERT_FILE: /run/ca-certs/ca-bundle.pem
     volumes:
       - type: tmpfs
@@ -212,14 +231,9 @@ services:
         target: database_url
       - source: capataz-redis-url-v2
         target: redis_url
-      - source: capataz-portainer-token-v1
-        target: portainer_token
-      - source: capataz-runner-ssh-private-key-v1
-        target: runner_ssh_private_key
-      - source: capataz-runner-known-hosts-v1
-        target: runner_known_hosts
-      - source: capataz-ansible-vault-password-v1
-        target: ansible_vault_password
+      # Descifra las credenciales de cada ejecución (recursos del conector) en memoria.
+      - source: capataz-resources-master-key-v1
+        target: resources_master_key
     networks:
       - capataz-net
     read_only: true
@@ -321,7 +335,7 @@ configs:
   # Vienen del checkout parcial del repo externo de Capataz en pi-utils, no
   # de este repo -- creados a mano (docker config create <nombre> <ruta en
   # pi-utils>, mismo criterio que un docker secret), no con `file:`.
-  capataz-catalog-v1:
+  capataz-catalog-v5:
     external: true
   capataz-alembic-ini-v1:
     external: true
@@ -344,6 +358,10 @@ secrets:
   capataz-runner-known-hosts-v1:
     external: true
   capataz-ansible-vault-password-v1:
+    external: true
+  # Clave Fernet (una por línea; la primera cifra, todas descifran) creada a mano
+  # con `docker secret create` -- sin ella los recursos guardados son irrecuperables.
+  capataz-resources-master-key-v1:
     external: true
 
 volumes:

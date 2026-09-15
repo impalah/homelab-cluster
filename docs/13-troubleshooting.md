@@ -171,12 +171,18 @@ ssh pi-sonar "docker logs sonarqube --tail=50 2>&1 | grep -i jdbc"
 
 ### DNS caído en varios nodos a la vez — `shared/scripts/fix-dns-resolver.sh`
 
-Mismo síntoma que el de arriba (`systemd-resolved` cayendo al DNS secundario del netplan, `1.1.1.1`, en vez de `pi-dns`), pero comprobado y corregido en `pi-dns`, `pi-obs`, `pi-sonar`, `pi-utils` y `retaco` de una vez, por SSH desde `mole`:
+Mismo síntoma que el de arriba (`systemd-resolved` cayendo al DNS secundario del netplan, `1.1.1.1`, en vez de `pi-dns`), pero comprobado y corregido en `pi-obs`, `pi-sonar`, `pi-utils`, `retaco` y `pinchi` de una vez, por SSH desde `mole`:
 
 ```bash
 bash shared/scripts/fix-dns-resolver.sh all       # todos
 bash shared/scripts/fix-dns-resolver.sh pi-sonar  # uno solo
 ```
+
+- La prueba es funcional (`getent`, la misma ruta que usa el daemon de Docker), no `resolvectl status`.
+- En `pi-dns` solo **comprueba**: ahí `systemd-resolved` está deshabilitado a propósito (Pi-hole ocupa el 53 y `/etc/resolv.conf` apunta a `127.0.0.1`), así que el script nunca lo reinicia; si `pi-dns` falla, revisar `pihole`/`unbound`. Si alguna vez aparece `systemd-resolved` activo en `pi-dns`, pararlo (`sudo systemctl stop systemd-resolved`).
+- Un nodo inaccesible por SSH se informa y el script sigue con el resto (código de salida 1 al final).
+
+**Síntoma típico en Swarm:** un `docker service update` que deja la tarea en `Rejected` con `No such image: registry.404labo.net/...@sha256:...` aunque la imagen esté en el registry — el daemon del nodo elegido no resuelve `registry.404labo.net` porque su `systemd-resolved` está pegado en `1.1.1.1`. El update queda `paused` y, con `update_config.order: stop-first`, el servicio sin tareas: ejecutar este script y relanzar el `docker service update` (o `docker service rollback` para recuperar la versión anterior, que ya está en la caché del nodo).
 
 ### Causa raíz real, identificada en vivo: ráfaga de DNS de un workflow de n8n satura Unbound
 
