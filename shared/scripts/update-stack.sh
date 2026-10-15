@@ -3,7 +3,9 @@
 # update-stack.sh
 # Actualiza las imágenes Docker y recrea los contenedores de un nodo.
 # Uso: bash update-stack.sh <nodo> [fichero-compose]
-# Nodos válidos: ryzen | retaco | pi-dns | pi-obs | pi-sonar | pi-utils
+# Nodos válidos: ryzen | retaco | pi-dns | pi-obs | pi-sonar | pi-utils | pinchi | miugarita
+# (solo los que conservan un docker-compose.yml clásico en /srv/homelab/<nodo>/; los
+# servicios del Swarm no se actualizan con este script, ver docs/32-manual-operaciones-swarm.md)
 #
 # [fichero-compose] es opcional, por defecto "docker-compose.yml". Solo hace
 # falta indicarlo en ryzen, que tiene dos stacks independientes:

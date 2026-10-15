@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # =============================================================================
 # RETIRADO (mejora 41, cierre, 2026-08-28) — nginx (el único consumidor de
-# este certificado) dejó de desplegarse; *.home.arpa se retiró de Pi-hole.
+# este certificado) dejó de desplegarse; *.404labo.net se retiró de Pi-hole.
 # Traefik usa el certificado wildcard real de Let's Encrypt para
 # *.404labo.net (shared/scripts/renew-letsencrypt.sh), no este. No hay
 # ninguna razón para volver a ejecutar este script — conservado como
 # referencia histórica.
 # =============================================================================
 # generate-cert.sh
-# Genera (o regenera) el certificado de *.home.arpa que usa nginx, FIRMADO
+# Genera (o regenera) el certificado de *.404labo.net que usa nginx, FIRMADO
 # por la CA interna del clúster (generate-ca.sh) — ya no autofirmado.
 #
 # Al estar firmado por la CA, cualquier dispositivo que confíe en ella
@@ -41,36 +41,36 @@ if [ ! -f "${CA_DIR}/ca.key" ] || [ ! -f "${CA_DIR}/ca.crt" ]; then
   exit 1
 fi
 
-# Mantener sincronizado con cualquier hostname *.home.arpa nuevo del clúster
+# Mantener sincronizado con cualquier hostname *.404labo.net nuevo del clúster
 DOMAINS=(
-  pi-dns.home.arpa
-  index.home.arpa
-  old.index.home.arpa
-  pihole.home.arpa
-  openwebui.home.arpa
-  n8n.home.arpa
-  ollama.home.arpa
-  qdrant.home.arpa
-  whisper.home.arpa
-  grafana.home.arpa
-  prometheus.home.arpa
-  sonarqube.home.arpa
-  rsshub.home.arpa
-  markitdown.home.arpa
-  n8n-aux.home.arpa
-  portainer.home.arpa
-  vaultwarden.home.arpa
-  registry.home.arpa
-  vllm.home.arpa
-  comfyui.home.arpa
-  crawl4ai.scraper.home.arpa
-  apikey.home.arpa
-  epub2pdf.home.arpa
-  pdf2chunks.home.arpa
-  bifrost.home.arpa
-  open-terminal.home.arpa
-  infisical.home.arpa
-  authentik.home.arpa
+  pi-dns.404labo.net
+  home.404labo.net
+  old.index.404labo.net
+  pihole.404labo.net
+  openwebui.404labo.net
+  n8n.404labo.net
+  ollama.404labo.net
+  qdrant.404labo.net
+  whisper.404labo.net
+  grafana.404labo.net
+  prometheus.404labo.net
+  sonarqube.404labo.net
+  rsshub.404labo.net
+  markitdown.404labo.net
+  n8n-aux.404labo.net
+  portainer.404labo.net
+  vaultwarden.404labo.net
+  registry.404labo.net
+  vllm.404labo.net
+  comfyui.404labo.net
+  crawl4ai.scraper.404labo.net
+  apikey.404labo.net
+  epub2pdf.404labo.net
+  pdf2chunks.404labo.net
+  bifrost.404labo.net
+  open-terminal.404labo.net
+  infisical.404labo.net
+  authentik.404labo.net
 )
 
 mkdir -p "${CERT_DIR}"
@@ -85,7 +85,7 @@ SAN="${SAN%,}"
 openssl req -nodes -newkey rsa:2048 \
   -keyout "${CERT_DIR}/home-arpa.key" \
   -out "${CERT_DIR}/home-arpa.csr" \
-  -subj "/CN=home.arpa"
+  -subj "/CN=404labo.net"
 
 # 2. Firmar el CSR con la CA interna. basicConstraints=CA:FALSE explícito y
 # extendedKeyUsage=serverAuth evitan un problema conocido: sin EKU

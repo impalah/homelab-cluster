@@ -1,7 +1,7 @@
 name: homelab-pinchi
 
 # =============================================================================
-# Stack CLÁSICO del nodo pinchi (192.168.1.175) -- primer docker-compose.yml
+# Stack CLÁSICO del nodo pinchi (192.168.10.8) -- primer docker-compose.yml
 # propio de este nodo. Hasta ahora pinchi era Swarm-only (docs/30-instalacion-
 # pinchi.md, docs/32-manual-operaciones-swarm.md): sin servicios pinnados,
 # solo recibía carga vía routing mesh. Este fichero NO forma parte de esa
@@ -29,7 +29,7 @@ name: homelab-pinchi
 x-logging: &loki-logging
   driver: loki
   options:
-    loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+    loki-url: "http://observability.404labo.net:3100/loki/api/v1/push"
     loki-external-labels: "node=pinchi"
     mode: non-blocking
     max-buffer-size: 4m
@@ -37,8 +37,8 @@ x-logging: &loki-logging
 services:
 
   # ---------------------------------------------------------------------------
-  # nut-upsmon — cliente NUT: monitoriza el SAI remoto en pi-obs
-  # (192.168.1.171:3493) y apaga ESTE host si el SAI ordena un apagado por
+  # nut-upsmon — cliente NUT: monitoriza el SAI remoto en pi-dns
+  # (192.168.10.2:3493) y apaga ESTE host si el SAI ordena un apagado por
   # bateria critica. Ver docs/33-nut-sai.md.
   #
   # privileged: true IMPRESCINDIBLE -- confirmado en vivo aqui mismo
@@ -80,7 +80,7 @@ services:
     privileged: true
     environment:
       DOCKER_TLS_CERTDIR: ""
-    command: ["dockerd", "-H", "tcp://0.0.0.0:2375", "--tls=false", "--dns=192.168.1.170"]
+    command: ["dockerd", "-H", "tcp://0.0.0.0:2375", "--tls=false", "--dns=192.168.10.2"]
     volumes:
       - forgejo-runner-pinchi-dind-data:/var/lib/docker
     networks:

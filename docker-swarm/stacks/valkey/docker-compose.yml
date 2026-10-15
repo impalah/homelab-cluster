@@ -2,7 +2,7 @@
 #
 # `constraints: node.hostname==retaco` RETIRADO (2026-08-31, decisión
 # explícita del usuario). El motivo original (preservar el alias DNS
-# directo a 192.168.1.174, `shared/dns/dns-records.md`) resultó no ser
+# directo a 192.168.10.7, `shared/dns/dns-records.md`) resultó no ser
 # necesario -- el puerto 6379 ya se publica en `mode: ingress` (por
 # defecto, sintaxis corta), así que la routing mesh de Swarm reenvía
 # correctamente la conexión al nodo real sea cual sea, sin tocar el
@@ -17,6 +17,18 @@
 # a `/srv/homelab/valkey/{users.acl,tls}` en los 5 managers, mismo
 # mecanismo ya usado para el binario de `infisical` (copia local, no viaja
 # por red en cada arranque). Verificado por `md5sum` idéntico en los 5.
+# `miugarita` se incorporó al Swarm después y NO los tenía -- copiados
+# desde `retaco` el 2026-10-08 (mismo `md5sum`, mismos permisos y UID) al
+# sacar este servicio de `pi-obs` durante la retirada de las Raspberry Pi.
+# Cualquier nodo nuevo que deba poder alojar valkey necesita esa copia
+# ANTES de entrar en juego: sin ella el servicio arranca sin ACL ni TLS y
+# dejan de autenticar Infisical y Capataz.
+#
+# Sigue SIN fijarse a un nodo. Durante esa retirada lleva una restricción
+# añadida en caliente (`node.hostname!=pi-obs/pi-sonar/pi-utils`, vía
+# `docker service update --constraint-add`, igual que los servicios de la
+# Fase 1) que no está en este fichero a propósito: deja de tener sentido
+# en cuanto esos tres nodos salgan del Swarm.
 #
 # Sin Infisical (ACL/TLS vía ficheros bind-mounted directamente, igual que
 # antes).
@@ -89,13 +101,16 @@ services:
     logging:
       driver: loki
       options:
-        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        loki-url: "http://observability.404labo.net:3100/loki/api/v1/push"
         mode: non-blocking
         max-buffer-size: 4m
     deploy:
       replicas: 1
+      # `any` y no `on-failure` (2026-10-15, docs/31-docker-swarm.md): con on-failure
+      # una salida con código 0 (p. ej. un cierre limpio por SIGTERM tras fallar un
+      # healthcheck) NO se reprograma y el servicio se queda en 0/1 sin aviso.
       restart_policy:
-        condition: on-failure
+        condition: any
 
 networks:
   valkey-net:

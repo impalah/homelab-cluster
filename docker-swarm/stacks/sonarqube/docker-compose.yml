@@ -1,5 +1,25 @@
 # Fase 4 (docs/31-docker-swarm.md): sonarqube, en Swarm.
 #
+# ✅ Movido de `pi-sonar` a `miugarita` (2026-10-08), dentro de la retirada
+# de las Raspberry Pi del Swarm. `data/` (índice de Elasticsearch, 341M) se
+# copió en frío -- servicio a 0 réplicas, `tar` por SSH conservando UID/GID
+# numéricos, verificado por checksum de los 362 ficheros -- a una ruta que ya
+# no lleva nombre de nodo: `/srv/homelab/sonarqube/data` (antes
+# `/srv/homelab/pi-sonar/sonarqube/data`). Sigue siendo bind-mount local +
+# nodo fijo, por el mismo motivo de siempre (ver más abajo), solo cambia el
+# nodo. La imagen es multi-arquitectura (mismo digest, arm64 -> amd64) y el
+# índice de Lucene es portable entre arquitecturas; aun así, si algún día se
+# perdiera, SonarQube lo reconstruye solo desde Postgres -- el historial real
+# vive en la base de datos, no aquí.
+#
+# `miugarita` y no `pinchi` a propósito: el intento anterior de moverlo a
+# `pinchi` (abajo) se quedó colgado en `infisical run` sin causa conocida.
+# `vm.max_map_count` en `miugarita` ya es 1048576 de fábrica (>= 524288 que
+# exige Elasticsearch), no hizo falta el sysctl que sí necesitaba `pi-sonar`.
+# La copia original en `pi-sonar` se dejó intacta como vuelta atrás.
+#
+# Las menciones a `pi-sonar` de aquí abajo son narrativa histórica.
+#
 # ⚠️ Intento de mover `constraints: node.hostname==pi-sonar` →
 # `node.hostname==pinchi` REVERTIDO (2026-08-31, mismo día) -- el arranque
 # en `pinchi` se quedó colgado indefinidamente en el paso `infisical run`
@@ -67,7 +87,7 @@ services:
       INFISICAL_DOMAIN: https://infisical.404labo.net/api
       SSL_CERT_FILE: /etc/ssl/certs/homelab-ca.crt
     volumes:
-      - /srv/homelab/pi-sonar/sonarqube/data:/opt/sonarqube/data
+      - /srv/homelab/sonarqube/data:/opt/sonarqube/data
       - sonarqube-extensions:/opt/sonarqube/extensions
       - /srv/homelab/infisical/infisical-cli/infisical:/usr/local/bin/infisical:ro
       - type: tmpfs
@@ -85,11 +105,11 @@ services:
       - source: homelab-ca-bundle-v1
         target: /etc/ssl/certs/homelab-ca.crt
     secrets:
-      - source: sonarqube-infisical-client-id-v1
+      - source: sonarqube-infisical-client-id-v2
         target: sonarqube-infisical-client-id
-      - source: sonarqube-infisical-client-secret-v1
+      - source: sonarqube-infisical-client-secret-v2
         target: sonarqube-infisical-client-secret
-      - source: sonarqube-infisical-project-id-v1
+      - source: sonarqube-infisical-project-id-v2
         target: sonarqube-infisical-project-id
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -126,16 +146,19 @@ services:
     logging:
       driver: loki
       options:
-        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        loki-url: "http://observability.404labo.net:3100/loki/api/v1/push"
         mode: non-blocking
         max-buffer-size: 4m
     deploy:
       replicas: 1
       placement:
         constraints:
-          - node.hostname==pi-sonar
+          - node.hostname==miugarita
+      # `any` y no `on-failure` (2026-10-15, docs/31-docker-swarm.md): con on-failure
+      # una salida con código 0 (p. ej. un cierre limpio por SIGTERM tras fallar un
+      # healthcheck) NO se reprograma y el servicio se queda en 0/1 sin aviso.
       restart_policy:
-        condition: on-failure
+        condition: any
 
 networks:
   sonarqube-net:
@@ -147,11 +170,11 @@ configs:
     external: true
 
 secrets:
-  sonarqube-infisical-client-id-v1:
+  sonarqube-infisical-client-id-v2:
     external: true
-  sonarqube-infisical-client-secret-v1:
+  sonarqube-infisical-client-secret-v2:
     external: true
-  sonarqube-infisical-project-id-v1:
+  sonarqube-infisical-project-id-v2:
     external: true
 
 volumes:
@@ -159,5 +182,5 @@ volumes:
     driver: local
     driver_opts:
       type: nfs
-      o: "addr=192.168.1.180,rw,vers=3"
+      o: "addr=192.168.10.6,rw,vers=3"
       device: ":/volume1/nfs-data/sonarqube/extensions"

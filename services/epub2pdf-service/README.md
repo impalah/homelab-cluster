@@ -65,7 +65,7 @@ Pensado para invocarse desde n8n (nodo Execute Command/SSH) como contenedor efí
 docker run --rm --entrypoint python3 \
   -v /ruta/local/entrada:/data/input:ro \
   -v /ruta/local/salida:/data/output \
-  registry.home.arpa/epub2pdf-service:latest \
+  registry.404labo.net/epub2pdf-service:latest \
   -m epub2pdf_service.cli --input /data/input --output /data/output
 ```
 

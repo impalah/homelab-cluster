@@ -9,11 +9,11 @@
 # el hostname en vez de la IP.
 #
 # Mejora 41 (cierre, 2026-08-28) -- REESCRITO: hasta ahora el único origen
-# permitido en "off" era pi-dns (192.168.1.170), porque nginx ahí era el
+# permitido en "off" era pi-dns (192.168.10.2), porque nginx ahí era el
 # único que proxificaba estos puertos. Con nginx decomisionado, quien
-# proxifica de verdad es Traefik, en `mode: global` sobre los 5 nodos
-# manager del Swarm (retaco/pi-obs/pi-sonar/pi-utils/pinchi) -- la petición
-# real que llega a cada backend puede originarse en CUALQUIERA de esos 5,
+# proxifica de verdad es Traefik, en `mode: global` sobre los 3 nodos
+# del Swarm (retaco/pinchi/miugarita) -- la petición
+# real que llega a cada backend puede originarse en CUALQUIERA de esos 3,
 # no en pi-dns (que ya no tiene ningún rol de proxy). Dejar el allowlist
 # viejo tal cual habría roto el propio tráfico legítimo de Traefik en modo
 # "off" -- bug real encontrado (sin llegar a desplegarse, verificado antes:
@@ -29,7 +29,7 @@
 #   off    — solo los nodos del Swarm pueden alcanzar esos puertos directamente
 #   status — muestra el estado actual de cada puerto, sin cambiar nada
 #
-# Nodos válidos: ryzen | retaco | pi-obs | pi-sonar | pi-utils | pinchi | all
+# Nodos válidos: ryzen | retaco | pinchi | miugarita | all
 # (pi-dns queda fuera -- ya no proxifica nada, no necesita ser origen
 # permitido)
 #
@@ -38,27 +38,28 @@
 # clúster publica su puerto en `mode: host` -- todos son `mode: ingress`
 # (incluidos los que siguen con `constraints` de nodo fijo, como
 # `sonarqube`). Eso significa que, en teoría, la routing mesh de Swarm
-# publica cada puerto gestionado aquí en LOS 5 MANAGERS, no solo en el nodo
+# publica cada puerto gestionado aquí en LOS 3 NODOS, no solo en el nodo
 # donde `NODE_PORTS` lo agrupa -- la segmentación por nodo de este script
-# podría no estar cerrando el acceso directo desde los otros 4 managers a
+# podría no estar cerrando el acceso directo desde los otros 2 nodos a
 # un puerto "asignado" a uno solo. **No verificado en vivo** si
 # `DOCKER-USER` intercepta también el tráfico reenviado por la routing mesh
 # en los nodos que NO ejecutan la tarea real -- pendiente de comprobar
-# antes de asumir que `off` cierra el acceso directo de verdad en los 5
+# antes de asumir que `off` cierra el acceso directo de verdad en los 3
 # sitios. Ver mejora 46, `docs/22-mejoras-futuras.md`.
 # =============================================================================
 set -euo pipefail
 
-# Los 5 nodos manager del Swarm -- cualquiera puede ser el que de verdad
+# Los 3 nodos del Swarm (retaco/pinchi/miugarita; pi-obs/pi-sonar/pi-utils
+# salieron el 2026-10-08) -- cualquiera puede ser el que de verdad
 # origina la petición proxificada por Traefik (mode: global), ver cabecera.
-SWARM_NODE_IPS="192.168.1.171 192.168.1.172 192.168.1.173 192.168.1.174 192.168.1.175"
+SWARM_NODE_IPS="192.168.10.7 192.168.10.8 192.168.10.9"
 
 NODE="${1:-}"
 MODE="${2:-}"
 
 if [ -z "${NODE}" ] || [ -z "${MODE}" ]; then
   echo "[ERROR] Uso: toggle-direct-access.sh <nodo|all> <on|off|status>"
-  echo "        Nodos válidos: ryzen | retaco | pi-obs | pi-sonar | pi-utils | pinchi | all"
+  echo "        Nodos válidos: ryzen | retaco | pinchi | miugarita | all"
   exit 1
 fi
 
@@ -70,11 +71,9 @@ fi
 # nombre -> "usuario@ip" ("local" si este script corre en ese mismo nodo)
 declare -A TARGETS=(
   [ryzen]="local"
-  [retaco]="u-data@192.168.1.174"
-  [pi-obs]="u-obs@192.168.1.171"
-  [pi-sonar]="u-sonar@192.168.1.172"
-  [pi-utils]="u-utils@192.168.1.173"
-  [pinchi]="u-forge@192.168.1.175"
+  [retaco]="admin@192.168.10.7"
+  [pinchi]="admin@192.168.10.8"
+  [miugarita]="admin@192.168.10.9"
 )
 
 # Puertos HTTP publicados por nodo que TAMBIÉN tienen ruta en nginx — solo
@@ -85,7 +84,7 @@ declare -A TARGETS=(
 # SonarQube) — ver docs/17-firewall-acceso-directo.md.
 # ⚠️ Desde la revisión de constraints (2026-08-31, mejora 43), la mayoría de
 # estos servicios YA NO están fijados a un nodo -- Swarm puede reprogramar
-# la tarea a cualquiera de los 5 managers en cualquier momento. Los puertos
+# la tarea a cualquiera de los 3 nodos en cualquier momento. Los puertos
 # se agrupan aquí por dónde estaba el servicio en el momento de escribir
 # esto (o dónde tiene sentido revisarlo primero), no como garantía de dónde
 # sigue estando ahora -- confirmar con `docker service ps <servicio>` antes
@@ -95,10 +94,11 @@ declare -A TARGETS=(
 declare -A NODE_PORTS=(
   [ryzen]="8080 11434 9800 8010 8188"      # open-webui ollama whisper vllm comfyui
   [retaco]="5678 6333 5000 8003 8004"        # n8n-main qdrant(fijo) registry epub2pdf-service pdf2chunks-service
-  [pi-obs]="3000 9090"                      # grafana prometheus
-  [pi-sonar]="19000"                        # sonarqube (fijo -- 2026-08-31: 9000 -> 19000, ver mejora del choque de puerto con authentik/portainer)
-  [pi-utils]="1200 8001 5679"               # rsshub markitdown n8n-aux
-  [pinchi]="19001 8222"                     # portainer(2026-08-31: 9000->19001, movido de pi-utils a pinchi) vaultwarden(movido de pi-utils a pinchi)
+  # Desde 2026-10-08 (retirada de las Raspberry Pi): los puertos de lo que vivía en
+  # pi-obs/pi-sonar/pi-utils se reasignan a donde viven hoy. No se incluye el 3100
+  # (Loki) a propósito -- ryzen y pi-dns, fuera del Swarm, le empujan logs.
+  [pinchi]="19001 8222 1200 8001 5679"      # portainer vaultwarden rsshub markitdown n8n-aux
+  [miugarita]="3000 9090 19000"             # grafana prometheus sonarqube
 )
 
 toggle_node() {
@@ -177,7 +177,7 @@ fi
 }
 
 if [ "${NODE}" = "all" ]; then
-  for n in ryzen retaco pi-obs pi-sonar pi-utils pinchi; do
+  for n in ryzen retaco pinchi miugarita; do
     toggle_node "${n}"
   done
 else

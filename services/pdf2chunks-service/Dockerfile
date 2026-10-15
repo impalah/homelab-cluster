@@ -51,6 +51,6 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 # sobreescribe el entrypoint:
 #   docker run --rm --entrypoint python3 \
 #     -v /ruta/entrada:/data/input:ro -v /ruta/salida:/data/output \
-#     registry.home.arpa/pdf2chunks-service:latest \
+#     registry.404labo.net/pdf2chunks-service:latest \
 #     -m pdf2chunks_service.cli /data/input /data/output
 CMD ["python3", "-m", "uvicorn", "pdf2chunks_service.main:app", "--host", "0.0.0.0", "--port", "8004", "--app-dir", "src"]

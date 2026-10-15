@@ -1,7 +1,7 @@
 #!/bin/bash
-# upsmon en modo "secondary" -- solo monitoriza el SAI remoto en pi-obs y
+# upsmon en modo "secondary" -- solo monitoriza el SAI remoto en pi-dns y
 # apaga ESTE host si el SAI ordena un apagado por bateria critica. No
-# gestiona ningun driver (eso solo existe en pi-obs/nut-server/).
+# gestiona ningun driver (eso solo existe en pi-dns/nut-server/).
 set -eu
 
 : "${NUT_MONUSER_PASSWORD:?falta NUT_MONUSER_PASSWORD}"

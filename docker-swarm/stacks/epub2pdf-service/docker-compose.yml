@@ -41,7 +41,7 @@ services:
     logging:
       driver: loki
       options:
-        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        loki-url: "http://observability.404labo.net:3100/loki/api/v1/push"
         mode: non-blocking
         max-buffer-size: 4m
     deploy:
@@ -49,8 +49,11 @@ services:
       placement:
         constraints:
           - node.platform.arch == x86_64
+      # `any` y no `on-failure` (2026-10-15, docs/31-docker-swarm.md): con on-failure
+      # una salida con código 0 (p. ej. un cierre limpio por SIGTERM tras fallar un
+      # healthcheck) NO se reprograma y el servicio se queda en 0/1 sin aviso.
       restart_policy:
-        condition: on-failure
+        condition: any
 
 networks:
   epub2pdf-net:
@@ -62,11 +65,11 @@ volumes:
     driver: local
     driver_opts:
       type: nfs
-      o: "addr=192.168.1.180,rw,vers=3"
+      o: "addr=192.168.10.6,rw,vers=3"
       device: ":/volume1/nfs-data/epub2pdf/input"
   epub2pdf-output:
     driver: local
     driver_opts:
       type: nfs
-      o: "addr=192.168.1.180,rw,vers=3"
+      o: "addr=192.168.10.6,rw,vers=3"
       device: ":/volume1/nfs-data/epub2pdf/output"

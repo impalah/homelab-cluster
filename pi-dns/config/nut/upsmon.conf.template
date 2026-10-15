@@ -1,4 +1,4 @@
-# upsmon LOCAL de pi-obs -- corre en el mismo contenedor que upsd/el driver,
+# upsmon LOCAL de pi-dns -- corre en el mismo contenedor que upsd/el driver,
 # se conecta por "localhost" dentro del propio contenedor. Generado en el
 # arranque a partir de este template (nut-server/entrypoint.sh, envsubst).
 MONITOR sai@localhost 1 monuser ${NUT_MONUSER_PASSWORD} primary
@@ -22,7 +22,7 @@ HOSTSYNC 15
 # interno del driver/upsd de unos segundos podria disparar el mismo falso
 # positivo -- se sube por consistencia y la misma tolerancia.
 DEADTIME 60
-# pi-obs aloja el propio upsd -- interesa que sea de los ultimos nodos en
+# pi-dns aloja el propio upsd -- interesa que sea de los ultimos nodos en
 # perder comunicacion de verdad (si se apaga el antes, el resto de upsmon
 # remotos se quedan sin servidor al que preguntar) -- FINALDELAY mayor que
 # el resto de nodos (15s por defecto en los clientes, ver

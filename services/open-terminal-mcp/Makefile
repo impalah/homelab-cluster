@@ -10,7 +10,7 @@ IMAGE_TAG    := latest
 PORT         := 8005
 
 # --- Registry privado del clúster (docs/05-instalacion-retaco.md, sección 5.3) ---
-REGISTRY_URI       ?= registry.home.arpa
+REGISTRY_URI       ?= registry.404labo.net
 REGISTRY_USER      ?=
 REGISTRY_PASSWORD  ?=
 REGISTRY_IMAGE     := $(REGISTRY_URI)/$(SERVICE_NAME)

@@ -10,19 +10,19 @@
 # este primer incremento.
 #
 # Deliberadamente fuera de este fichero (ver docs/31-docker-swarm.md):
-#   - old.index.home.arpa (sirve estático directamente, Traefik no tiene un
+#   - old.index.404labo.net (sirve estático directamente, Traefik no tiene un
 #     backend de fichero-servidor propio -- necesitaría un contenedor nginx
 #     aparte solo para esto, no vale la pena todavía)
-#   - apikey.home.arpa / pihole.home.arpa (apikey-service y pihole solo
+#   - apikey.404labo.net / pihole.404labo.net (apikey-service y pihole solo
 #     escuchan en la red Docker interna de pi-dns, sin puerto publicado al
 #     LAN -- no alcanzables desde Traefik en ningún otro nodo tal cual hoy)
-#   - markitdown.home.arpa (hostname real) -- se añade como label en el
+#   - markitdown.404labo.net (hostname real) -- se añade como label en el
 #     propio stack de markitdown-service (proveedor `swarm`, no `file`),
 #     igual que markitdown-test.local en la fase 3a, para no declarar el
 #     mismo servicio en dos proveedores a la vez.
 #
 # Segundo incremento de 3b (2026-08-25): los 8 hostnames protegidos con
-# apikey-service + prometheus.home.arpa (Authentik) -- decisión del usuario:
+# apikey-service + prometheus.404labo.net (Authentik) -- decisión del usuario:
 # adelantar la migración de apikey-service al swarm (docker-swarm/stacks/
 # apikey-service/) para que sea alcanzable desde Traefik en cualquier nodo,
 # y resolver el forward-auth de Authentik en el mismo incremento. Traefik no
@@ -36,7 +36,7 @@
 # (cron en pi-dns, reto DNS-01 vía plugin dns_aws de acme.sh contra la
 # hosted zone Route53 de 404labo.net -- mejora 32 de docs/22-mejoras-
 # futuras.md). Mismos backends ya declarados para index/capataz-api
-# (home.arpa) -- se reutiliza el mismo `service:`, solo cambia el router
+# (404labo.net) -- se reutiliza el mismo `service:`, solo cambia el router
 # (Host + certificado). El renovador NO actualiza este secret de Swarm
 # automáticamente todavía (es inmutable, hace falta versión nueva +
 # redeploy) -- ver docs/31-docker-swarm.md para el procedimiento manual
@@ -44,7 +44,7 @@
 #
 # Fase A de la mejora 41 (2026-08-28, docs/22-mejoras-futuras.md): se añade
 # un router gemelo bajo *.404labo.net para CADA hostname que aún vive solo
-# en *.home.arpa -- mismo patrón mecánico que el tercer incremento de 3b de
+# en *.404labo.net -- mismo patrón mecánico que el tercer incremento de 3b de
 # arriba (mismo `service:`, `tls: {}` deja que Traefik elija el certificado
 # wildcard ya cargado por SNI, sin config adicional). Paso puramente
 # aditivo: ambos dominios responden en paralelo, nada se retira todavía.
@@ -56,14 +56,28 @@
 # lo mismo que completar el corte de ese hostname.
 #
 # Cierre de la mejora 41 (2026-08-28): retirados todos los routers
-# `Host(*.home.arpa)` (~24, listados arriba en los incrementos previos) y el
-# certificado de *.home.arpa -- verificados sanos todos sus gemelos
+# `Host(*.404labo.net)` (~24, listados arriba en los incrementos previos) y el
+# certificado de *.404labo.net -- verificados sanos todos sus gemelos
 # *.404labo.net primero (incluida la Fase C de Authentik), aplicado el corte
 # de DNS en Pi-hole (shared/dns/dns-records.md) y decomisionado nginx en
 # pi-dns en el mismo cierre. Los routers `-404labo-net` que quedan abajo son
 # ahora los únicos que existen para cada hostname -- se conserva el sufijo
 # en su nombre (cosmético, sin efecto funcional) para no tocar 24 bloques
 # solo por estética.
+#
+# Migración al router Cudy R700 (2026-09-28, ver el historial de esta sesión
+# y mejora 50/53 de docs/22-mejoras-futuras.md): todas las IPs de backend de
+# este fichero seguían apuntando al esquema antiguo 192.168.1.17x/.150 pese a
+# que el resto del repo (docker-compose.yml de cada stack, load-dns-
+# records.sh, setup-swarm-firewall.sh) ya se había actualizado al nuevo
+# 192.168.10.x -- este fichero se quedó fuera de aquella pasada porque vive
+# bajo dynamic/ y no se detectó hasta que provocó un 502 real en
+# registry.404labo.net. Corregido ahora: retaco 192.168.10.7, ryzen/mole
+# 192.168.10.10, pi-obs 192.168.10.4, pi-sonar 192.168.10.5, pinchi
+# 192.168.10.8. Las notas de comentario que mencionan IPs .173/.175 antiguas
+# más abajo son narrativa histórica de decisiones de colocación de nodo, no
+# configuración viva -- se dejan tal cual, mismo criterio que el resto del
+# repo con 404labo.net.
 
 tls:
   certificates:
@@ -91,14 +105,18 @@ http:
         authRequestHeaders:
           - X-Api-Key
     # Authentik: mismo Proxy Provider (modo "Forward auth, single
-    # application") ya usado por nginx para prometheus.home.arpa -- el
+    # application") ya usado por nginx para prometheus.404labo.net -- el
     # outpost embebido expone varios sub-endpoints por tipo de proxy
     # (/auth/nginx, /auth/traefik...) sobre el MISMO provider, no hace
-    # falta crear uno nuevo en Authentik. Por IP directa a authentik-server
-    # (retaco), igual que hace nginx en authentik-auth.conf.
+    # falta crear uno nuevo en Authentik. Por nombre de servicio Swarm
+    # (2026-09-29, ver docker-swarm/stacks/authentik/docker-compose.yml) en
+    # vez de IP fija -- authentik-server está en la misma red overlay
+    # `traefik-public` que Traefik, mismo patrón que apikey-service más
+    # arriba. Antes era una IP fija que se rompía cada vez que Swarm
+    # reprogramaba authentik-server a otro nodo (sin constraint).
     authentik-auth:
       forwardAuth:
-        address: "http://192.168.1.174:9000/outpost.goauthentik.io/auth/traefik"
+        address: "http://authentik-server:9000/outpost.goauthentik.io/auth/traefik"
         trustForwardHeader: true
         authResponseHeaders:
           - Set-Cookie
@@ -109,16 +127,6 @@ http:
           - X-authentik-uid
 
   routers:
-    home-404labo-net:
-      rule: "Host(`home.404labo.net`)"
-      entryPoints: ["websecure"]
-      tls: {}
-      service: index
-    capataz-api-404labo-net:
-      rule: "Host(`capataz-api.404labo.net`)"
-      entryPoints: ["websecure"]
-      tls: {}
-      service: capataz-api
     ollama-404labo-net:
       rule: "Host(`ollama.404labo.net`)"
       entryPoints: ["websecure"]
@@ -149,34 +157,12 @@ http:
       tls: {}
       middlewares: ["apikey-auth"]
       service: pdf2chunks
-    open-terminal-404labo-net:
-      rule: "Host(`open-terminal.404labo.net`)"
-      entryPoints: ["websecure"]
-      tls: {}
-      middlewares: ["apikey-auth"]
-      service: open-terminal
-    crawl4ai-scraper-404labo-net:
-      rule: "Host(`crawl4ai.scraper.404labo.net`)"
-      entryPoints: ["websecure"]
-      tls: {}
-      middlewares: ["apikey-auth"]
-      service: crawl4ai-scraper
     prometheus-404labo-net:
       rule: "Host(`prometheus.404labo.net`)"
       entryPoints: ["websecure"]
       tls: {}
       middlewares: ["authentik-auth"]
       service: prometheus
-    openwebui-404labo-net:
-      rule: "Host(`openwebui.404labo.net`)"
-      entryPoints: ["websecure"]
-      tls: {}
-      service: openwebui
-    n8n-404labo-net:
-      rule: "Host(`n8n.404labo.net`)"
-      entryPoints: ["websecure"]
-      tls: {}
-      service: n8n
     qdrant-404labo-net:
       rule: "Host(`qdrant.404labo.net`)"
       entryPoints: ["websecure"]
@@ -187,11 +173,6 @@ http:
       entryPoints: ["websecure"]
       tls: {}
       service: infisical
-    authentik-404labo-net:
-      rule: "Host(`authentik.404labo.net`)"
-      entryPoints: ["websecure"]
-      tls: {}
-      service: authentik
     registry-404labo-net:
       rule: "Host(`registry.404labo.net`)"
       entryPoints: ["websecure"]
@@ -212,21 +193,6 @@ http:
       entryPoints: ["websecure"]
       tls: {}
       service: sonarqube
-    bifrost-404labo-net:
-      rule: "Host(`bifrost.404labo.net`)"
-      entryPoints: ["websecure"]
-      tls: {}
-      service: bifrost
-    rsshub-404labo-net:
-      rule: "Host(`rsshub.404labo.net`)"
-      entryPoints: ["websecure"]
-      tls: {}
-      service: rsshub
-    n8n-aux-404labo-net:
-      rule: "Host(`n8n-aux.404labo.net`)"
-      entryPoints: ["websecure"]
-      tls: {}
-      service: n8n-aux
     portainer-404labo-net:
       rule: "Host(`portainer.404labo.net`)"
       entryPoints: ["websecure"]
@@ -239,127 +205,95 @@ http:
       service: vaultwarden
 
   services:
-    index:
-      loadBalancer:
-        servers:
-          # 192.168.1.174 (retaco), no .173 (pi-utils) -- constraint de nodo
-          # liberado en la mejora 43 (2026-08-31, ver
-          # docker-swarm/stacks/capataz/docker-compose.yml), pero esta URL se
-          # quedó apuntando a pi-utils sin actualizar; detectado al caerse
-          # pi-utils el 2026-09-03 y romper home.404labo.net con 502 pese a
-          # que Swarm ya había reprogramado capataz-frontend a otro nodo --
-          # ver docs/31-docker-swarm.md.
-          - url: "http://192.168.1.174:8090"
-    capataz-api:
-      loadBalancer:
-        servers:
-          # Mismo caso que "index" de arriba -- ver comentario.
-          - url: "http://192.168.1.174:8000"
-    openwebui:
-      loadBalancer:
-        servers:
-          # 19002, no 8080 (2026-08-31) -- puerto publicado cambiado en
-          # docker-swarm/stacks/open-webui/docker-compose.yml, libera el
-          # 8080 para poder quitarle el pin a bifrost.
-          - url: "http://192.168.1.174:19002"
-    n8n:
-      loadBalancer:
-        servers:
-          - url: "http://192.168.1.174:5678"
+    # Migrados del proveedor `file` (este bloque, IP:puerto fija) al
+    # proveedor `swarm` (labels) el 2026-09-29: index/capataz-frontend,
+    # capataz-api, openwebui, n8n, n8n-aux, bifrost, rsshub, open-terminal,
+    # crawl4ai-scraper, authentik -- eran servicios sin constraint de nodo
+    # (liberado en la mejora 43) que cambiaron de nodo varias veces en un
+    # mismo incidente (migración al router Cudy R700 + recuperación del
+    # Swarm), rompiendo sus hostnames con 502 cada vez que Swarm los
+    # reprogramaba sin que este fichero se enterase. Con labels, Traefik
+    # los descubre automáticamente sin importar el nodo -- ver el
+    # `deploy.labels` de cada docker-compose.yml (mismo patrón que
+    # markitdown-service, primer caso de esto en el repo). Sus routers y
+    # entradas de `services:` ya no viven aquí (el middleware
+    # `authentik-auth` de arriba tampoco usa ya IP fija, mismo motivo).
+    #
+    # ⚠️ `registry`, `epub2pdf` y `pdf2chunks` (más abajo) SIGUEN en este
+    # fichero pese a tener el mismo problema de fondo (constraint de nodo
+    # también liberado, ver cada docker-compose.yml) -- no se migraron en
+    # esta pasada porque no llegaron a romperse en el incidente del
+    # 2026-09-29 (se quedaron en retaco toda la tarde por suerte, no por
+    # garantía). Candidatos claros para la misma migración si vuelven a
+    # moverse -- comprobar primero con `docker service ps <servicio>
+    # --filter desired-state=running` antes de asumir la IP de aquí.
     qdrant:
       loadBalancer:
         servers:
-          - url: "http://192.168.1.174:6333"
+          - url: "http://192.168.10.7:6333"
     infisical:
       loadBalancer:
         servers:
-          - url: "http://192.168.1.174:8006"
-    authentik:
-      loadBalancer:
-        servers:
-          - url: "http://192.168.1.174:9000"
+          - url: "http://192.168.10.7:8006"
     registry:
       loadBalancer:
         servers:
-          - url: "http://192.168.1.174:5000"
+          - url: "http://192.168.10.7:5000"
     whisper:
       loadBalancer:
         servers:
-          - url: "http://192.168.1.150:9800"
+          - url: "http://192.168.10.10:9800"
     grafana:
       loadBalancer:
         servers:
-          - url: "http://192.168.1.171:3000"
+          - url: "http://192.168.10.9:3000"
     sonarqube:
       loadBalancer:
         servers:
           # 19000, no 9000 (2026-08-31) -- puerto publicado cambiado en
           # docker-swarm/stacks/sonarqube/docker-compose.yml para liberar el
           # 9000 y poder quitarle el pin de nodo a authentik-server.
-          - url: "http://192.168.1.172:19000"
-    bifrost:
-      loadBalancer:
-        servers:
-          - url: "http://192.168.1.172:8080"
-    rsshub:
-      loadBalancer:
-        servers:
-          # 192.168.1.174 (retaco), no .173 (pi-utils) -- mismo caso que
-          # "index" arriba: constraint liberado en la mejora 43, URL no
-          # actualizada hasta el incidente del 2026-09-03.
-          - url: "http://192.168.1.174:1200"
-    n8n-aux:
-      loadBalancer:
-        servers:
-          # Mismo caso que "rsshub" de arriba.
-          - url: "http://192.168.1.174:5679"
+          # 192.168.10.9 (miugarita) desde 2026-10-08 -- sonarqube se movió
+          # de pi-sonar a miugarita (retirada de las Raspberry Pi), sigue
+          # pinnado a un nodo fijo, así que una IP fija aquí es correcta.
+          - url: "http://192.168.10.9:19000"
     portainer:
       loadBalancer:
         servers:
-          # 192.168.1.175 (pinchi), no .173 (pi-utils) -- servicio movido de
+          # 192.168.10.8 (pinchi), no .173 (pi-utils) -- servicio movido de
           # nodo (2026-08-31, fiabilidad de disco, ver docker-swarm/stacks/
           # portainer-server/docker-compose.yml). 19001, no 9000
           # (2026-08-31) -- puerto publicado cambiado, deja a
           # authentik-server como único usuario del 9000 en el clúster.
-          - url: "http://192.168.1.175:19001"
+          - url: "http://192.168.10.8:19001"
     vaultwarden:
       loadBalancer:
         servers:
-          # 192.168.1.175 (pinchi), no .173 (pi-utils) -- servicio movido
+          # 192.168.10.8 (pinchi), no .173 (pi-utils) -- servicio movido
           # de nodo (2026-08-31, fiabilidad de disco/SQLite activo, ver
           # docker-swarm/stacks/vaultwarden/docker-compose.yml).
-          - url: "http://192.168.1.175:8222"
+          - url: "http://192.168.10.8:8222"
     ollama:
       loadBalancer:
         servers:
-          - url: "http://192.168.1.150:11434"
+          - url: "http://192.168.10.10:11434"
     vllm:
       loadBalancer:
         servers:
-          - url: "http://192.168.1.150:8010"
+          - url: "http://192.168.10.10:8010"
     comfyui:
       loadBalancer:
         servers:
-          - url: "http://192.168.1.150:8188"
+          - url: "http://192.168.10.10:8188"
     epub2pdf:
       loadBalancer:
         servers:
-          - url: "http://192.168.1.174:8003"
+          - url: "http://192.168.10.7:8003"
     pdf2chunks:
       loadBalancer:
         servers:
-          - url: "http://192.168.1.174:8004"
-    open-terminal:
-      loadBalancer:
-        servers:
-          - url: "http://192.168.1.174:8005"
-    crawl4ai-scraper:
-      loadBalancer:
-        servers:
-          # 192.168.1.174 (retaco), no .173 (pi-utils) -- mismo caso que
-          # "index" arriba.
-          - url: "http://192.168.1.174:8002"
+          - url: "http://192.168.10.7:8004"
     prometheus:
       loadBalancer:
         servers:
-          - url: "http://192.168.1.171:9090"
+          - url: "http://192.168.10.9:9090"

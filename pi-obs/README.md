@@ -1,6 +1,8 @@
 # pi-obs — Observabilidad
 
-**IP:** `192.168.1.171`  
+> ⚠️ **Desde 2026-10-08 esta Raspberry Pi ya no es miembro del Swarm ni aloja servicios** (solo `nut-upsmon`, cliente del SAI, y encendida como reserva): la observabilidad (Loki, Tempo, Prometheus, Grafana, otel-collector) corre en `miugarita` (stack Swarm `pi-obs`, alias `observability.404labo.net`; su compose/config en `docker-swarm/stacks/pi-obs/` y `pi-obs/config/`). Lo que sigue es histórico — no lo uses como guía de despliegue. Ver `docs/31-docker-swarm.md`.
+
+**IP:** `192.168.10.4`  
 **Hardware:** Raspberry Pi 5 (8 GB RAM recomendado)
 
 ## Servicios
@@ -58,7 +60,7 @@ pi-obs/
 Configurar en cada servicio instrumentado:
 
 ```bash
-OTEL_EXPORTER_OTLP_ENDPOINT=http://192.168.1.171:4317
+OTEL_EXPORTER_OTLP_ENDPOINT=http://observability.404labo.net:4317
 OTEL_SERVICE_NAME=<nombre-servicio>
 ```
 

@@ -23,7 +23,7 @@ services:
       MAX_CONCURRENT_SCRAPES: "12"
       MAX_CONCURRENT_DEDICATED_BROWSERS: "2"
       SCRAPE_TIMEOUT_SECONDS: "60"
-      # Por debajo del proxy_read_timeout de nginx para crawl4ai.scraper.home.arpa
+      # Por debajo del proxy_read_timeout de nginx para crawl4ai.scraper.404labo.net
       # (90s) a propósito -- ver comentario original en pi-utils/docker-compose.yml.
       SEMAPHORE_ACQUIRE_TIMEOUT_SECONDS: "75"
       CRAWLER_HEADLESS: "true"
@@ -44,21 +44,42 @@ services:
       - "8002:8000"
     networks:
       - crawl4ai-net
+      - traefik-public
     logging:
       driver: loki
       options:
-        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        loki-url: "http://observability.404labo.net:3100/loki/api/v1/push"
         mode: non-blocking
         max-buffer-size: 4m
     deploy:
       replicas: 1
+      # `any` y no `on-failure` (2026-10-15, docs/31-docker-swarm.md): con on-failure
+      # una salida con código 0 (p. ej. un cierre limpio por SIGTERM tras fallar un
+      # healthcheck) NO se reprograma y el servicio se queda en 0/1 sin aviso.
       restart_policy:
-        condition: on-failure
+        condition: any
       resources:
         limits:
           memory: 2g
+      # Migrado del proveedor `file` de Traefik al proveedor `swarm`
+      # (2026-09-29) -- sin constraint de nodo, cambió de nodo varias veces
+      # el mismo día durante un incidente real y rompió
+      # crawl4ai.scraper.404labo.net cada vez. `apikey-auth@file` -- el
+      # `@file` es obligatorio para referenciar un middleware definido en el
+      # OTRO proveedor (dynamic/routes.yml) desde labels de Swarm.
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.crawl4ai-scraper-404labo-net.rule=Host(`crawl4ai.scraper.404labo.net`)"
+        - "traefik.http.routers.crawl4ai-scraper-404labo-net.entrypoints=websecure"
+        - "traefik.http.routers.crawl4ai-scraper-404labo-net.tls=true"
+        - "traefik.http.routers.crawl4ai-scraper-404labo-net.middlewares=apikey-auth@file"
+        - "traefik.http.routers.crawl4ai-scraper-404labo-net.service=crawl4ai-scraper"
+        - "traefik.http.services.crawl4ai-scraper.loadbalancer.server.port=8000"
 
 networks:
   crawl4ai-net:
     driver: overlay
     attachable: true
+  traefik-public:
+    external: true
+    name: traefik_traefik-public

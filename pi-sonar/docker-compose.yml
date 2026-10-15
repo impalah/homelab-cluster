@@ -1,11 +1,11 @@
 name: homelab-pi-sonar
 
 # =============================================================================
-# Stack del nodo pi-sonar (192.168.1.172)
+# Stack del nodo pi-sonar (192.168.10.5)
 # Servicios: sonarqube (Community Edition), bifrost (gateway LLM / AWS Bedrock)
 #
 # La base de datos (antes "sonarqube-db" local) se migró a postgres-main en
-# retaco (192.168.1.174) — ver docs/05-instalacion-retaco.md. SonarQube se
+# retaco (192.168.10.7) — ver docs/05-instalacion-retaco.md. SonarQube se
 # conecta cross-host, ya no por nombre de contenedor en pi-sonar-net.
 #
 # bifrost se añadió después (docs/23-bifrost-gateway-llm.md): nodo elegido
@@ -26,7 +26,7 @@ name: homelab-pi-sonar
 x-logging: &loki-logging
   driver: loki
   options:
-    loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+    loki-url: "http://observability.404labo.net:3100/loki/api/v1/push"
     loki-external-labels: "node=pi-sonar"
     mode: non-blocking
     max-buffer-size: 4m
@@ -34,8 +34,8 @@ x-logging: &loki-logging
 services:
 
   # ---------------------------------------------------------------------------
-  # nut-upsmon — cliente NUT: monitoriza el SAI remoto en pi-obs
-  # (192.168.1.171:3493) y apaga ESTE host si el SAI ordena un apagado por
+  # nut-upsmon — cliente NUT: monitoriza el SAI remoto en pi-dns
+  # (192.168.10.2:3493) y apaga ESTE host si el SAI ordena un apagado por
   # bateria critica. Ver docs/33-nut-sai.md.
   #
   # privileged: true IMPRESCINDIBLE -- confirmado en vivo (pinchi,
@@ -67,7 +67,7 @@ services:
   # docker-swarm/stacks/bifrost/, cada uno en su propio stack (no comparten
   # nada entre sí, sin alias de red cruzados), ambos pinnados con
   # `node.hostname==pi-sonar` -- mismos datos, sin mover. Ya usaban IP/alias
-  # DNS reales (postgresql.home.arpa, 192.168.1.150 para Ollama), nunca alias
+  # DNS reales (postgresql.404labo.net, 192.168.10.10 para Ollama), nunca alias
   # Docker -- sin ajustes de red necesarios. Backup previo de sonarqube
   # ejecutado (data/+extensions/, 314M); bifrost sin backup dedicado (su
   # estado real vive en postgres-main, /app/data no aloja datos reales, ya

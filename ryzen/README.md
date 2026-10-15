@@ -1,6 +1,6 @@
 # ryzen — Nodo de cómputo principal
 
-**IP:** `192.168.1.150`  
+**IP:** `192.168.10.10`  
 **Hardware:** PC Linux con Ryzen 9, GPU NVIDIA, ≥32 GB RAM
 
 ## Dos stacks independientes
@@ -28,7 +28,7 @@ Cada uno es su propio proyecto Compose (`homelab-ryzen` y `homelab-ryzen-observa
 
 > Los puertos HTTP se publican en todas las interfaces (no solo loopback) — Traefik, en el Swarm (cualquiera de los 5 nodos manager), necesita alcanzarlos por la LAN para hacer de proxy inverso y exponerlos mediante HTTPS.
 
-> `postgres-main`, `qdrant` y `n8n-main` se migraron al nodo `retaco` (192.168.1.174) — ver `docs/05-instalacion-retaco.md`. `open-webui` se migró después, al mismo `retaco` — ver `docs/23-bifrost-gateway-llm.md`. No hay ningún servicio de datos, automatización o interfaz de usuario en este nodo; solo cómputo con GPU (`ollama`/`vllm`/`whisper-service`/`comfyui`), consumido por Open WebUI a través de Bifrost (`pi-sonar`) o directamente vía los hostnames públicos de abajo.
+> `postgres-main`, `qdrant` y `n8n-main` se migraron al nodo `retaco` (192.168.10.7) — ver `docs/05-instalacion-retaco.md`. `open-webui` se migró después, al mismo `retaco` — ver `docs/23-bifrost-gateway-llm.md`. No hay ningún servicio de datos, automatización o interfaz de usuario en este nodo; solo cómputo con GPU (`ollama`/`vllm`/`whisper-service`/`comfyui`), consumido por Open WebUI a través de Bifrost (`pi-sonar`) o directamente vía los hostnames públicos de abajo.
 
 ## ⚠️ ollama y vllm NUNCA a la vez
 
@@ -52,7 +52,7 @@ bash switch-gpu1-backend.sh comfyui           # para whisper-service si está ar
 
 ## Acceso externo con API key
 
-`ollama.404labo.net`, `vllm.404labo.net` y `comfyui.404labo.net` exigen la cabecera `X-Api-Key` (protegidos con `apikey-service`, ver `docs/06-instalacion-pi1-dns.md`) — cualquier cliente en la LAN o workflow de n8n que los llame por el nombre de host público necesita una key emitida ahí. **Open WebUI, ahora en `retaco`, no usa ninguna de estas rutas**: llega a `ollama` por IP directa (`http://192.168.1.150:11434`) a través de Bifrost (`pi-sonar`), sin pasar por Traefik/`apikey-service` — ver `docs/23-bifrost-gateway-llm.md`. ComfyUI, si lo usas desde el propio navegador de esta máquina, tampoco necesita key: `http://localhost:8188` directo.
+`ollama.404labo.net`, `vllm.404labo.net` y `comfyui.404labo.net` exigen la cabecera `X-Api-Key` (protegidos con `apikey-service`, ver `docs/06-instalacion-pi1-dns.md`) — cualquier cliente en la LAN o workflow de n8n que los llame por el nombre de host público necesita una key emitida ahí. **Open WebUI, ahora en `retaco`, no usa ninguna de estas rutas**: llega a `ollama` por IP directa (`http://192.168.10.10:11434`) a través de Bifrost (`pi-sonar`), sin pasar por Traefik/`apikey-service` — ver `docs/23-bifrost-gateway-llm.md`. ComfyUI, si lo usas desde el propio navegador de esta máquina, tampoco necesita key: `http://localhost:8188` directo.
 
 ## Arranque rápido
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
 # rewrite-vaultwarden-urls.sh
-# Busca y sustituye "*.home.arpa" por "*.404labo.net" en las URIs guardadas
-# de los items de Vaultwarden (mejora 41, cierre 2026-08-28 -- home.arpa ya
+# Busca y sustituye "*.404labo.net" por "*.404labo.net" en las URIs guardadas
+# de los items de Vaultwarden (mejora 41, cierre 2026-08-28 -- 404labo.net ya
 # no resuelve en ningún sitio del clúster).
 #
 # NUNCA pide ni ve la contraseña maestra -- consume una sesión YA
@@ -21,9 +21,9 @@
 # Tres hostnames se retiraron SIN gemelo en 404labo.net (mejora 41) -- una
 # sustitución mecánica de texto los dejaría apuntando a un hostname que ya
 # no resuelve, así que se tratan aparte, con su destino real:
-#   - pihole.home.arpa   -> http://192.168.1.170:8053  (panel directo en la LAN, sin hostname)
-#   - apikey.home.arpa   -> http://192.168.1.175:8091  (apikey-service del Swarm, admin directo)
-#   - old.index.home.arpa -> sin sustituto (superseded por Capataz, mejora 15) -- se
+#   - pihole.404labo.net   -> http://192.168.10.2:8053  (panel directo en la LAN, sin hostname)
+#   - apikey.404labo.net   -> http://192.168.10.8:8091  (apikey-service del Swarm, admin directo)
+#   - old.index.404labo.net -> sin sustituto (superseded por Capataz, mejora 15) -- se
 #     AVISA pero no se reescribe solo, para que decidas a mano si el item sigue
 #     haciendo falta o se borra.
 #
@@ -50,18 +50,18 @@ fi
 echo "[INFO] Sincronizando con el servidor..."
 $BW_BIN sync --session "$BW_SESSION" >/dev/null
 
-echo "[INFO] Buscando items con URIs bajo home.arpa..."
+echo "[INFO] Buscando items con URIs bajo 404labo.net..."
 ITEMS_JSON=$($BW_BIN list items --session "$BW_SESSION")
 
 MATCHES=$(echo "$ITEMS_JSON" | jq -c '[.[] | select(.login.uris? != null) | select(any(.login.uris[]; .uri // "" | test("home\\.arpa")))]')
 COUNT=$(echo "$MATCHES" | jq 'length')
 
 if [ "$COUNT" -eq 0 ]; then
-  echo "[OK] Ningún item tiene URIs con home.arpa -- nada que hacer."
+  echo "[OK] Ningún item tiene URIs con 404labo.net -- nada que hacer."
   exit 0
 fi
 
-echo "[INFO] ${COUNT} item(s) con al menos una URI en home.arpa:"
+echo "[INFO] ${COUNT} item(s) con al menos una URI en 404labo.net:"
 echo ""
 
 # Filtro jq compartido: dado un item, calcula la URI reescrita para cada
@@ -69,8 +69,8 @@ echo ""
 # nunca puedan divergir entre sí).
 REWRITE_FILTER='
   def rewritten:
-    if test("pihole\\.home\\.arpa") then "http://192.168.1.170:8053"
-    elif test("apikey\\.home\\.arpa") then "http://192.168.1.175:8091"
+    if test("pihole\\.home\\.arpa") then "http://192.168.10.2:8053"
+    elif test("apikey\\.home\\.arpa") then "http://192.168.10.8:8091"
     elif test("old\\.index\\.home\\.arpa") then "__SIN_SUSTITUTO__"
     elif test("home\\.arpa") then gsub("home\\.arpa"; "404labo.net")
     else .
@@ -87,7 +87,7 @@ echo "$MATCHES" | jq -c '.[]' | while read -r item; do
     "\(.uri)\t\(.uri | rewritten)"
   ' | while IFS=$'\t' read -r old_uri new_uri; do
     if [ "$new_uri" = "__SIN_SUSTITUTO__" ]; then
-      echo "  ⚠️  ${old_uri}  -- old.index.home.arpa no tiene sustituto, revisar a mano (¿sigue haciendo falta este item?)"
+      echo "  ⚠️  ${old_uri}  -- old.index.404labo.net no tiene sustituto, revisar a mano (¿sigue haciendo falta este item?)"
     else
       echo "  ${old_uri}  ->  ${new_uri}"
     fi
@@ -95,7 +95,7 @@ echo "$MATCHES" | jq -c '.[]' | while read -r item; do
   echo ""
 
   if [ "$APPLY" = true ]; then
-    # Igual que arriba, pero escribiendo el resultado en .uri (old.index.home.arpa
+    # Igual que arriba, pero escribiendo el resultado en .uri (old.index.404labo.net
     # se deja intacto -- __SIN_SUSTITUTO__ es solo para el aviso de pantalla).
     updated=$(echo "$item" | jq "${REWRITE_FILTER}"'
       .login.uris |= map(

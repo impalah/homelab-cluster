@@ -1,6 +1,6 @@
 # pinchi — nodo nuevo, sistema base
 
-**IP:** `192.168.1.175`
+**IP:** `192.168.10.8`
 **Hardware:** PC GMKtec NucBox G10 Pro, Ubuntu Server 26.04 LTS, x86_64
 
 ## Estado actual
@@ -37,7 +37,7 @@ Seguir el mismo patrón que el resto de nodos (`config/`, `data/`) dentro de est
 ## Arranque rápido (solo sistema base, hoy)
 
 ```bash
-ssh u-forge@192.168.1.175
+ssh admin@192.168.10.8
 sudo bash /srv/homelab/shared/scripts/prepare-host.sh pinchi
 docker compose version   # confirma Docker Engine + Compose plugin operativos
 ```

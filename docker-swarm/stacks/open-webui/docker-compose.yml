@@ -71,11 +71,11 @@ services:
       - source: homelab-ca-bundle-v1
         target: /etc/ssl/certs/homelab-ca.crt
     secrets:
-      - source: open-webui-infisical-client-id-v1
+      - source: open-webui-infisical-client-id-v2
         target: open-webui-infisical-client-id
-      - source: open-webui-infisical-client-secret-v1
+      - source: open-webui-infisical-client-secret-v2
         target: open-webui-infisical-client-secret
-      - source: open-webui-infisical-project-id-v1
+      - source: open-webui-infisical-project-id-v2
         target: open-webui-infisical-project-id
     entrypoint: ["sh", "-c"]
     command:
@@ -104,32 +104,51 @@ services:
         mode: ingress
     networks:
       - open-webui-net
+      - traefik-public
     logging:
       driver: loki
       options:
-        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        loki-url: "http://observability.404labo.net:3100/loki/api/v1/push"
         mode: non-blocking
         max-buffer-size: 4m
     deploy:
       replicas: 1
+      # `any` y no `on-failure` (2026-10-15, docs/31-docker-swarm.md): con on-failure
+      # una salida con código 0 (p. ej. un cierre limpio por SIGTERM tras fallar un
+      # healthcheck) NO se reprograma y el servicio se queda en 0/1 sin aviso.
       restart_policy:
-        condition: on-failure
+        condition: any
+      # Migrado del proveedor `file` de Traefik (IP:puerto fija en
+      # dynamic/routes.yml) al proveedor `swarm` (2026-09-29) -- sin
+      # constraint de nodo, cambió de nodo varias veces el mismo día durante
+      # un incidente real y rompió openwebui.404labo.net cada vez. Mismo
+      # patrón que markitdown-service.
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.openwebui-404labo-net.rule=Host(`openwebui.404labo.net`)"
+        - "traefik.http.routers.openwebui-404labo-net.entrypoints=websecure"
+        - "traefik.http.routers.openwebui-404labo-net.tls=true"
+        - "traefik.http.routers.openwebui-404labo-net.service=openwebui"
+        - "traefik.http.services.openwebui.loadbalancer.server.port=8080"
 
 networks:
   open-webui-net:
     driver: overlay
     attachable: true
+  traefik-public:
+    external: true
+    name: traefik_traefik-public
 
 configs:
   homelab-ca-bundle-v1:
     external: true
 
 secrets:
-  open-webui-infisical-client-id-v1:
+  open-webui-infisical-client-id-v2:
     external: true
-  open-webui-infisical-client-secret-v1:
+  open-webui-infisical-client-secret-v2:
     external: true
-  open-webui-infisical-project-id-v1:
+  open-webui-infisical-project-id-v2:
     external: true
 
 volumes:
@@ -137,5 +156,5 @@ volumes:
     driver: local
     driver_opts:
       type: nfs
-      o: "addr=192.168.1.180,rw,vers=3"
+      o: "addr=192.168.10.6,rw,vers=3"
       device: ":/volume1/nfs-data/open-webui/data"

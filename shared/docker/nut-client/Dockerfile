@@ -1,12 +1,12 @@
 # Imagen ligera con el cliente NUT (upsmon/upsc, sin los drivers USB que sí
-# lleva pi-obs/nut-server/) para monitorizar el SAI remoto en pi-obs
-# (192.168.1.171:3493) desde el resto de nodos y apagarlos limpio si el SAI
+# lleva pi-dns/nut-server/) para monitorizar el SAI remoto en pi-dns
+# (192.168.10.2:3493) desde el resto de nodos y apagarlos limpio si el SAI
 # ordena un apagado por batería crítica -- ver docs/33-nut-sai.md.
 #
 # Se construye LOCALMENTE en cada nodo consumidor (mismo criterio que
-# pi-obs/nut-server/) -- Dockerfile trivial basado en apt, no compensa la
+# pi-dns/nut-server/) -- Dockerfile trivial basado en apt, no compensa la
 # complejidad de multi-arch + registry.404labo.net para esto, aunque corra
-# tanto en nodos amd64 (ryzen, retaco, pinchi) como arm64 (pi-dns, pi-sonar,
+# tanto en nodos amd64 (ryzen, retaco, pinchi) como arm64 (pi-obs, pi-sonar,
 # pi-utils).
 FROM ubuntu:24.04
 

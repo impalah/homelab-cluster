@@ -5,6 +5,11 @@ global:
     cluster: homelab
     node: pi-obs
 
+# 2026-10-08: retirados los jobs node-exporter/cadvisor de pi-obs, pi-sonar y
+# pi-utils -- esos nodos salieron del Swarm (sus exporters eran tareas globales
+# del stack `common`) y ya no exponen :9100/:8081. Siguen encendidos solo con
+# nut-upsmon (protección del SAI); si algún día se quiere monitorizarlos, hay
+# que poner node-exporter en Compose clásico como en pi-dns.
 scrape_configs:
 
   # OTel Collector — métricas propias del collector
@@ -14,23 +19,6 @@ scrape_configs:
         labels:
           node: pi-obs
 
-  # Node Exporter — métricas del sistema pi-obs. IP en vez de nombre de
-  # contenedor desde que node-exporter pasó a la red overlay del swarm
-  # (docker-swarm/stacks/common/, docs/31-docker-swarm.md) — ya no comparte
-  # la red bridge pi-obs-net con este Prometheus, mismo patrón que el resto
-  # de nodos remotos de más abajo.
-  - job_name: node-exporter-pi-obs
-    static_configs:
-      - targets: ["192.168.1.171:9100"]
-        labels:
-          node: pi-obs
-
-  # cAdvisor — métricas de contenedores pi-obs (mismo motivo que arriba)
-  - job_name: cadvisor-pi-obs
-    static_configs:
-      - targets: ["192.168.1.171:8081"]
-        labels:
-          node: pi-obs
 
   # PostgreSQL Exporter — métricas de postgres-main (retaco)
   - job_name: postgres-retaco
@@ -55,7 +43,7 @@ scrape_configs:
       type: Bearer
       credentials_file: /run/secrets/qdrant-metrics-token
     static_configs:
-      - targets: ["192.168.1.174:6333"]
+      - targets: ["192.168.10.7:6333"]
         labels:
           node: retaco
 
@@ -85,72 +73,62 @@ scrape_configs:
 
   - job_name: node-exporter-ryzen
     static_configs:
-      - targets: ["192.168.1.150:9100"]
+      - targets: ["192.168.10.10:9100"]
         labels:
           node: ryzen
 
   - job_name: cadvisor-ryzen
     static_configs:
-      - targets: ["192.168.1.150:8081"]
+      - targets: ["192.168.10.10:8081"]
         labels:
           node: ryzen
 
   - job_name: node-exporter-retaco
     static_configs:
-      - targets: ["192.168.1.174:9100"]
+      - targets: ["192.168.10.7:9100"]
         labels:
           node: retaco
 
   - job_name: cadvisor-retaco
     static_configs:
-      - targets: ["192.168.1.174:8081"]
+      - targets: ["192.168.10.7:8081"]
         labels:
           node: retaco
 
   - job_name: node-exporter-pi-dns
     static_configs:
-      - targets: ["192.168.1.170:9100"]
+      - targets: ["192.168.10.2:9100"]
         labels:
           node: pi-dns
 
   - job_name: cadvisor-pi-dns
     static_configs:
-      - targets: ["192.168.1.170:8081"]
+      - targets: ["192.168.10.2:8081"]
         labels:
           node: pi-dns
 
-  - job_name: node-exporter-pi-sonar
-    static_configs:
-      - targets: ["192.168.1.172:9100"]
-        labels:
-          node: pi-sonar
 
-  - job_name: cadvisor-pi-sonar
-    static_configs:
-      - targets: ["192.168.1.172:8081"]
-        labels:
-          node: pi-sonar
-
-  - job_name: node-exporter-pi-utils
-    static_configs:
-      - targets: ["192.168.1.173:9100"]
-        labels:
-          node: pi-utils
-
-  - job_name: cadvisor-pi-utils
-    static_configs:
-      - targets: ["192.168.1.173:8081"]
-        labels:
-          node: pi-utils
 
   - job_name: node-exporter-pinchi
     static_configs:
-      - targets: ["192.168.1.175:9100"]
+      - targets: ["192.168.10.8:9100"]
         labels:
           node: pinchi
 
   - job_name: cadvisor-pinchi
     static_configs:
-      - targets: ["192.168.1.175:8081"]
+      - targets: ["192.168.10.8:8081"]
         labels:
           node: pinchi
+
+  - job_name: node-exporter-miugarita
+    static_configs:
+      - targets: ["192.168.10.9:9100"]
+        labels:
+          node: miugarita
+
+  - job_name: cadvisor-miugarita
+    static_configs:
+      - targets: ["192.168.10.9:8081"]
+        labels:
+          node: miugarita

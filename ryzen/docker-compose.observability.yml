@@ -1,7 +1,7 @@
 name: homelab-ryzen-observability
 
 # =============================================================================
-# Stack de OBSERVABILIDAD del nodo Ryzen 9 (192.168.1.150)
+# Stack de OBSERVABILIDAD del nodo Ryzen 9 (192.168.10.10)
 # Servicios: node-exporter, cadvisor, portainer-agent
 #
 # Independiente a propósito de docker-compose.yml (el stack de IA/GPU): se
@@ -23,7 +23,7 @@ name: homelab-ryzen-observability
 x-logging: &loki-logging
   driver: loki
   options:
-    loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+    loki-url: "http://observability.404labo.net:3100/loki/api/v1/push"
     loki-external-labels: "node=ryzen"
     mode: non-blocking
     max-buffer-size: 4m

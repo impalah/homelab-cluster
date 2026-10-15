@@ -14,8 +14,8 @@
 # Uso:
 #   bash generate-valkey-cert.sh                # válido 3650 días (10 años)
 #   CERT_DAYS=825 bash generate-valkey-cert.sh   # validez personalizada
-# Mejora 41 (2026-08-28): CN/SAN pasa de valkey.home.arpa a valkey.404labo.net
-# (home.arpa retirado del clúster; Valkey sigue siendo el único consumidor de
+# Mejora 41 (2026-08-28): CN/SAN pasa de valkey.404labo.net a valkey.404labo.net
+# (404labo.net retirado del clúster; Valkey sigue siendo el único consumidor de
 # la CA interna, ver shared/dns/dns-records.md). "-extfile <(...)" cambiado a
 # un fichero temporal real -- hallazgo real regenerando este mismo cert en
 # vivo: la sustitución de proceso "<(...)" no sobrevive al re-exec de `sudo`
@@ -66,6 +66,6 @@ echo "[OK] Certificado de Valkey generado en ${OUT_DIR}/ (firmado por la CA inte
 echo "     Válido ${DAYS} días — caduca: ${EXPIRY}"
 echo ""
 echo "[INFO] Copiar a retaco:"
-echo "  rsync -av ${OUT_DIR}/valkey.crt ${OUT_DIR}/valkey.key ${CA_DIR}/ca.crt u-data@192.168.1.174:/tmp/"
-echo "  ssh u-data@192.168.1.174 \"sudo mkdir -p /srv/homelab/retaco/valkey/tls && sudo mv /tmp/valkey.crt /tmp/valkey.key /tmp/ca.crt /srv/homelab/retaco/valkey/tls/ && sudo chmod 644 /srv/homelab/retaco/valkey/tls/*.crt && sudo chmod 644 /srv/homelab/retaco/valkey/tls/valkey.key\""
+echo "  rsync -av ${OUT_DIR}/valkey.crt ${OUT_DIR}/valkey.key ${CA_DIR}/ca.crt admin@192.168.10.7:/tmp/"
+echo "  ssh admin@192.168.10.7 \"sudo mkdir -p /srv/homelab/retaco/valkey/tls && sudo mv /tmp/valkey.crt /tmp/valkey.key /tmp/ca.crt /srv/homelab/retaco/valkey/tls/ && sudo chmod 644 /srv/homelab/retaco/valkey/tls/*.crt && sudo chmod 644 /srv/homelab/retaco/valkey/tls/valkey.key\""
 echo "[INFO] Luego: docker compose up -d valkey (recrea con TLS activado)"

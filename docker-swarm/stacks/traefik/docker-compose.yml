@@ -11,7 +11,7 @@
 # Docker de cualquiera puede responder a la API de Swarm que este proveedor
 # necesita.
 #
-# Fase 3b (docs/31-docker-swarm.md): certificado real de *.home.arpa como
+# Fase 3b (docs/31-docker-swarm.md): certificado real de *.404labo.net como
 # `docker secret` nativo (creado a mano fuera de este compose -- ver
 # comentario en `secrets:` más abajo, un secret con contenido real no debe
 # vivir en un fichero versionado en git) + proveedor `file` con las rutas
@@ -21,7 +21,7 @@
 # paralelo al nginx real de pi-dns, sin tocar DNS.
 #
 # Cierre de la mejora 41 (2026-08-28): nginx en pi-dns decomisionado de
-# verdad (dejó de ser vía de rollback), *.home.arpa retirado de Pi-hole y de
+# verdad (dejó de ser vía de rollback), *.404labo.net retirado de Pi-hole y de
 # este stack -- 404labo.net es ahora el único dominio que sirve el clúster.
 version: "3.8"
 
@@ -70,7 +70,7 @@ services:
       # Puerto REAL cambiado de 8090 a 18090 (2026-08-26, incidente real): al
       # ser `mode: global`, Traefik publica este puerto en LOS 5 NODOS -- en
       # pi-utils choca con el puerto real de producción de capataz-frontend
-      # (192.168.1.173:8090, ver routes.yml servicio `index`). No se
+      # (192.168.10.3:8090, ver routes.yml servicio `index`). No se
       # manifestó hasta un reinicio en frío de pi-utils, en el que dockerd
       # reservó 8090 para la routing mesh de Traefik ANTES que el propio
       # capataz-frontend pudiera arrancar, dejándolo en `Exited (1)` con
@@ -80,7 +80,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     configs:
-      - source: traefik-dynamic-routes-v11
+      - source: traefik-dynamic-routes-v19
         target: /etc/traefik/dynamic/routes.yml
     secrets:
       # Versión real en el clúster puede ir por delante de esta -- mejora 41
@@ -90,16 +90,16 @@ services:
       # tocar este fichero. Se actualiza aquí a mano la próxima vez que este
       # compose se toque por otro motivo -- no hace falta perseguir cada
       # rotación automática.
-      - source: 404labo-net-crt-v3
+      - source: 404labo-net-crt-v4
         target: 404labo-net.crt
-      - source: 404labo-net-key-v3
+      - source: 404labo-net-key-v4
         target: 404labo-net.key
     networks:
       - traefik-public
     logging:
       driver: loki
       options:
-        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        loki-url: "http://observability.404labo.net:3100/loki/api/v1/push"
         mode: non-blocking
         max-buffer-size: 4m
     deploy:
@@ -107,8 +107,11 @@ services:
       placement:
         constraints:
           - node.role == manager
+      # `any` y no `on-failure` (2026-10-15, docs/31-docker-swarm.md): con on-failure
+      # una salida con código 0 (p. ej. un cierre limpio por SIGTERM tras fallar un
+      # healthcheck) NO se reprograma y el servicio se queda en 0/1 sin aviso.
       restart_policy:
-        condition: on-failure
+        condition: any
 
 networks:
   traefik-public:
@@ -122,25 +125,65 @@ configs:
   # no se puede editar en sitio. v3: tercer incremento de 3b, añade el
   # certificado/routers de 404labo.net. v4: Fase A de la mejora 41
   # (2026-08-28) -- añade el router gemelo *.404labo.net para cada hostname
-  # que aún vivía solo en *.home.arpa (paso aditivo, ver dynamic/routes.yml).
+  # que aún vivía solo en *.404labo.net (paso aditivo, ver dynamic/routes.yml).
   # v5: cierre de la mejora 41 (2026-08-28) -- retira los ~24 routers
-  # `Host(*.home.arpa)` y el certificado de *.home.arpa, verificados sanos
+  # `Host(*.404labo.net)` y el certificado de *.404labo.net, verificados sanos
   # antes todos sus gemelos *.404labo.net. v6 (2026-08-31): backend de
   # sonarqube actualizado a :19000. v7 (2026-08-31): backend de portainer
   # actualizado a :19001. v8 (2026-08-31): backend de open-webui actualizado
   # a :19002. v9 (2026-08-31): backend de portainer movido de pi-utils a
   # pinchi. v10 (2026-08-31): backend de vaultwarden movido de pi-utils a
-  # pinchi (192.168.1.175) -- servicio reubicado por fiabilidad de disco,
+  # pinchi (192.168.10.8) -- servicio reubicado por fiabilidad de disco,
   # ver docker-swarm/stacks/vaultwarden/docker-compose.yml. v10 se preparó
   # en el mismo cambio que liberó los constraints de nodo de la mejora 43
   # pero nunca llegó a desplegarse -- detectado el 2026-09-03 al caerse
   # pi-utils. v11 (2026-09-03): además de desplegar v10 por fin, corrige los
   # otros cuatro backends que se quedaron apuntando a pi-utils tras la
   # mejora 43 sin actualizar (index/capataz-frontend, capataz-api, rsshub,
-  # n8n-aux, crawl4ai-scraper) -- movidos a retaco (192.168.1.174), mismo
+  # n8n-aux, crawl4ai-scraper) -- movidos a retaco (192.168.10.7), mismo
   # patrón que openwebui/n8n/qdrant/infisical/authentik/registry. Ver
-  # incidente en docs/31-docker-swarm.md.
-  traefik-dynamic-routes-v11:
+  # incidente en docs/31-docker-swarm.md. v12 (2026-09-29): migración al
+  # router Cudy R700 -- este fichero se había quedado fuera de la pasada de
+  # actualización de IPs de la migración de red (2026-09-28) porque vive
+  # bajo dynamic/, no en ningún docker-compose.yml; provocaba 502 real en
+  # registry.404labo.net (y previsiblemente el resto de backends de este
+  # fichero) al apuntar todos a IPs 192.168.1.17x/.150 ya muertas. Ver
+  # dynamic/routes.yml para el detalle IP a IP. v13 (2026-09-29): v12 tradujo
+  # la IP antigua 1:1 al nuevo esquema para cada backend, pero varios
+  # servicios sin constraint de nodo (index/capataz-frontend, capataz-api,
+  # openwebui, n8n, n8n-aux, open-terminal, crawl4ai-scraper) ya no corren en
+  # el mismo nodo que antes de la migración -- comprobado en vivo con
+  # `docker service ps` uno a uno, no asumido. Causó un 502 real en
+  # home.404labo.net pese a que v12 ya no apuntaba a una IP muerta. Ver
+  # dynamic/routes.yml para el detalle servicio a servicio. v14 (2026-09-29,
+  # mismo día): varios de esos mismos backends volvieron a moverse de nodo
+  # unas horas después (al perder y recuperar pi-obs/pi-sonar del Swarm),
+  # rompiendo home.404labo.net otra vez -- ver el bloque de comentario al
+  # principio de `services:` en dynamic/routes.yml, que explica por qué esto
+  # es estructural (servicios sin constraint de nodo + proveedor `file` de
+  # IP fija) y no un error puntual. v15 (2026-09-29, mismo día, tercera
+  # ronda): authentik-server/bifrost/rsshub/n8n-aux volvieron a moverse de
+  # nodo tras un segundo reinicio de dockerd en retaco (para forzar la
+  # reconvergencia del gossip de la red ingress, que también se había
+  # roto). Confirma que este patrón se repite cada vez que el cluster
+  # sufre churn de nodos -- pendiente pasar estos backends al proveedor
+  # `swarm` (labels) en vez de perseguir la IP cada vez, ver
+  # docs/31-docker-swarm.md fase 3b. v16 (2026-09-29, mismo día): hecho --
+  # index/capataz-frontend, capataz-api, openwebui, n8n, n8n-aux, bifrost,
+  # rsshub, open-terminal y crawl4ai-scraper migrados al proveedor `swarm`
+  # (labels en su propio docker-compose.yml, mismo patrón que
+  # markitdown-service) -- sus routers y `services:` se retiran de este
+  # fichero. `authentik`/`registry`/`epub2pdf`/`pdf2chunks` se quedan por
+  # ahora (mismo problema de fondo, no llegaron a romperse hoy) -- ver el
+  # comentario al principio de `services:` en dynamic/routes.yml. v17
+  # (2026-09-29, mismo día): authentik también migrado al ver el mismo 502
+  # en directo tras el reinicio de dockerd de retaco para aplicar v16 --
+  # `registry`/`epub2pdf`/`pdf2chunks` se quedan por ahora, no rompieron.
+  # v18 (2026-10-08): backend de sonarqube movido de pi-sonar (192.168.10.5)
+  # a miugarita (192.168.10.9), ver docker-swarm/stacks/sonarqube/.
+  # v19 (2026-10-08): backends de grafana y prometheus movidos de pi-obs
+  # (192.168.10.4) a miugarita (192.168.10.9), ver docker-swarm/stacks/pi-obs/.
+  traefik-dynamic-routes-v19:
     file: ./dynamic/routes.yml
 
 secrets:
@@ -153,7 +196,7 @@ secrets:
   # traefik_traefik solo, sin `docker stack deploy`). El número de versión
   # de abajo es el que había la última vez que se tocó este fichero, no
   # necesariamente el real -- ver comentario junto a `secrets:` del servicio.
-  404labo-net-crt-v3:
+  404labo-net-crt-v4:
     external: true
-  404labo-net-key-v3:
+  404labo-net-key-v4:
     external: true

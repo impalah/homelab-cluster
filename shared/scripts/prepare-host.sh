@@ -3,7 +3,7 @@
 # prepare-host.sh
 # Crea los directorios de datos del nodo indicado y ajusta permisos.
 # Uso: sudo bash prepare-host.sh <nodo>
-# Nodos válidos: ryzen | retaco | pi-dns | pi-obs | pi-sonar | pi-utils
+# Nodos válidos: ryzen | retaco | pi-dns | pi-obs | pi-sonar | pi-utils | pinchi | miugarita
 #
 # ⚠️ Pensado para la PRIMERA vez que se prepara un nodo (directorios vacíos).
 # Volver a ejecutarlo en un nodo que ya tiene datos reales es seguro SOLO
@@ -22,7 +22,7 @@ NODE="${1:-}"
 
 if [ -z "${NODE}" ]; then
   echo "[ERROR] Debes indicar el nodo. Uso: prepare-host.sh <nodo>"
-  echo "        Nodos válidos: ryzen | retaco | pi-dns | pi-obs | pi-sonar | pi-utils | pinchi"
+  echo "        Nodos válidos: ryzen | retaco | pi-dns | pi-obs | pi-sonar | pi-utils | pinchi | miugarita"
   exit 1
 fi
 
@@ -93,7 +93,7 @@ case "${NODE}" in
     create_dir "${BASE}/pi-obs/loki/wal"
     create_dir "${BASE}/pi-obs/tempo/data"
     create_dir "${BASE}/pi-obs/otel/config"
-    create_dir "${BASE}/pi-obs/node-exporter-textfile"
+    create_dir "${BASE}/node-exporter-textfile"
     create_dir "${BASE}/backups/pi-obs"
     chown -R "${DEPLOY_USER}:${DEPLOY_USER}" "${BASE}/pi-obs" "${BASE}/backups/pi-obs"
     # Grafana UID 472. grafana/ solo contiene data/ (su config estática vive
@@ -133,7 +133,7 @@ case "${NODE}" in
     ;;
 
   pinchi)
-    # Nodo nuevo (192.168.1.175, docs/30-instalacion-pinchi.md) — solo sistema
+    # Nodo nuevo (192.168.10.8, docs/30-instalacion-pinchi.md) — solo sistema
     # base provisionado por ahora, sin servicios decididos todavía. Sin
     # subdirectorios propios que crear aún; cuando se decida qué corre aquí,
     # añadir su caso completo como el resto de nodos (ver retaco/pi-utils más
@@ -144,9 +144,18 @@ case "${NODE}" in
     chown -R "${DEPLOY_USER}:${DEPLOY_USER}" "${BASE}/pinchi" "${BASE}/backups/pinchi"
     ;;
 
+  miugarita)
+    # Sexto nodo del Swarm (192.168.10.9, docs/39-instalacion-miugarita.md)
+    # -- mismo estado que tenía pinchi al darse de alta: solo sistema base +
+    # Swarm, sin servicios de aplicación decididos todavía.
+    create_dir "${BASE}/miugarita"
+    create_dir "${BASE}/backups/miugarita"
+    chown -R "${DEPLOY_USER}:${DEPLOY_USER}" "${BASE}/miugarita" "${BASE}/backups/miugarita"
+    ;;
+
   *)
     echo "[ERROR] Nodo desconocido: '${NODE}'"
-    echo "        Nodos válidos: ryzen | retaco | pi-dns | pi-obs | pi-sonar | pi-utils | pinchi"
+    echo "        Nodos válidos: ryzen | retaco | pi-dns | pi-obs | pi-sonar | pi-utils | pinchi | miugarita"
     exit 1
     ;;
 esac

@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # =============================================================================
 # wake-mole.sh
-# Envía un magic packet de Wake-on-LAN a "mole" (ryzen, 192.168.1.150) desde
+# Envía un magic packet de Wake-on-LAN a "mole" (ryzen, 192.168.10.10) desde
 # otro nodo del clúster, para encenderla remotamente cuando está apagada o
 # hibernada. Ver el detalle completo (requisitos, cómo se comprobó que la
 # NIC/kernel lo soportan, limitaciones de la BIOS) en docs/19-wake-on-lan.md.
 #
 # Uso: bash wake-mole.sh [nodo]
 #   nodo — desde qué nodo del clúster se envía el paquete (por defecto pi-utils)
-#          Válidos: pi-utils | pi-dns | pi-obs | pi-sonar | retaco
+#          Válidos: pi-utils | pi-dns | pi-obs | pi-sonar | retaco | pinchi | miugarita
 #
-# El envío funciona desde cualquier nodo de la misma LAN (192.168.1.0/24) —
+# El envío funciona desde cualquier nodo de la misma LAN (192.168.10.0/24) —
 # el magic packet es un broadcast de capa 2/UDP, no importa el origen exacto
 # mientras esté en el mismo segmento. pi-utils es el valor por defecto solo
 # por convención (nodo "de utilidades" del clúster).
@@ -18,22 +18,24 @@
 set -euo pipefail
 
 MOLE_MAC="50:eb:f6:97:31:a1"
-BROADCAST="192.168.1.255"
+BROADCAST="192.168.10.255"
 
 NODE="${1:-pi-utils}"
 
 declare -A TARGETS=(
-  [retaco]="u-data@192.168.1.174"
-  [pi-dns]="u-dns@192.168.1.170"
-  [pi-obs]="u-obs@192.168.1.171"
-  [pi-sonar]="u-sonar@192.168.1.172"
-  [pi-utils]="u-utils@192.168.1.173"
+  [retaco]="admin@192.168.10.7"
+  [pi-dns]="admin@192.168.10.2"
+  [pi-obs]="admin@192.168.10.4"
+  [pi-sonar]="admin@192.168.10.5"
+  [pi-utils]="admin@192.168.10.3"
+  [pinchi]="admin@192.168.10.8"
+  [miugarita]="admin@192.168.10.9"
 )
 
 target="${TARGETS[$NODE]:-}"
 if [ -z "${target}" ]; then
   echo "[ERROR] Nodo desconocido: '${NODE}'"
-  echo "        Nodos válidos: pi-utils | pi-dns | pi-obs | pi-sonar | retaco"
+  echo "        Nodos válidos: pi-utils | pi-dns | pi-obs | pi-sonar | retaco | pinchi | miugarita"
   exit 1
 fi
 
@@ -58,4 +60,4 @@ else
 fi
 
 echo "[OK] Paquete enviado. Comprueba en unos segundos/minutos si mole responde:"
-echo "     ping -c 3 192.168.1.150"
+echo "     ping -c 3 192.168.10.10"

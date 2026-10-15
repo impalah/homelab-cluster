@@ -1,6 +1,8 @@
 # pi-utils — Servicios de utilidades
 
-**IP:** `192.168.1.173`  
+> ⚠️ **Desde 2026-10-08 esta Raspberry Pi ya no es miembro del Swarm ni aloja servicios** (solo `nut-upsmon`, cliente del SAI, y encendida como reserva): RSSHub, markitdown, n8n-aux, Portainer, Vaultwarden, Capataz y demás corren como stacks Swarm repartidos entre `pinchi`/`retaco`/`miugarita`. Lo que sigue es histórico — no lo uses como guía de despliegue. Ver `docs/31-docker-swarm.md`.
+
+**IP:** `192.168.10.3`  
 **Hardware:** Raspberry Pi 5 (4 GB RAM)
 
 ## Servicios

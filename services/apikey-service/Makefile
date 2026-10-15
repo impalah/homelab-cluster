@@ -28,7 +28,7 @@ PORT         := 8090
 # REGISTRY_USER/REGISTRY_PASSWORD deben venir de .env (copiar desde
 # .env.example) — nunca hardcodeados aquí. "?=" permite sobreescribirlos
 # desde fuera si hiciera falta, pero el valor real vive solo en .env.
-REGISTRY_URI       ?= registry.home.arpa
+REGISTRY_URI       ?= registry.404labo.net
 REGISTRY_USER      ?=
 REGISTRY_PASSWORD  ?=
 REGISTRY_IMAGE     := $(REGISTRY_URI)/$(SERVICE_NAME)
@@ -103,7 +103,7 @@ typecheck:
 # sobre bytecode/binarios que no son código real.
 # REQUESTS_CA_BUNDLE: pysonar usa "requests", que valida TLS contra el bundle
 # de certifi, no contra el almacén de certificados del sistema — sin esto,
-# "https://sonarqube.home.arpa" falla con CERTIFICATE_VERIFY_FAILED aunque
+# "https://sonarqube.404labo.net" falla con CERTIFICATE_VERIFY_FAILED aunque
 # curl lo acepte sin problema.
 sonar:
 	@test -n "$(SONAR_TOKEN)" || (echo "ERROR: define SONAR_TOKEN en .env (copiar desde .env.example)"; exit 1)

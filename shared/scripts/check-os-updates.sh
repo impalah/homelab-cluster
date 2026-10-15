@@ -2,12 +2,11 @@
 # =============================================================================
 # check-os-updates.sh
 # Vigilancia del estado de parcheo del sistema operativo (mejora 36,
-# docs/22-mejoras-futuras.md) -- a diferencia de check-image-updates.sh
-# (centralizado en pi-obs, vía SSH a los demás nodos), este script está
-# pensado para correr LOCALMENTE en cada nodo por cron (mismo criterio ya
-# apuntado en la propia mejora: más simple que cada nodo escriba su propio
-# fichero .prom que centralizar por SSH para algo que ya corre en cada uno
-# vía unattended-upgrades, docs/16-mantenimiento-actualizaciones.md).
+# docs/22-mejoras-futuras.md) -- corre LOCALMENTE en cada nodo por cron (más
+# simple que cada nodo escriba su propio fichero .prom que centralizar por SSH
+# para algo que ya corre en cada uno vía unattended-upgrades,
+# docs/16-mantenimiento-actualizaciones.md). check-image-updates.sh, que
+# hasta 2026-10-08 estaba centralizado en pi-obs, funciona igual desde esa fecha.
 #
 # Escribe dos métricas Prometheus (textfile collector) en
 # /srv/homelab/node-exporter-textfile/os-updates.prom:
@@ -18,10 +17,9 @@
 #
 # Sin label "node" en las propias métricas a propósito -- Prometheus ya lo
 # añade vía `static_configs.labels` en cada job `node-exporter-<nodo>`
-# (pi-obs/config/prometheus.yml), a diferencia de check-image-updates.sh
-# (un solo fichero centralizado para los 6 nodos, ahí sí hace falta el label
-# explícito). Añadirlo aquí también solo produciría un choque renombrado a
-# "exported_node" sin aportar nada.
+# (pi-obs/config/prometheus.yml). check-image-updates.sh SÍ lleva el label
+# explícito (el dashboard "Actualizaciones pendientes" lee `exported_node`,
+# el choque renombrado que Prometheus genera siempre); aquí no hace falta.
 #
 # Cron por nodo, a la hora que ya usa unattended-upgrades como referencia
 # (después de que corra el timer diario, para que el número refleje el

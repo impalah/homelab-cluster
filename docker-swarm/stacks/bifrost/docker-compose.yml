@@ -7,7 +7,7 @@
 #   2026-08-07 -- /app/data nunca alojó estado real que migrar. config.json
 #   pasa a `docker config` (bifrost-config-v1) desde entonces, elimina el
 #   rsync manual que causó el incidente real de docs/23 ("config.json
-#   desincronizado tras retirar home.arpa"). Al no haber ningún dato real
+#   desincronizado tras retirar 404labo.net"). Al no haber ningún dato real
 #   que persistir, `/app/data` pasa de bind-mount a `tmpfs` -- sigue
 #   cumpliendo el único requisito real (la imagen exige que el directorio
 #   exista y sea escribible por UID:GID 1000:0 al arrancar, ver docs/23,
@@ -60,11 +60,11 @@ services:
       - source: homelab-ca-bundle-v1
         target: /etc/ssl/certs/homelab-ca.crt
     secrets:
-      - source: bifrost-infisical-client-id-v1
+      - source: bifrost-infisical-client-id-v2
         target: bifrost-infisical-client-id
-      - source: bifrost-infisical-client-secret-v1
+      - source: bifrost-infisical-client-secret-v2
         target: bifrost-infisical-client-secret
-      - source: bifrost-infisical-project-id-v1
+      - source: bifrost-infisical-project-id-v2
         target: bifrost-infisical-project-id
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -89,21 +89,39 @@ services:
         mode: ingress
     networks:
       - bifrost-net
+      - traefik-public
     logging:
       driver: loki
       options:
-        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        loki-url: "http://observability.404labo.net:3100/loki/api/v1/push"
         mode: non-blocking
         max-buffer-size: 4m
     deploy:
       replicas: 1
+      # `any` y no `on-failure` (2026-10-15, docs/31-docker-swarm.md): con on-failure
+      # una salida con código 0 (p. ej. un cierre limpio por SIGTERM tras fallar un
+      # healthcheck) NO se reprograma y el servicio se queda en 0/1 sin aviso.
       restart_policy:
-        condition: on-failure
+        condition: any
+      # Migrado del proveedor `file` de Traefik al proveedor `swarm`
+      # (2026-09-29) -- sin constraint de nodo, cambió de nodo varias veces
+      # el mismo día durante un incidente real y rompió bifrost.404labo.net
+      # cada vez. Mismo patrón que markitdown-service.
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.bifrost-404labo-net.rule=Host(`bifrost.404labo.net`)"
+        - "traefik.http.routers.bifrost-404labo-net.entrypoints=websecure"
+        - "traefik.http.routers.bifrost-404labo-net.tls=true"
+        - "traefik.http.routers.bifrost-404labo-net.service=bifrost"
+        - "traefik.http.services.bifrost.loadbalancer.server.port=8080"
 
 networks:
   bifrost-net:
     driver: overlay
     attachable: true
+  traefik-public:
+    external: true
+    name: traefik_traefik-public
 
 configs:
   # Auto-creado por `docker stack deploy` desde ./config.json (mismo patrón
@@ -116,9 +134,9 @@ configs:
     external: true
 
 secrets:
-  bifrost-infisical-client-id-v1:
+  bifrost-infisical-client-id-v2:
     external: true
-  bifrost-infisical-client-secret-v1:
+  bifrost-infisical-client-secret-v2:
     external: true
-  bifrost-infisical-project-id-v1:
+  bifrost-infisical-project-id-v2:
     external: true

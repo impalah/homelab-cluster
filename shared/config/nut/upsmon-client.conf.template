@@ -1,12 +1,12 @@
-# Cliente NUT "secondary" -- solo observa el SAI remoto en pi-obs y apaga
+# Cliente NUT "secondary" -- solo observa el SAI remoto en pi-dns y apaga
 # ESTE host si el SAI ordena un apagado por bateria critica (broadcast FSD).
 # No gestiona el driver ni decide instcmds -- eso es cosa del "primary" en
-# pi-obs (pi-obs/config/nut/upsmon.conf.template). Generado en el arranque
+# pi-dns (pi-dns/config/nut/upsmon.conf.template). Generado en el arranque
 # del contenedor (shared/docker/nut-client/entrypoint.sh, envsubst).
-MONITOR sai@192.168.1.171 1 monuser ${NUT_MONUSER_PASSWORD} secondary
+MONITOR sai@192.168.10.2 1 monuser ${NUT_MONUSER_PASSWORD} secondary
 
-# RUN_AS_USER root: mismo motivo que en pi-obs (ver
-# pi-obs/config/nut/ups.conf) -- UID/GID de "nut" dentro del contenedor no
+# RUN_AS_USER root: mismo motivo que en pi-dns (ver
+# pi-dns/config/nut/ups.conf) -- UID/GID de "nut" dentro del contenedor no
 # tiene por que coincidir con nada del host, y aqui ademas hace falta poder
 # ejecutar SHUTDOWNCMD (apagado real via D-Bus) sin restricciones de un
 # usuario sin privilegios.
@@ -16,7 +16,7 @@ RUN_AS_USER root
 # unico SAI monitorizado, es el valor minimo que tiene sentido -- bajarlo a
 # 0 desactivaria por completo la proteccion de "me he quedado sin poder
 # confirmar el estado del SAI", que es justo lo que salva a este nodo si
-# pi-obs (donde vive upsd) muere de verdad en un corte real antes de poder
+# pi-dns (donde vive upsd) muere de verdad en un corte real antes de poder
 # emitir el FSD. El problema real no era MINSUPPLIES, era DEADTIME (ver
 # comentario de abajo).
 MINSUPPLIES 1
@@ -27,7 +27,7 @@ POLLFREQALERT 5
 HOSTSYNC 15
 # DEADTIME 60, no 15 (2026-09-03, ver docs/31-docker-swarm.md, incidente de
 # caida de pi-utils del 2026-09-01): un reinicio normal del contenedor
-# nut-server en pi-obs corta la comunicacion unos ~4s -- con DEADTIME 15,
+# nut-server (entonces en pi-obs) corta la comunicacion unos ~4s -- con DEADTIME 15,
 # combinado con MINSUPPLIES 1, upsmon interpreto ese blip como "SAI
 # potencialmente critico" y disparo un apagado real via SHUTDOWNCMD, sin
 # que hubiera ningun problema de alimentacion real. 60s da margen de sobra

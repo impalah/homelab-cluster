@@ -10,10 +10,10 @@ Asegurarse de que todos los dispositivos de la red doméstica usen `pi-dns` como
 
 ### Paso 1: Acceder al panel de administración del router
 
-La IP del router suele ser `192.168.1.1`. Abrir en el navegador:
+La IP del router suele ser `192.168.10.1`. Abrir en el navegador:
 
 ```
-http://192.168.1.1
+http://192.168.10.1
 ```
 
 ### Paso 2: Localizar la sección DHCP
@@ -24,7 +24,7 @@ Buscar en el menú: `LAN` → `DHCP Server` o `Red local` → `Configuración DH
 
 | Campo | Valor |
 |---|---|
-| DNS primario | `192.168.1.170` |
+| DNS primario | `192.168.10.2` |
 | DNS secundario | `1.1.1.1` |
 
 > El DNS secundario `1.1.1.1` actúa como alternativa de respaldo automática si `pi-dns` está caído, pero en ese caso los nombres de host `*.404labo.net` no resolverán. Esto es el comportamiento esperado.
@@ -52,11 +52,11 @@ Para garantizar que los nodos del clúster siempre reciban la misma IP, añadir 
 
 | Nombre de host | Dirección MAC | IP asignada |
 |---|---|---|
-| ryzen | `xx:xx:xx:xx:xx:xx` | `192.168.1.150` |
-| pi-dns | `xx:xx:xx:xx:xx:xx` | `192.168.1.170` |
-| pi-obs | `xx:xx:xx:xx:xx:xx` | `192.168.1.171` |
-| pi-sonar | `xx:xx:xx:xx:xx:xx` | `192.168.1.172` |
-| pi-utils | `xx:xx:xx:xx:xx:xx` | `192.168.1.173` |
+| ryzen | `xx:xx:xx:xx:xx:xx` | `192.168.10.10` |
+| pi-dns | `xx:xx:xx:xx:xx:xx` | `192.168.10.2` |
+| pi-obs | `xx:xx:xx:xx:xx:xx` | `192.168.10.4` |
+| pi-sonar | `xx:xx:xx:xx:xx:xx` | `192.168.10.5` |
+| pi-utils | `xx:xx:xx:xx:xx:xx` | `192.168.10.3` |
 
 > Sustituir los valores `xx:xx:xx:xx:xx:xx` por las MAC reales de cada nodo.
 > Obtener MACs: `ip link show eth0 | grep ether`
@@ -70,11 +70,11 @@ Tras aplicar la configuración, verificar desde cualquier dispositivo de la red:
 ```bash
 # Ver servidor DNS asignado
 cat /etc/resolv.conf
-# Debe mostrar: nameserver 192.168.1.170
+# Debe mostrar: nameserver 192.168.10.2
 
 # Probar resolución de nombre interno
 nslookup grafana.404labo.net
-# Respuesta esperada: Address: 192.168.1.170
+# Respuesta esperada: Address: 192.168.10.2
 
 # Probar resolución externa (verifica que Unbound funciona)
 nslookup github.com
@@ -90,7 +90,7 @@ Para routers con OpenWrt:
 
 ```
 # mediante SSH
-uci set dhcp.lan.dhcp_option='6,192.168.1.170,1.1.1.1'
+uci set dhcp.lan.dhcp_option='6,192.168.10.2,1.1.1.1'
 uci commit dhcp
 /etc/init.d/dnsmasq restart
 ```

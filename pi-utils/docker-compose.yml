@@ -1,7 +1,7 @@
 name: homelab-pi-utils
 
 # =============================================================================
-# Stack del nodo pi-utils (192.168.1.173)
+# Stack del nodo pi-utils (192.168.10.3)
 # Servicios activos: portainer (servidor), watchtower
 # (rsshub, n8n-aux, markitdown-service, crawl4ai-scraper-service,
 # capataz-api/capataz-runner/capataz-frontend, node-exporter/cadvisor y
@@ -23,7 +23,7 @@ name: homelab-pi-utils
 x-logging: &loki-logging
   driver: loki
   options:
-    loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+    loki-url: "http://observability.404labo.net:3100/loki/api/v1/push"
     loki-external-labels: "node=pi-utils"
     mode: non-blocking
     max-buffer-size: 4m
@@ -31,8 +31,8 @@ x-logging: &loki-logging
 services:
 
   # ---------------------------------------------------------------------------
-  # nut-upsmon — cliente NUT: monitoriza el SAI remoto en pi-obs
-  # (192.168.1.171:3493) y apaga ESTE host si el SAI ordena un apagado por
+  # nut-upsmon — cliente NUT: monitoriza el SAI remoto en pi-dns
+  # (192.168.10.2:3493) y apaga ESTE host si el SAI ordena un apagado por
   # bateria critica. Ver docs/33-nut-sai.md.
   #
   # privileged: true IMPRESCINDIBLE -- confirmado en vivo (pinchi,

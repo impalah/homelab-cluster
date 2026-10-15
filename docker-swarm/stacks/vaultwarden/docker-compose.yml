@@ -51,11 +51,11 @@ services:
       - source: homelab-ca-bundle-v1
         target: /etc/ssl/certs/homelab-ca.crt
     secrets:
-      - source: vaultwarden-infisical-client-id-v1
+      - source: vaultwarden-infisical-client-id-v2
         target: vaultwarden-infisical-client-id
-      - source: vaultwarden-infisical-client-secret-v1
+      - source: vaultwarden-infisical-client-secret-v2
         target: vaultwarden-infisical-client-secret
-      - source: vaultwarden-infisical-project-id-v1
+      - source: vaultwarden-infisical-project-id-v2
         target: vaultwarden-infisical-project-id
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -77,7 +77,7 @@ services:
     logging:
       driver: loki
       options:
-        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        loki-url: "http://observability.404labo.net:3100/loki/api/v1/push"
         mode: non-blocking
         max-buffer-size: 4m
     deploy:
@@ -85,8 +85,11 @@ services:
       placement:
         constraints:
           - node.hostname==pinchi
+      # `any` y no `on-failure` (2026-10-15, docs/31-docker-swarm.md): con on-failure
+      # una salida con código 0 (p. ej. un cierre limpio por SIGTERM tras fallar un
+      # healthcheck) NO se reprograma y el servicio se queda en 0/1 sin aviso.
       restart_policy:
-        condition: on-failure
+        condition: any
 
 networks:
   vaultwarden-net:
@@ -98,9 +101,12 @@ configs:
     external: true
 
 secrets:
-  vaultwarden-infisical-client-id-v1:
+  # -v2 (2026-10-01): Infisical se reconstruyó desde cero tras el incidente
+  # de la IP de advertise del manager del Swarm (docs/31) -- Machine Identity
+  # nueva, mismos nombres de secret pero valores distintos.
+  vaultwarden-infisical-client-id-v2:
     external: true
-  vaultwarden-infisical-client-secret-v1:
+  vaultwarden-infisical-client-secret-v2:
     external: true
-  vaultwarden-infisical-project-id-v1:
+  vaultwarden-infisical-project-id-v2:
     external: true

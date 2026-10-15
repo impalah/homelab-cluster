@@ -1,0 +1,49 @@
+name: homelab-miugarita
+
+# =============================================================================
+# Stack CLÁSICO del nodo miugarita (192.168.10.9) -- su único servicio fuera
+# del Swarm es el cliente del SAI. Todo lo demás que corre en miugarita
+# (observabilidad, SonarQube, valkey...) son stacks de Swarm, ver
+# docker-swarm/stacks/.
+#
+# nut-upsmon (cliente NUT, docs/33-nut-sai.md) necesita `privileged: true` de
+# verdad para el D-Bus real del host -- `docker stack deploy` lo ignora en
+# silencio, por eso vive aquí y no en un stack. Añadido el 2026-10-08: hasta
+# entonces miugarita era el único nodo sin protección frente a un corte de luz.
+# =============================================================================
+
+x-logging: &loki-logging
+  driver: loki
+  options:
+    loki-url: "http://observability.404labo.net:3100/loki/api/v1/push"
+    loki-external-labels: "node=miugarita"
+    mode: non-blocking
+    max-buffer-size: 4m
+
+services:
+
+  # nut-upsmon — cliente NUT: monitoriza el SAI remoto en pi-dns
+  # (192.168.10.2:3493) y apaga ESTE host si el SAI ordena un apagado por
+  # bateria critica. Ver docs/33-nut-sai.md.
+  nut-upsmon:
+    build: /srv/homelab/shared/docker/nut-client
+    image: nut-client:local
+    container_name: nut-upsmon
+    logging: *loki-logging
+    restart: unless-stopped
+    privileged: true
+    environment:
+      NUT_MONUSER_PASSWORD: ${NUT_MONUSER_PASSWORD}
+    volumes:
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+      - /srv/homelab/shared/config/nut/nut-client.conf:/etc/nut/nut.conf:ro
+      - /srv/homelab/shared/config/nut/upsmon-client.conf.template:/etc/nut/upsmon.conf.template:ro
+      - /srv/homelab/shared/scripts/nut-shutdown-host.sh:/usr/local/bin/nut-shutdown-host.sh:ro
+      - /srv/homelab/shared/scripts/nut-notify.sh:/usr/local/bin/nut-notify.sh:ro
+    networks:
+      - miugarita-net
+
+networks:
+  miugarita-net:
+    name: miugarita-net
+    driver: bridge

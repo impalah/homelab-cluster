@@ -45,7 +45,7 @@ services:
     logging:
       driver: loki
       options:
-        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        loki-url: "http://observability.404labo.net:3100/loki/api/v1/push"
         mode: non-blocking
         max-buffer-size: 4m
     deploy:
@@ -53,8 +53,11 @@ services:
       placement:
         constraints:
           - node.hostname==retaco
+      # `any` y no `on-failure` (2026-10-15, docs/31-docker-swarm.md): con on-failure
+      # una salida con código 0 (p. ej. un cierre limpio por SIGTERM tras fallar un
+      # healthcheck) NO se reprograma y el servicio se queda en 0/1 sin aviso.
       restart_policy:
-        condition: on-failure
+        condition: any
 
   infisical:
     image: infisical/infisical:v0.162.18
@@ -69,7 +72,7 @@ services:
       # Infisical no arranca ("self-signed certificate in certificate
       # chain", incidente real en el propio redeploy de esta fase).
       SITE_URL: https://infisical.404labo.net
-      TRUSTED_PROXY_CIDRS: 192.168.1.170/32
+      TRUSTED_PROXY_CIDRS: 192.168.10.2/32
       NODE_EXTRA_CA_CERTS: /etc/ssl/certs/homelab-ca.crt
       TELEMETRY_ENABLED: "false"
       DISABLE_UPDATE_CHECK: "true"
@@ -112,7 +115,7 @@ services:
     logging:
       driver: loki
       options:
-        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        loki-url: "http://observability.404labo.net:3100/loki/api/v1/push"
         mode: non-blocking
         max-buffer-size: 4m
     deploy:
@@ -121,7 +124,7 @@ services:
         constraints:
           - node.hostname==retaco
       restart_policy:
-        condition: on-failure
+        condition: any
 
 networks:
   infisical-net:

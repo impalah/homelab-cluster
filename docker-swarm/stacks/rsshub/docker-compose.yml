@@ -40,11 +40,11 @@ services:
       - source: homelab-ca-bundle-v1
         target: /etc/ssl/certs/homelab-ca.crt
     secrets:
-      - source: rsshub-infisical-client-id-v1
+      - source: rsshub-infisical-client-id-v2
         target: rsshub-infisical-client-id
-      - source: rsshub-infisical-client-secret-v1
+      - source: rsshub-infisical-client-secret-v2
         target: rsshub-infisical-client-secret
-      - source: rsshub-infisical-project-id-v1
+      - source: rsshub-infisical-project-id-v2
         target: rsshub-infisical-project-id
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -63,30 +63,48 @@ services:
       - "1200:1200"
     networks:
       - rsshub-net
+      - traefik-public
     logging:
       driver: loki
       options:
-        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        loki-url: "http://observability.404labo.net:3100/loki/api/v1/push"
         mode: non-blocking
         max-buffer-size: 4m
     deploy:
       replicas: 1
+      # `any` y no `on-failure` (2026-10-15, docs/31-docker-swarm.md): con on-failure
+      # una salida con código 0 (p. ej. un cierre limpio por SIGTERM tras fallar un
+      # healthcheck) NO se reprograma y el servicio se queda en 0/1 sin aviso.
       restart_policy:
-        condition: on-failure
+        condition: any
+      # Migrado del proveedor `file` de Traefik al proveedor `swarm`
+      # (2026-09-29) -- sin constraint de nodo, cambió de nodo varias veces
+      # el mismo día durante un incidente real y rompió rsshub.404labo.net
+      # cada vez. Mismo patrón que markitdown-service.
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.rsshub-404labo-net.rule=Host(`rsshub.404labo.net`)"
+        - "traefik.http.routers.rsshub-404labo-net.entrypoints=websecure"
+        - "traefik.http.routers.rsshub-404labo-net.tls=true"
+        - "traefik.http.routers.rsshub-404labo-net.service=rsshub"
+        - "traefik.http.services.rsshub.loadbalancer.server.port=1200"
 
 networks:
   rsshub-net:
     driver: overlay
     attachable: true
+  traefik-public:
+    external: true
+    name: traefik_traefik-public
 
 configs:
   homelab-ca-bundle-v1:
     external: true
 
 secrets:
-  rsshub-infisical-client-id-v1:
+  rsshub-infisical-client-id-v2:
     external: true
-  rsshub-infisical-client-secret-v1:
+  rsshub-infisical-client-secret-v2:
     external: true
-  rsshub-infisical-project-id-v1:
+  rsshub-infisical-project-id-v2:
     external: true

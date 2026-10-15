@@ -32,7 +32,7 @@ docker-swarm/
     │                        X-Api-Key vía ForwardAuth (Fase 3b, completada)
     ├── traefik/         ← Fase 3, completada: descubrimiento (3a), TLS real + cutover de DNS (3b);
     │                        cierre de la mejora 41 (2026-08-28, docs/22): retirados los ~26
-    │                        routers `*.home.arpa` y su cert, nginx en pi-dns decomisionado del
+    │                        routers `*.404labo.net` y su cert, nginx en pi-dns decomisionado del
     │                        todo (ya no es vía de rollback, no queda desplegado)
     ├── registry/        ← primer servicio CON ESTADO migrado (Fase 4, completada, 2026-08-27),
     │                        pinnado a retaco (node.hostname==retaco), mismos datos sin mover

@@ -8,7 +8,7 @@ No hay código propio aquí, solo la capa que falta para exponer Open Terminal c
 
 ```bash
 cp .env.example .env   # credenciales del registry, ver Vaultwarden
-make build              # login + build + push a registry.home.arpa/open-terminal-mcp:latest
+make build              # login + build + push a registry.404labo.net/open-terminal-mcp:latest
 ```
 
 ## Aviso de seguridad importante

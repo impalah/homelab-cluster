@@ -17,11 +17,12 @@
 # con --install-cert) es shared/scripts/deploy-traefik-cert.sh, que sube de
 # versión el secret (inmutable, no se puede editar en sitio) y hace `docker
 # service update` sobre traefik_traefik por SSH desde pi-dns a un nodo
-# manager (retaco), con una clave dedicada de un solo propósito (u-dns ->
-# u-data@retaco). nginx en pi-dns quedó decomisionado en el mismo cierre --
+# manager (retaco), con una clave dedicada de un solo propósito (admin@pi-dns ->
+# admin@retaco). nginx en pi-dns quedó decomisionado en el mismo cierre --
 # ya no hay ningún deploy hacia él.
 #
-# Credenciales AWS del usuario IAM (dns_aws) NUNCA en fichero plano propio:
+# Credenciales AWS del usuario IAM (dns_aws): lo previsto es leerlas de Infisical
+# (ver el aviso de 2026-10-08 más abajo, ahora hay un respaldo); originalmente:
 # se leen de Infisical (Machine Identity 'acme-dns-renewer', Universal Auth,
 # carpeta /acme-dns-renewer/ del proyecto "Homelab Cluster") vía el mismo
 # wrapper de dos pasos que el resto de servicios migrados
@@ -54,20 +55,32 @@ set -a
 # shellcheck disable=SC1090
 source "${PI_DNS_ENV}"
 set +a
-# Mejora 41 (cierre, 2026-08-28): infisical.home.arpa dejó de resolver --
+# Mejora 41 (cierre, 2026-08-28): infisical.404labo.net dejó de resolver --
 # infisical.404labo.net tiene cert real de Let's Encrypt, de por sí confiado
 # por el almacén de CAs estándar del sistema (a diferencia de los
 # contenedores Go/Node sin almacén propio, ver apikey-service) -- no hace
 # falta CA interna aquí.
 export INFISICAL_DOMAIN=https://infisical.404labo.net/api
 
-TOKEN=$("${INFISICAL_BIN}" login --method=universal-auth \
-  --client-id="${ACME_RENEWER_INFISICAL_CLIENT_ID}" \
-  --client-secret="${ACME_RENEWER_INFISICAL_CLIENT_SECRET}" \
-  --plain --silent)
+# Orden de preferencia para las credenciales AWS de dns_aws:
+#  1. Infisical (Machine Identity 'acme-dns-renewer'), si está configurada y responde.
+#  2. Las que acme.sh guardó él mismo en ${CONFIG_HOME}/account.conf
+#     (SAVED_AWS_ACCESS_KEY_ID/SECRET), con modo 600 y propiedad de admin.
+# Desde la reconstrucción de Infisical del 2026-09-29 la identidad y su carpeta
+# /acme-dns-renewer/ ya no existen (el login daba "unable to authenticate" cada
+# noche) -- la opción 2 se validó el 2026-10-08 con una emisión de prueba en el
+# entorno staging de Let's Encrypt contra Route53, y mantiene la renovación viva
+# hasta que se restaure la opción 1. Aviso en el log cada vez que se cae a la 2.
+ACME_ARGS=(--cron --config-home "${CONFIG_HOME}" --cert-home "${CERT_HOME}")
 
-"${INFISICAL_BIN}" run --token="${TOKEN}" --projectId="${ACME_RENEWER_INFISICAL_PROJECT_ID}" \
-  --env=prod --path=/acme-dns-renewer/ -- \
-  "${ACME_BIN}" --cron \
-    --config-home "${CONFIG_HOME}" \
-    --cert-home "${CERT_HOME}"
+if [ -n "${ACME_RENEWER_INFISICAL_CLIENT_ID:-}" ] && \
+   TOKEN=$("${INFISICAL_BIN}" login --method=universal-auth \
+     --client-id="${ACME_RENEWER_INFISICAL_CLIENT_ID}" \
+     --client-secret="${ACME_RENEWER_INFISICAL_CLIENT_SECRET}" \
+     --plain --silent 2>/dev/null) && [ -n "${TOKEN}" ]; then
+  exec "${INFISICAL_BIN}" run --token="${TOKEN}" --projectId="${ACME_RENEWER_INFISICAL_PROJECT_ID}" \
+    --env=prod --path=/acme-dns-renewer/ -- "${ACME_BIN}" "${ACME_ARGS[@]}"
+fi
+
+echo "[WARN] $(date -u +%FT%TZ) Infisical (acme-dns-renewer) no disponible -- usando las credenciales AWS guardadas por acme.sh en ${CONFIG_HOME}/account.conf" >&2
+exec "${ACME_BIN}" "${ACME_ARGS[@]}"

@@ -8,9 +8,10 @@
 # diferencia de la mayoría de servicios con estado de la Fase 4,
 # docs/31-docker-swarm.md). Se aplica ya el patrón consolidado en la
 # mejora 47: volumen Docker `driver: local` + `driver_opts: type: nfs`
-# desde el primer despliegue, sin bind-mount transitorio ni constraint de
-# nodo -- portable entre los 5 managers desde el día uno. `vers=3`
-# obligatorio (NFSv4 roto en este NAS, ver docs/21-configuracion-nas-ugreen.md).
+# desde el primer despliegue, sin bind-mount transitorio -- el dato en sí
+# es portable entre nodos (`vers=3` obligatorio, NFSv4 roto en este NAS,
+# ver docs/21-configuracion-nas-ugreen.md); el `constraints` de más abajo
+# no es por el dato, es por el puerto SSH en `mode: host` (ver más abajo).
 #
 # Imagen ROOTLESS (`codeberg.org/forgejo/forgejo:16.0.3-rootless`), no la
 # variante root -- uid/gid 1000 fijo de fábrica, coherente con el resto del
@@ -32,13 +33,50 @@
 # decidió evitar para bases de datos activas, a diferencia del SQLite
 # vestigial de n8n-aux/open-webui).
 #
-# SSH de Git en el puerto 2222 -- publicado DIRECTO (`mode: ingress`, sin
-# pasar por Traefik: SSH no es HTTP, Traefik necesitaría un entrypoint TCP
-# dedicado que no existe hoy) -- mismo mecanismo de bypass ya usado por
-# `registry` (protocolo Docker, tampoco HTTP) para su propio puerto. La
-# imagen rootless ya escucha SSH en 2222 por defecto (no puede bindear el
-# 22 privilegiado sin root) -- se fija explícito de todos modos para no
-# depender de un valor por defecto no versionado en este fichero.
+# SSH de Git en el puerto 2222 -- publicado DIRECTO, sin pasar por Traefik
+# (SSH no es HTTP, Traefik necesitaría un entrypoint TCP dedicado que no
+# existe hoy). La imagen rootless ya escucha SSH en 2222 por defecto (no
+# puede bindear el 22 privilegiado sin root) -- se fija explícito de todos
+# modos para no depender de un valor por defecto no versionado aquí.
+#
+# ⚠️ `mode: ingress` (el original, hasta 2026-10-02) rompía la red overlay
+# `traefik-public` de este MISMO contenedor -- bug real de Swarm, reproducido
+# en 3 nodos distintos (retaco/pinchi/miugarita) durante la migración fuera
+# de las Raspberry Pi (docs/31-docker-swarm.md): el contenedor respondía
+# perfectamente en local (`wget 127.0.0.1:3000` sano, healthcheck en verde),
+# pero NINGÚN nodo podía alcanzar su IP de la red `traefik-public` desde
+# fuera -- ni Traefik, ni un contenedor de prueba en la misma red, en
+# ningún nodo probado. Quitar el puerto `ingress` (`--publish-rm`) restauró
+# la conectividad al instante, confirmando que la combinación "puerto
+# publicado en modo ingress + red overlay atachable en el mismo contenedor"
+# es la causa real, no la red en sí ni el nodo. Fix: `mode: host` (sin
+# routing mesh, el puerto solo escucha en el nodo real) + `constraints`
+# fijo -- por eso YA NO es "sin constraint de nodo" como el resto de este
+# fichero narra más abajo; necesita una IP estable para el DNS de
+# `FORGEJO__server__SSH_DOMAIN` (git-over-SSH no pasa por Traefik, no hay
+# mesh que lo salve si cambia de nodo).
+#
+# ⚠️ CORRECCIÓN (2026-10-08): el diagnóstico de arriba era incompleto. El
+# mismo síntoma reapareció en servicios SIN ningún puerto publicado (`ntfy`)
+# y la causa real se vio directamente en `retaco`: su tabla de reenvío VXLAN
+# de la red `traefik-public` (`bridge fdb show dev vxlan0` dentro de
+# `/run/docker/netns/1-<id-red>`) tenía entradas obsoletas -- IPs reutilizadas
+# por tareas nuevas seguían apuntando al nodo de la tarea anterior, y dockerd
+# no las sustituía ("neighbor entry already exists"). Que quitar el puerto
+# "arreglara" forgejo fue casualidad: recrear la tarea le dio una IP sin
+# entrada vieja. Ver docs/31-docker-swarm.md. `mode: host` + nodo fijo se
+# mantiene igualmente -- sigue siendo válido para un puerto SSH que no pasa
+# por Traefik, pero NO es la cura de aquel fallo.
+#
+# ⚠️ El nodo elegido es `retaco`, no `pinchi` (la convención habitual del
+# resto de hostnames de servicio, ver README.md) -- a propósito: con un
+# único manager real tras el incidente de Swarm (docs/31), Traefik vive
+# solo en `retaco` (`constraints: node.role == manager`) y TODOS los
+# hostnames `*.404labo.net` resuelven hoy a `192.168.10.7` en Pi-hole, no a
+# `.8` -- fijar `forgejo` a `pinchi` habría dejado el git-over-SSH
+# apuntando a un nodo distinto del que resuelve `forgejo.404labo.net`.
+# Revisar esta decisión cuando se recuperen los 4 managers (trabajo
+# pendiente aparte, ver docs/31) y la convención de `.8` vuelva a ser cierta.
 #
 # FORGEJO__database__PASSWD NO vive aquí -- se inyecta vía Infisical
 # (path /forgejo/, secreto llamado literalmente `FORGEJO__database__PASSWD`,
@@ -75,6 +113,15 @@ services:
       FORGEJO__server__SSH_PORT: "2222"
       FORGEJO__server__SSH_LISTEN_PORT: "2222"
       FORGEJO__security__INSTALL_LOCK: "true"
+      # Cola en memoria en vez de LevelDB (2026-10-14). Por defecto Forgejo usa
+      # LevelDB en /var/lib/gitea/queues/common, y ese directorio vive en un
+      # volumen NFS del NAS (ketekasko). Tras un corte de luz el NFS cayó y, al
+      # volver, `queues/common/LOCK` daba "permission denied": Forgejo no
+      # arrancaba y Swarm lo reiniciaba en bucle (~80 veces en 27 min, 2026-10-13).
+      # LevelDB y sus ficheros LOCK no se llevan bien con NFS. Con `channel` las
+      # tareas pendientes (correo, webhooks, indexación) no sobreviven a un
+      # reinicio, algo asumible aquí; los repos y la base de datos no cambian.
+      FORGEJO__queue__TYPE: channel
       # Mismo hallazgo que el resto del clúster -- el binario CLI de
       # Infisical (Go) no trae almacén de CAs del sistema, necesita
       # SSL_CERT_FILE explícito aunque infisical.404labo.net use cert real
@@ -91,11 +138,11 @@ services:
       - source: homelab-ca-bundle-v1
         target: /etc/ssl/certs/homelab-ca.crt
     secrets:
-      - source: forgejo-infisical-client-id-v1
+      - source: forgejo-infisical-client-id-v2
         target: forgejo-infisical-client-id
-      - source: forgejo-infisical-client-secret-v1
+      - source: forgejo-infisical-client-secret-v2
         target: forgejo-infisical-client-secret
-      - source: forgejo-infisical-project-id-v1
+      - source: forgejo-infisical-project-id-v2
         target: forgejo-infisical-project-id
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -127,20 +174,26 @@ services:
     ports:
       - target: 2222
         published: 2222
-        mode: ingress
+        mode: host
     networks:
       - forgejo-net
       - traefik-public
     logging:
       driver: loki
       options:
-        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        loki-url: "http://observability.404labo.net:3100/loki/api/v1/push"
         mode: non-blocking
         max-buffer-size: 4m
     deploy:
       replicas: 1
+      placement:
+        constraints:
+          - node.hostname==retaco
+      # `any` y no `on-failure` (2026-10-15, docs/31-docker-swarm.md): con on-failure
+      # una salida con código 0 (p. ej. un cierre limpio por SIGTERM tras fallar un
+      # healthcheck) NO se reprograma y el servicio se queda en 0/1 sin aviso.
       restart_policy:
-        condition: on-failure
+        condition: any
       labels:
         - "traefik.enable=true"
         - "traefik.http.routers.forgejo-404labo-net.rule=Host(`forgejo.404labo.net`)"
@@ -162,11 +215,14 @@ configs:
     external: true
 
 secrets:
-  forgejo-infisical-client-id-v1:
+  # -v2 (2026-10-01): Infisical se reconstruyó desde cero tras el incidente
+  # de la IP de advertise del manager del Swarm (docs/31) -- Machine Identity
+  # nueva, mismos nombres de secret pero valores distintos.
+  forgejo-infisical-client-id-v2:
     external: true
-  forgejo-infisical-client-secret-v1:
+  forgejo-infisical-client-secret-v2:
     external: true
-  forgejo-infisical-project-id-v1:
+  forgejo-infisical-project-id-v2:
     external: true
 
 volumes:
@@ -174,5 +230,5 @@ volumes:
     driver: local
     driver_opts:
       type: nfs
-      o: "addr=192.168.1.180,rw,vers=3"
+      o: "addr=192.168.10.6,rw,vers=3"
       device: ":/volume1/nfs-data/forgejo/data"

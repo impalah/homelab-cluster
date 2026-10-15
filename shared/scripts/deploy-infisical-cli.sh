@@ -11,11 +11,11 @@
 # docs/26-infisical-secretos.md.
 #
 # Para servicios SIN `constraints` de nodo (pueden aterrizar en cualquiera de
-# los 5 managers del Swarm), una ruta `/srv/homelab/<nodo>/...` no vale — un
+# los 3 nodos del Swarm), una ruta `/srv/homelab/<nodo>/...` no vale — un
 # bind-mount no traduce entre arquitecturas, y `retaco`/`pinchi` (amd64) no
 # tienen el mismo binario que `pi-obs`/`pi-sonar`/`pi-utils` (arm64). Para
 # estos casos existe el modo `shared` (añadido 2026-08-31, primer consumidor:
-# `authentik`): despliega en los 5 managers a
+# `authentik`): despliega en los 3 nodos del Swarm a
 # `/srv/homelab/infisical/infisical-cli/<x86-64|aarch64>/infisical` +
 # symlink `/srv/homelab/infisical/infisical-cli/infisical` apuntando al
 # correcto según la arquitectura real de cada nodo — el docker-compose.yml
@@ -23,12 +23,12 @@
 # dónde aterrice la tarea.
 #
 # A propósito NO se ejecuta contra "all" salvo que se pida explícitamente:
-# el binario solo hace falta en el nodo (o los 5 managers, en modo `shared`)
+# el binario solo hace falta en el nodo (o los 3 nodos del Swarm, en modo `shared`)
 # que aloja un servicio ya migrado a Infisical, no en todos los nodos de
 # golpe (ver ADR 0001, motivo completo).
 #
 # Uso: bash deploy-infisical-cli.sh <nodo|shared|all> [version]
-# Nodos válidos: ryzen | retaco | pi-dns | pi-obs | pi-sonar | pi-utils | pinchi | shared | all
+# Nodos válidos: ryzen | retaco | pi-dns | pinchi | miugarita | shared | all
 # version: por defecto la fijada más abajo (VERSION) — comprobar antes si
 # conviene una más reciente en https://github.com/Infisical/cli/releases
 #
@@ -53,19 +53,17 @@ NODE="${1:-}"
 
 if [ -z "${NODE}" ]; then
   echo "[ERROR] Uso: deploy-infisical-cli.sh <nodo|shared|all> [version]"
-  echo "        Nodos válidos: ryzen | retaco | pi-dns | pi-obs | pi-sonar | pi-utils | pinchi | shared | all"
+  echo "        Nodos válidos: ryzen | retaco | pi-dns | pinchi | miugarita | shared | all"
   exit 1
 fi
 
 # nombre -> "usuario@ip" ("local" para el propio equipo donde corre este script)
 declare -A TARGETS=(
   [ryzen]="local"
-  [retaco]="u-data@192.168.1.174"
-  [pi-dns]="u-dns@192.168.1.170"
-  [pi-obs]="u-obs@192.168.1.171"
-  [pi-sonar]="u-sonar@192.168.1.172"
-  [pi-utils]="u-utils@192.168.1.173"
-  [pinchi]="u-forge@192.168.1.175"
+  [retaco]="admin@192.168.10.7"
+  [pi-dns]="admin@192.168.10.2"
+  [pinchi]="admin@192.168.10.8"
+  [miugarita]="admin@192.168.10.9"
 )
 
 # Topología fija y conocida (docs/01-topologia.md) — no hace falta
@@ -74,15 +72,14 @@ declare -A ARCH=(
   [ryzen]="amd64"
   [retaco]="amd64"
   [pi-dns]="arm64"
-  [pi-obs]="arm64"
-  [pi-sonar]="arm64"
-  [pi-utils]="arm64"
   [pinchi]="amd64"
+  [miugarita]="amd64"
 )
 
-# Los 5 managers del Swarm -- son los únicos nodos donde tiene sentido el
+# Los 3 nodos del Swarm (retaco/pinchi/miugarita; las Raspberry Pi salieron el
+# 2026-10-08 y ya no están aquí) -- son los únicos nodos donde tiene sentido el
 # modo `shared` (ryzen/pi-dns están fuera del Swarm, docs/01-topologia.md).
-SWARM_NODES=(retaco pi-obs pi-sonar pi-utils pinchi)
+SWARM_NODES=(retaco pinchi miugarita)
 
 # ARCH usa "amd64"/"arm64" (convención de la release de GitHub); el modo
 # `shared` nombra los subdirectorios "x86-64"/"aarch64" (más explícito para
@@ -139,7 +136,7 @@ deploy_node() {
   echo "[OK] ${name}: ${dest_dir}/infisical"
 }
 
-# Modo `shared`: despliega en los 5 managers del Swarm a
+# Modo `shared`: despliega en los 3 nodos del Swarm a
 # /srv/homelab/infisical/infisical-cli/<x86-64|aarch64>/infisical + symlink
 # .../infisical-cli/infisical -> el subdirectorio correcto según la
 # arquitectura real de CADA nodo. Un docker-compose.yml de un servicio SIN
@@ -188,7 +185,7 @@ deploy_shared() {
 }
 
 if [ "${NODE}" = "all" ]; then
-  for n in ryzen retaco pi-obs pi-sonar pi-utils pi-dns pinchi; do
+  for n in ryzen retaco pi-dns pinchi miugarita; do
     deploy_node "${n}"
   done
 elif [ "${NODE}" = "shared" ]; then
@@ -197,7 +194,7 @@ elif [ -n "${TARGETS[${NODE}]+x}" ]; then
   deploy_node "${NODE}"
 else
   echo "[ERROR] Nodo desconocido: '${NODE}'"
-  echo "        Nodos válidos: ryzen | retaco | pi-dns | pi-obs | pi-sonar | pi-utils | pinchi | shared | all"
+  echo "        Nodos válidos: ryzen | retaco | pi-dns | pinchi | miugarita | shared | all"
   exit 1
 fi
 

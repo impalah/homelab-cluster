@@ -1,10 +1,10 @@
 name: homelab-retaco
 
 # =============================================================================
-# Stack del nodo Retaco (192.168.1.174)
+# Stack del nodo Retaco (192.168.10.7)
 # Servicios: postgres-main, qdrant, n8n-main, registry, open-webui, open-terminal-mcp, valkey, postgres-infisical, infisical, authentik
 #
-# postgres-main y qdrant migrados desde ryzen (192.168.1.150) para liberar al
+# postgres-main y qdrant migrados desde ryzen (192.168.10.10) para liberar al
 # Ryzen 9 de servicios de datos. n8n-main migrado después, para que las
 # automatizaciones (cron, webhooks) sigan funcionando aunque el stack de IA
 # de ryzen esté parado — retaco está siempre encendido, ryzen no. De paso,
@@ -25,14 +25,14 @@ name: homelab-retaco
 #
 # valkey (mejora 24, docs/22-mejoras-futuras.md) también en retaco: nodo de
 # datos, ya aloja postgres-main/qdrant/registry. Sin persistencia (uso
-# previsto hoy: solo caché), expuesto como valkey.home.arpa — ver
+# previsto hoy: solo caché), expuesto como valkey.404labo.net — ver
 # comentario junto al propio servicio y docs/25-valkey-cache.md.
 #
 # infisical (mejora 16, docs/22-mejoras-futuras.md) también en retaco: NO
 # comparte postgres-main (Postgres DEDICADO, "postgres-infisical" — ver
 # docs/adr/0002-infisical-postgres-dedicado.md, motivo: aislar su radio de
 # fallo del resto de servicios multi-tenant) y reutiliza el valkey ya
-# desplegado (sin Redis dedicado), expuesto como infisical.home.arpa. Detalle
+# desplegado (sin Redis dedicado), expuesto como infisical.404labo.net. Detalle
 # completo, incluido cómo se inyectan los secretos en cada servicio migrado,
 # en docs/26-infisical-secretos.md y docs/adr/0001-infisical-inyeccion-bind-mount-vs-imagen-derivada.md.
 # =============================================================================
@@ -43,7 +43,7 @@ name: homelab-retaco
 x-logging: &loki-logging
   driver: loki
   options:
-    loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+    loki-url: "http://observability.404labo.net:3100/loki/api/v1/push"
     loki-external-labels: "node=retaco"
     mode: non-blocking
     max-buffer-size: 4m
@@ -51,8 +51,8 @@ x-logging: &loki-logging
 services:
 
   # ---------------------------------------------------------------------------
-  # nut-upsmon — cliente NUT: monitoriza el SAI remoto en pi-obs
-  # (192.168.1.171:3493) y apaga ESTE host si el SAI ordena un apagado por
+  # nut-upsmon — cliente NUT: monitoriza el SAI remoto en pi-dns
+  # (192.168.10.2:3493) y apaga ESTE host si el SAI ordena un apagado por
   # bateria critica. Ver docs/33-nut-sai.md.
   #
   # privileged: true IMPRESCINDIBLE -- confirmado en vivo (pinchi,
@@ -86,7 +86,7 @@ services:
   # completo ejecutado antes de migrar (data/ entero, no solo pg_dump por
   # base -- ver docs/31-docker-swarm.md). Todos los consumidores cross-nodo
   # (postgres-exporter en pi-obs, sonarqube en pi-sonar) ya usaban IP real o
-  # el alias DNS postgresql.home.arpa, no un alias Docker -- sin cambios
+  # el alias DNS postgresql.404labo.net, no un alias Docker -- sin cambios
   # ahí. Los consumidores locales de este mismo nodo (open-webui, n8n-main,
   # authentik) ya se migraron antes a IP real, ver sus propios comentarios.
   # Bloque retirado a propósito (no solo el contenedor parado), mismo
@@ -100,7 +100,7 @@ services:
   # credenciales cifradas), sin mover. N8N_ENCRYPTION_KEY sigue viniendo de
   # Infisical exactamente igual, la migración de orquestador no la toca.
   # DB_POSTGRESDB_HOST pasó del alias de red Docker "postgres-main" a la IP
-  # real (192.168.1.174) -- postgres-main sigue en Compose clásico (es el
+  # real (192.168.10.7) -- postgres-main sigue en Compose clásico (es el
   # último de la Fase 4), n8n-main ya no comparte red de proyecto con él.
   # Bloque retirado a propósito (no solo el contenedor parado), mismo motivo
   # que registry/qdrant.
@@ -115,7 +115,7 @@ services:
   # los nodos del swarm, este incluido, y un `docker compose up -d` a secas
   # aquí (ya visto en vivo, al recrear open-webui) intenta resucitarlo y
   # choca. `open-webui` (más abajo) ya no lo referencia por el alias de red
-  # Docker "qdrant" -- habla por IP:puerto real (192.168.1.174:6333).
+  # Docker "qdrant" -- habla por IP:puerto real (192.168.10.7:6333).
   # ---------------------------------------------------------------------------
 
   # ---------------------------------------------------------------------------
@@ -201,7 +201,7 @@ services:
   # ---------------------------------------------------------------------------
   # valkey — MIGRADO al swarm (Fase 4, docs/31-docker-swarm.md, 2026-08-27).
   # Fuente de verdad ahora: docker-swarm/stacks/valkey/docker-compose.yml,
-  # pinnado con `node.hostname==retaco` -- preserva valkey.home.arpa sin
+  # pinnado con `node.hostname==retaco` -- preserva valkey.404labo.net sin
   # tocar el registro DNS. Sin persistencia (solo caché), sin backup que
   # hacer. Bloque retirado a propósito, mismo motivo que el resto de
   # servicios migrados en esta fase.
@@ -227,8 +227,8 @@ services:
   # `node.hostname==retaco` -- mismos datos, sin mover. La BD "authentik" en
   # postgres-main tampoco se toca -- solo cambia cómo se alcanza (IP real en
   # vez del alias de red Docker "postgres-main", mismo criterio que
-  # qdrant/n8n-main). Traefik ya apuntaba a 192.168.1.174:9000 de antes
-  # (passthrough + forward-auth de prometheus.home.arpa) -- sin cambios ahí.
+  # qdrant/n8n-main). Traefik ya apuntaba a 192.168.10.7:9000 de antes
+  # (passthrough + forward-auth de prometheus.404labo.net) -- sin cambios ahí.
   # Bloque retirado a propósito (no solo los contenedores parados), mismo
   # motivo que el resto de servicios migrados en esta fase.
   # ---------------------------------------------------------------------------

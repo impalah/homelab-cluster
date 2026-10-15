@@ -2,7 +2,9 @@
 # =============================================================================
 # setup-swarm-firewall.sh
 # Restringe el tráfico de control de Docker Swarm (TCP 2377 gestión, TCP+UDP
-# 7946 gossip, UDP 4789 VXLAN overlay) a solo los 5 nodos del swarm.
+# 7946 gossip, UDP 4789 VXLAN overlay) a solo los 3 nodos del swarm (retaco/pinchi/miugarita; las Raspberry Pi
+# salieron del Swarm el 2026-10-08 -- sus reglas ACCEPT antiguas, que `apply` no
+# elimina, se borraron a mano de los 3 nodos).
 #
 # Estos puertos los escucha `dockerd` directamente en el host, filtrados por
 # la cadena INPUT normal -- un mecanismo distinto al de
@@ -18,24 +20,33 @@
 # Requiere iptables-persistent ya instalado (shared/scripts/setup-firewall.sh)
 # -- lo confirma antes de aplicar nada.
 #
+# IPs actualizadas (2026-09-28): migración de red a un router Cudy R700,
+# LAN nueva 192.168.10.0/24 con reservas DHCP por MAC -- las reglas viejas
+# (192.168.1.17x) se quedaron huérfanas y bloqueaban en silencio el tráfico
+# de control de Swarm entre managers (2377/7946/4789), causando pérdida de
+# quorum/liderazgo tras el cambio de router. Reglas ACCEPT viejas no
+# eliminadas (apuntan a IPs que ya no existen en la LAN, inofensivas) --
+# solo se añaden las nuevas, `apply` es idempotente.
+#
 # Uso: bash setup-swarm-firewall.sh apply|status
 # =============================================================================
 set -euo pipefail
 
 declare -A SWARM_NODES=(
-  [retaco]="u-data@192.168.1.174"
-  [pi-obs]="u-obs@192.168.1.171"
-  [pi-sonar]="u-sonar@192.168.1.172"
-  [pi-utils]="u-utils@192.168.1.173"
-  [pinchi]="u-forge@192.168.1.175"
+  [retaco]="admin@192.168.10.7"
+  [pinchi]="admin@192.168.10.8"
+  # miugarita (2026-09-29, sexto nodo del swarm): primer nodo dado de alta ya
+  # con el modelo de docs/38 (usuario admin único + clave por nodo en
+  # Infisical), no con el patrón antiguo u-<x>. Sin IP fija en el propio
+  # nodo -- resuelve por DHCP/reserva del router Cudy R700, la IP de abajo
+  # es la reserva, no una IP estática configurada en miugarita.
+  [miugarita]="admin@192.168.10.9"
 )
 
 declare -A SWARM_IPS=(
-  [retaco]="192.168.1.174"
-  [pi-obs]="192.168.1.171"
-  [pi-sonar]="192.168.1.172"
-  [pi-utils]="192.168.1.173"
-  [pinchi]="192.168.1.175"
+  [retaco]="192.168.10.7"
+  [pinchi]="192.168.10.8"
+  [miugarita]="192.168.10.9"
 )
 
 ACTION="${1:-}"

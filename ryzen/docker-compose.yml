@@ -1,7 +1,7 @@
 name: homelab-ryzen
 
 # =============================================================================
-# Stack de OPERACIÓN IA del nodo Ryzen 9 (192.168.1.150)
+# Stack de OPERACIÓN IA del nodo Ryzen 9 (192.168.10.10)
 # Servicios: ollama, whisper-service
 #
 # Separado de docker-compose.observability.yml a propósito: este stack es el
@@ -9,13 +9,13 @@ name: homelab-ryzen
 # la observabilidad del host, que debe seguir viva aunque esto esté parado.
 #
 # postgres-main, qdrant y n8n-main se migraron al nodo "retaco"
-# (192.168.1.174), que está siempre encendido — ver
+# (192.168.10.7), que está siempre encendido — ver
 # docs/05-instalacion-retaco.md. Ollama y whisper-service son los únicos
 # servicios que necesitan GPU, así que se quedan aquí.
 #
 # open-webui también migrado a retaco (docs/23-bifrost-gateway-llm.md) — ya
 # no vive en este nodo, así que sigue accesible con ryzen apagado. Habla con
-# Ollama a través de Bifrost (pi-sonar), por IP directa (192.168.1.150:11434),
+# Ollama a través de Bifrost (pi-sonar), por IP directa (192.168.10.10:11434),
 # no por nombre de contenedor ni por ollama.404labo.net.
 #
 # Si algún workflow de n8n llama a ollama/whisper-service por su nombre de
@@ -32,7 +32,7 @@ name: homelab-ryzen
 x-logging: &loki-logging
   driver: loki
   options:
-    loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+    loki-url: "http://observability.404labo.net:3100/loki/api/v1/push"
     loki-external-labels: "node=ryzen"
     mode: non-blocking
     max-buffer-size: 4m
@@ -40,8 +40,8 @@ x-logging: &loki-logging
 services:
 
   # ---------------------------------------------------------------------------
-  # nut-upsmon — cliente NUT: monitoriza el SAI remoto en pi-obs
-  # (192.168.1.171:3493) y apaga ESTE host si el SAI ordena un apagado por
+  # nut-upsmon — cliente NUT: monitoriza el SAI remoto en pi-dns
+  # (192.168.10.2:3493) y apaga ESTE host si el SAI ordena un apagado por
   # bateria critica. Ver docs/33-nut-sai.md.
   #
   # privileged: true IMPRESCINDIBLE -- confirmado en vivo (pinchi,

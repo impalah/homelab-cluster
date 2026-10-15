@@ -72,7 +72,7 @@ La configuración de `pytest-cov` en `pyproject.toml` exige una cobertura mínim
 ## Puesta en marcha con Docker / Makefile
 
 ```bash
-make build             # imagen multi-arch (amd64+arm64), publicada en registry.home.arpa
+make build             # imagen multi-arch (amd64+arm64), publicada en registry.404labo.net
 make run                # contenedor local de pruebas (puerto 8000, usa .env)
 make test-health         # curl al /health de un contenedor ya arrancado
 make test-scrape URL=...  # curl al /scrape con una URL de muestra

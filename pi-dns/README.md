@@ -1,6 +1,6 @@
 # pi-dns — DNS
 
-**IP:** `192.168.1.170`  
+**IP:** `192.168.10.2`  
 **Hardware:** Raspberry Pi 5 (4 GB o 8 GB RAM)
 
 > ⚠️ **`nginx` y la copia local de `apikey-service` se decomisionaron al cerrar la mejora 41**
@@ -15,7 +15,7 @@
 | Servicio | Puerto (host) | Descripción |
 |---|---|---|
 | unbound | interno (172.20.0.2:5335) | Resolvedor DNS recursivo |
-| pihole | 53/tcp, 53/udp, `8053` (LAN, sin proxy desde el cierre de la mejora 41) | DNS autoritativo + ad-block — panel en `http://192.168.1.170:8053` |
+| pihole | 53/tcp, 53/udp, `8053` (LAN, sin proxy desde el cierre de la mejora 41) | DNS autoritativo + ad-block — panel en `http://192.168.10.2:8053` |
 | tailscale | `network_mode: host` | Subnet router — acceso remoto autenticado a toda la LAN + Split DNS de `*.404labo.net` — ver `docs/18-tailscale.md` |
 
 ## Arranque rápido
@@ -42,12 +42,12 @@ docker compose ps
 
 ## Post-arranque
 
-Añadir los registros DNS en Pi-hole: `http://192.168.1.170:8053/admin` → **Settings → DNS Records**
+Añadir los registros DNS en Pi-hole: `http://192.168.10.2:8053/admin` → **Settings → DNS Records**
 (Pi-hole v6).
 
 Más rápido que añadirlos uno a uno: cargar la tabla completa por API con
 `shared/scripts/load-dns-records.sh` (`PIHOLE_URL` por defecto ya apunta a
-`http://192.168.1.170:8053`).
+`http://192.168.10.2:8053`).
 
 Ver la tabla completa en: `shared/dns/dns-records.md`
 
@@ -68,7 +68,7 @@ pi-dns/
         ├── authentik-auth.conf
         ├── generate-ca.sh      ← SIGUE ACTIVO -- Valkey (docker-swarm/stacks/valkey/) sigue
         │                          firmando su cert TLS con esta CA, único consumidor que queda
-        ├── generate-cert.sh    ← retirado (cert de *.home.arpa, ya nadie lo usa)
+        ├── generate-cert.sh    ← retirado (cert de *.404labo.net, ya nadie lo usa)
         ├── generate-valkey-cert.sh ← SIGUE ACTIVO -- regenera el cert de Valkey (CN=valkey.404labo.net)
         └── html/               ← panel estático original, retirado (superseded por Capataz, mejora 15)
 ```
@@ -81,5 +81,5 @@ pi-dns/
   siguen activos — todo lo demás ahí (nginx en sí, `generate-cert.sh`, el panel estático) quedó
   retirado al cerrar la mejora 41, conservado solo como referencia histórica. Ver
   `docs/15-ca-interna.md` para el estado actual de la CA interna (vigencia reducida a Valkey).
-- Pi-hole publica su panel directo en `192.168.1.170:8053`, sin proxy delante, desde el mismo
+- Pi-hole publica su panel directo en `192.168.10.2:8053`, sin proxy delante, desde el mismo
   cierre.

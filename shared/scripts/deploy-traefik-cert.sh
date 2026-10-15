@@ -19,7 +19,7 @@
 #
 # pi-dns está deliberadamente FUERA del Swarm (docs/31) -- este script se
 # ejecuta ahí pero opera sobre un nodo manager (retaco) por SSH, con una
-# clave dedicada de un solo propósito (u-dns -> u-data@retaco, ver mejora 41
+# clave dedicada de un solo propósito (admin@pi-dns -> admin@retaco, ver mejora 41
 # en docs/22-mejoras-futuras.md) que NO da acceso a nada más. El contenido
 # del certificado/clave se manda por pipe SSH directo (cat | ssh ... docker
 # secret create -), nunca toca disco en retaco.
@@ -33,8 +33,8 @@ CERT_DIR=/srv/homelab/pi-dns/acme.sh/certs/404labo.net_ecc
 FULLCHAIN="${CERT_DIR}/fullchain.cer"
 KEY="${CERT_DIR}/404labo.net.key"
 
-RETACO_HOST=u-data@192.168.1.174
-RETACO_SSH_KEY=/home/u-dns/.ssh/id_ed25519_retaco_certs
+RETACO_HOST=admin@192.168.10.7
+RETACO_SSH_KEY=/home/admin/.ssh/id_ed25519_retaco_certs
 SWARM_SERVICE=traefik_traefik
 SECRET_BASENAME=404labo-net
 

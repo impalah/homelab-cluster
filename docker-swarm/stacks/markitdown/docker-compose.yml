@@ -44,13 +44,16 @@ services:
     logging:
       driver: loki
       options:
-        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        loki-url: "http://observability.404labo.net:3100/loki/api/v1/push"
         mode: non-blocking
         max-buffer-size: 4m
     deploy:
       replicas: 1
+      # `any` y no `on-failure` (2026-10-15, docs/31-docker-swarm.md): con on-failure
+      # una salida con código 0 (p. ej. un cierre limpio por SIGTERM tras fallar un
+      # healthcheck) NO se reprograma y el servicio se queda en 0/1 sin aviso.
       restart_policy:
-        condition: on-failure
+        condition: any
       # Labels de descubrimiento de Traefik van en "deploy:", no en el nivel
       # superior -- en modo Swarm, Traefik lee las labels del objeto Service,
       # no del contenedor (confirmado en la documentación de Traefik v3 antes
@@ -73,7 +76,7 @@ services:
         # dos con "cannot be linked automatically with multiple Services"
         # (encontrado en vivo al añadir este segundo router).
         # Cierre de la mejora 41 (2026-08-28): retirado el router
-        # `markitdown` (Host `markitdown.home.arpa`) que vivía aquí -- solo
+        # `markitdown` (Host `markitdown.404labo.net`) que vivía aquí -- solo
         # queda el gemelo 404labo.net de abajo, único hostname vigente.
         - "traefik.http.routers.markitdown-404labo-net.rule=Host(`markitdown.404labo.net`)"
         - "traefik.http.routers.markitdown-404labo-net.entrypoints=websecure"

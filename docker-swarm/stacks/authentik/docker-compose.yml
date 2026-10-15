@@ -53,8 +53,8 @@
 # Postgres, no directamente por red.
 #
 # NADA cambia para los consumidores externos: Traefik ya apunta a
-# `192.168.1.174:9000` tanto para el passthrough `authentik.home.arpa` como
-# para el middleware `authentik-auth` (forward-auth de `prometheus.home.arpa`,
+# `192.168.10.7:9000` tanto para el passthrough `authentik.404labo.net` como
+# para el middleware `authentik-auth` (forward-auth de `prometheus.404labo.net`,
 # docker-swarm/stacks/traefik/dynamic/routes.yml) -- mismo IP:puerto de
 # siempre, routes.yml no necesita ningún cambio.
 #
@@ -96,16 +96,16 @@ x-authentik-common: &authentik-common
     AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
     AUTHENTIK_OUTPOSTS__DISCOVER: "false"
   secrets:
-    - source: authentik-infisical-client-id-v1
+    - source: authentik-infisical-client-id-v2
       target: authentik-infisical-client-id
-    - source: authentik-infisical-client-secret-v1
+    - source: authentik-infisical-client-secret-v2
       target: authentik-infisical-client-secret
-    - source: authentik-infisical-project-id-v1
+    - source: authentik-infisical-project-id-v2
       target: authentik-infisical-project-id
   logging:
     driver: loki
     options:
-      loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+      loki-url: "http://observability.404labo.net:3100/loki/api/v1/push"
       mode: non-blocking
       max-buffer-size: 4m
 
@@ -135,24 +135,41 @@ services:
     ports:
       # mode: ingress (2026-08-31) -- ya no hay `constraints` de nodo (ver
       # cabecera), así que la tarea puede aterrizar en cualquiera de los 5
-      # managers. Traefik apunta a este servicio con IP fija
-      # (`http://192.168.1.174:9000`, routes.yml) sin usar el descubrimiento
-      # de Swarm -- con `mode: host` esa IP fija se habría roto en silencio
-      # el día que Swarm reprogramase la tarea a otro nodo. En `ingress`, la
-      # routing mesh reenvía la petición al nodo real desde cualquiera de
-      # los 5, así que la IP fija de Traefik sigue funcionando pase lo que
-      # pase. Sin colisión real que lo impida -- authentik-server es hoy el
-      # único servicio del clúster en el 9000 (sonarqube/portainer-server ya
-      # liberado, 2026-08-31).
+      # managers; la routing mesh reenvía la petición al nodo real desde
+      # cualquiera de los 5. Sin colisión real que lo impida -- authentik-
+      # server es hoy el único servicio del clúster en el 9000
+      # (sonarqube/portainer-server ya liberado, 2026-08-31). Traefik
+      # descubre este servicio por labels (proveedor `swarm`, 2026-09-29),
+      # no por esta IP publicada -- el puerto sigue publicado igualmente,
+      # útil para cualquier otro consumidor que quiera cruzar la LAN sin
+      # pasar por Traefik.
       - target: 9000
         published: 9000
         mode: ingress
     networks:
       - authentik-net
+      - traefik-public
     deploy:
       replicas: 1
+      # `any` y no `on-failure` (2026-10-15, docs/31-docker-swarm.md): con on-failure
+      # una salida con código 0 (p. ej. un cierre limpio por SIGTERM tras fallar un
+      # healthcheck) NO se reprograma y el servicio se queda en 0/1 sin aviso.
       restart_policy:
-        condition: on-failure
+        condition: any
+      # Migrado del proveedor `file` de Traefik (IP:puerto fija en
+      # dynamic/routes.yml) al proveedor `swarm` (2026-09-29) -- sin
+      # constraint de nodo, cambió de nodo repetidas veces durante un
+      # incidente real y rompió authentik.404labo.net cada vez. Mismo
+      # patrón que markitdown-service. La dirección hardcodeada del
+      # middleware `authentik-auth` (dynamic/routes.yml) también pasa a
+      # usar este nombre de servicio Swarm en vez de una IP, mismo motivo.
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.authentik-404labo-net.rule=Host(`authentik.404labo.net`)"
+        - "traefik.http.routers.authentik-404labo-net.entrypoints=websecure"
+        - "traefik.http.routers.authentik-404labo-net.tls=true"
+        - "traefik.http.routers.authentik-404labo-net.service=authentik"
+        - "traefik.http.services.authentik.loadbalancer.server.port=9000"
 
   authentik-worker:
     <<: *authentik-common
@@ -182,12 +199,15 @@ services:
     deploy:
       replicas: 1
       restart_policy:
-        condition: on-failure
+        condition: any
 
 networks:
   authentik-net:
     driver: overlay
     attachable: true
+  traefik-public:
+    external: true
+    name: traefik_traefik-public
 
 configs:
   # Compartido entre varios stacks -- ver docs/32-manual-operaciones-swarm.md
@@ -197,11 +217,14 @@ configs:
     external: true
 
 secrets:
-  authentik-infisical-client-id-v1:
+  # -v2 (2026-10-01): Infisical se reconstruyó desde cero tras el incidente
+  # de la IP de advertise del manager del Swarm (docs/31) -- Machine Identity
+  # nueva, mismos nombres de secret pero valores distintos.
+  authentik-infisical-client-id-v2:
     external: true
-  authentik-infisical-client-secret-v1:
+  authentik-infisical-client-secret-v2:
     external: true
-  authentik-infisical-project-id-v1:
+  authentik-infisical-project-id-v2:
     external: true
 
 volumes:
@@ -209,11 +232,11 @@ volumes:
     driver: local
     driver_opts:
       type: nfs
-      o: "addr=192.168.1.180,rw,vers=3"
+      o: "addr=192.168.10.6,rw,vers=3"
       device: ":/volume1/nfs-data/authentik/data"
   authentik-certs:
     driver: local
     driver_opts:
       type: nfs
-      o: "addr=192.168.1.180,rw,vers=3"
+      o: "addr=192.168.10.6,rw,vers=3"
       device: ":/volume1/nfs-data/authentik/certs"

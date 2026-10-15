@@ -16,25 +16,31 @@
 # en vez de perseguir una coexistencia que el propio empaquetado no permite.
 #
 # Uso: bash setup-firewall.sh <nodo|all>
-# Nodos válidos: ryzen | retaco | pi-obs | pi-sonar | pi-utils | pinchi | all
+# Nodos válidos: ryzen | retaco | pi-obs | pi-sonar | pi-utils | pinchi | miugarita | all
+#
+# IPs actualizadas (2026-09-28): migración de red al router Cudy R700,
+# esquema 192.168.10.x -- ver docs/02-plan-ip-y-dns.md. `miugarita` añadido
+# (2026-09-29, sexto nodo del swarm) con el usuario `admin` de docs/38, no
+# el patrón u-<x> antiguo.
 # =============================================================================
 set -euo pipefail
 
 NODE="${1:-}"
 if [ -z "${NODE}" ]; then
   echo "[ERROR] Uso: setup-firewall.sh <nodo|all>"
-  echo "        Nodos válidos: ryzen | retaco | pi-obs | pi-sonar | pi-utils | pinchi | all"
+  echo "        Nodos válidos: ryzen | retaco | pi-obs | pi-sonar | pi-utils | pinchi | miugarita | all"
   exit 1
 fi
 
 # nombre -> "usuario@ip" ("local" si este script corre en ese mismo nodo)
 declare -A TARGETS=(
   [ryzen]="local"
-  [retaco]="u-data@192.168.1.174"
-  [pi-obs]="u-obs@192.168.1.171"
-  [pi-sonar]="u-sonar@192.168.1.172"
-  [pi-utils]="u-utils@192.168.1.173"
-  [pinchi]="u-forge@192.168.1.175"
+  [retaco]="admin@192.168.10.7"
+  [pi-obs]="admin@192.168.10.4"
+  [pi-sonar]="admin@192.168.10.5"
+  [pi-utils]="admin@192.168.10.3"
+  [pinchi]="admin@192.168.10.8"
+  [miugarita]="admin@192.168.10.9"
 )
 
 REMOTE_SCRIPT='
@@ -80,7 +86,7 @@ setup_node() {
 }
 
 if [ "${NODE}" = "all" ]; then
-  for n in ryzen retaco pi-obs pi-sonar pi-utils pinchi; do
+  for n in ryzen retaco pi-obs pi-sonar pi-utils pinchi miugarita; do
     setup_node "${n}"
   done
 else

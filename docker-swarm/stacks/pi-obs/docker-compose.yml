@@ -1,3 +1,31 @@
+# ✅ Movido de `pi-obs` a `miugarita` (2026-10-08), dentro de la retirada de
+# las Raspberry Pi del Swarm. Lo que cambió:
+#   - `constraints: node.hostname==miugarita` (antes `pi-obs`). El stack
+#     conserva el nombre `pi-obs` a propósito: renombrarlo recrearía los 7
+#     servicios y su red, y rompería las consultas de Loki/Grafana que filtran
+#     por `swarm_service="pi-obs_..."`. Es solo un nombre, ya no un nodo.
+#   - Bind-mounts en `/srv/homelab/observability/` (antes
+#     `/srv/homelab/pi-obs/`), ruta sin nombre de nodo. Se copió TODO en frío
+#     (stack a 0 réplicas, `tar` por SSH con UID/GID numéricos): Grafana,
+#     pero también los 4,2G de Prometheus y los 2,1G de Loki -- 246.139
+#     ficheros, mismos bytes en ambos lados. El histórico se conservó entero
+#     pese a que la política aceptada era poder perderlo. La copia original
+#     en `pi-obs` se dejó intacta como vuelta atrás.
+#   - Nadie apunta ya a la IP de un nodo: todo el clúster usa
+#     `observability.404labo.net` (registro A en Pi-hole,
+#     `shared/dns/dns-records.md`) para el driver de logging `loki` (:3100),
+#     OTLP (:4317/:4318) y los accesos directos a Prometheus/Grafana. Antes la
+#     IP de `pi-obs` estaba escrita en ~40 ficheros. Comprobado en vivo que el
+#     plugin `loki` de Docker resuelve nombres (x86 y ARM, también en `pi-dns`).
+#     La próxima vez que este stack cambie de nodo basta con cambiar ese
+#     registro DNS -- los puertos se publican en `mode: ingress`, así que
+#     incluso antes de cambiarlo la routing mesh los sigue alcanzando.
+#   - ⚠️ Al escalar a 0, `loki` y `tempo` NO paraban: el demonio de `pi-obs`
+#     se quedó atascado porque Loki se manda los logs a sí mismo mientras se
+#     apaga. Mismo remedio que en docs/31: `docker plugin disable -f` +
+#     `enable` del plugin `loki` en el nodo.
+# Las menciones a `pi-obs` como nodo de aquí abajo son narrativa histórica.
+#
 # Fase 4 (docs/31-docker-swarm.md): observabilidad de pi-obs migrada al
 # swarm como UN SOLO stack -- Grafana/otel-collector referencian a
 # Loki/Tempo/Prometheus por ALIAS de red Docker (http://prometheus:9090,
@@ -6,7 +34,7 @@
 # worker. Los 6 servicios `constraints: node.hostname==pi-obs` -- los datos
 # (Loki/Tempo/Prometheus/Grafana) siguen en el mismo bind-mount de siempre,
 # sin mover. Ningún consumidor EXTERNO (otros nodos) cambia -- todos usan ya
-# IP real (192.168.1.171), nunca alias Docker.
+# IP real (192.168.10.4), nunca alias Docker.
 #
 # Sin backup dedicado para Loki/Tempo/Prometheus (telemetría regenerable,
 # la propia operación no toca los datos -- mismo criterio de riesgo ya usado
@@ -26,8 +54,8 @@ services:
     image: grafana/loki:3.0.0
     command: -config.file=/etc/loki/loki.yaml
     volumes:
-      - /srv/homelab/pi-obs/loki/loki.yaml:/etc/loki/loki.yaml:ro
-      - /srv/homelab/pi-obs/loki/data:/loki
+      - /srv/homelab/observability/loki/loki.yaml:/etc/loki/loki.yaml:ro
+      - /srv/homelab/observability/loki/data:/loki
     ports:
       - "3100:3100"
     networks:
@@ -35,24 +63,27 @@ services:
     logging: &loki-logging
       driver: loki
       options:
-        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
-        loki-external-labels: "node=pi-obs"
+        loki-url: "http://observability.404labo.net:3100/loki/api/v1/push"
+        loki-external-labels: "node=miugarita"
         mode: non-blocking
         max-buffer-size: 4m
     deploy: &pi-obs-deploy
       replicas: 1
       placement:
         constraints:
-          - node.hostname==pi-obs
+          - node.hostname==miugarita
+      # `any` y no `on-failure` (2026-10-15, docs/31-docker-swarm.md): con on-failure
+      # una salida con código 0 (p. ej. un cierre limpio por SIGTERM tras fallar un
+      # healthcheck) NO se reprograma y el servicio se queda en 0/1 sin aviso.
       restart_policy:
-        condition: on-failure
+        condition: any
 
   tempo:
     image: grafana/tempo:2.4.2
     command: -config.file=/etc/tempo/tempo.yaml
     volumes:
-      - /srv/homelab/pi-obs/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
-      - /srv/homelab/pi-obs/tempo/data:/var/tempo
+      - /srv/homelab/observability/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - /srv/homelab/observability/tempo/data:/var/tempo
     # Sin "ports:" a propósito -- ver nota grande al final del fichero sobre
     # "127.0.0.1:" y el modo `ingress` de Swarm. Nada consume el 3200 por
     # puerto publicado (Grafana lo alcanza por alias "http://tempo:3200" en
@@ -72,14 +103,14 @@ services:
       - "--web.enable-remote-write-receiver"
       - "--web.enable-lifecycle"
     volumes:
-      - /srv/homelab/pi-obs/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - /srv/homelab/pi-obs/prometheus/data:/prometheus
+      - /srv/homelab/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - /srv/homelab/observability/prometheus/data:/prometheus
     ports:
       - "9090:9090"
     networks:
       - pi-obs-net
     secrets:
-      - source: qdrant-metrics-token-v1
+      - source: qdrant-metrics-token-v2
         target: qdrant-metrics-token
     logging: *loki-logging
     deploy: *pi-obs-deploy
@@ -88,7 +119,7 @@ services:
     image: otel/opentelemetry-collector-contrib:0.100.0
     command: ["--config=/etc/otel/otel-collector.yaml"]
     volumes:
-      - /srv/homelab/pi-obs/otel/config/otel-collector.yaml:/etc/otel/otel-collector.yaml:ro
+      - /srv/homelab/observability/otel/config/otel-collector.yaml:/etc/otel/otel-collector.yaml:ro
     ports:
       - "4317:4317"
       - "4318:4318"
@@ -109,22 +140,22 @@ services:
       GF_PATHS_PROVISIONING: /etc/grafana/provisioning
       GF_LOG_LEVEL: info
     volumes:
-      - /srv/homelab/pi-obs/grafana/data:/var/lib/grafana
-      - /srv/homelab/pi-obs/config/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
-      - /srv/homelab/pi-obs/config/grafana/alerting/undervoltage.yml:/etc/grafana/provisioning/alerting/undervoltage.yml:ro
-      - /srv/homelab/pi-obs/config/grafana/alerting/sai-bateria.yml:/etc/grafana/provisioning/alerting/sai-bateria.yml:ro
+      - /srv/homelab/observability/grafana/data:/var/lib/grafana
+      - /srv/homelab/observability/config/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - /srv/homelab/observability/config/grafana/alerting/undervoltage.yml:/etc/grafana/provisioning/alerting/undervoltage.yml:ro
+      - /srv/homelab/observability/config/grafana/alerting/sai-bateria.yml:/etc/grafana/provisioning/alerting/sai-bateria.yml:ro
       # Mejora 3 (docs/22-mejoras-futuras.md): alerta de espacio en disco.
-      - /srv/homelab/pi-obs/config/grafana/alerting/disk-space.yml:/etc/grafana/provisioning/alerting/disk-space.yml:ro
+      - /srv/homelab/observability/config/grafana/alerting/disk-space.yml:/etc/grafana/provisioning/alerting/disk-space.yml:ro
       # Mejora 36 (docs/22-mejoras-futuras.md): alerta de parcheo del SO.
-      - /srv/homelab/pi-obs/config/grafana/alerting/os-patching.yml:/etc/grafana/provisioning/alerting/os-patching.yml:ro
+      - /srv/homelab/observability/config/grafana/alerting/os-patching.yml:/etc/grafana/provisioning/alerting/os-patching.yml:ro
       # Mejora 4 (docs/22-mejoras-futuras.md): contact point + política de
       # notificación que enruta undervoltage/SAI (category=power|hardware)
       # hacia ntfy -- ver docker-swarm/stacks/ntfy/ y
       # docs/34-ntfy-notificaciones.md.
-      - /srv/homelab/pi-obs/config/grafana/alerting/ntfy-contactpoint.yml:/etc/grafana/provisioning/alerting/ntfy-contactpoint.yml:ro
-      - /srv/homelab/pi-obs/config/grafana/alerting/notification-policies.yml:/etc/grafana/provisioning/alerting/notification-policies.yml:ro
-      - /srv/homelab/pi-obs/config/grafana/dashboards/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
-      - /srv/homelab/pi-obs/config/grafana/dashboards/json:/etc/grafana/provisioning/dashboards/json:ro
+      - /srv/homelab/observability/config/grafana/alerting/ntfy-contactpoint.yml:/etc/grafana/provisioning/alerting/ntfy-contactpoint.yml:ro
+      - /srv/homelab/observability/config/grafana/alerting/notification-policies.yml:/etc/grafana/provisioning/alerting/notification-policies.yml:ro
+      - /srv/homelab/observability/config/grafana/dashboards/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - /srv/homelab/observability/config/grafana/dashboards/json:/etc/grafana/provisioning/dashboards/json:ro
     secrets:
       - source: grafana-admin-password-v1
         target: grafana-admin-password
@@ -150,7 +181,7 @@ services:
         export NUT_EXPORTER_PASSWORD=$$(cat /run/secrets/nut-exporter-password)
         exec /nut_exporter
     environment:
-      NUT_EXPORTER_SERVER: "192.168.1.171"
+      NUT_EXPORTER_SERVER: "192.168.10.2"
       NUT_EXPORTER_USERNAME: "monuser"
       # Añade battery.charge.low/battery.runtime a la lista por defecto del
       # exporter -- son las variables que usa upsmon para decidir el
@@ -221,11 +252,18 @@ secrets:
     external: true
   nut-exporter-password-v1:
     external: true
-  qdrant-metrics-token-v1:
+  # -v2 (2026-10-08): -v1 quedó desfasado -- la clave de Qdrant se regeneró al
+  # reconstruir Infisical tras el incidente del Swarm (docs/31) y Prometheus
+  # llevaba semanas con `qdrant-retaco` en 401. v2 = la clave vigente
+  # (`QDRANT__SERVICE__API_KEY` en Infisical, /qdrant/), verificada en vivo
+  # contra Qdrant (HTTP 200) antes de crear el secreto. SIN salto de línea
+  # final. Si la clave de Qdrant vuelve a rotarse, este secreto hay que
+  # rotarlo a mano también (mismo valor en dos sitios, ver mejora 45).
+  qdrant-metrics-token-v2:
     # Mismo valor que QDRANT__SERVICE__API_KEY en Infisical (/qdrant/) --
     # Qdrant acepta "Authorization: Bearer <key>" además de su header
     # propietario "api-key", así que Prometheus puede usarlo tal cual con
     # `authorization.credentials_file` nativo, sin tocar el propio stack de
     # qdrant. Creación manual pendiente (mejora 45, docs/22-mejoras-futuras.md):
-    #   printf '<valor real>' | docker secret create qdrant-metrics-token-v1 -
+    #   printf '<valor real>' | docker secret create qdrant-metrics-token-v2 -
     external: true

@@ -49,7 +49,7 @@ name: homelab-ryzen-forgejo-runner
 x-logging: &loki-logging
   driver: loki
   options:
-    loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+    loki-url: "http://observability.404labo.net:3100/loki/api/v1/push"
     loki-external-labels: "node=ryzen"
     mode: non-blocking
     max-buffer-size: 4m
@@ -65,7 +65,7 @@ services:
       DOCKER_TLS_CERTDIR: ""
     # Mismos flags que el sidecar de pinchi -- ver docker-swarm/stacks/
     # forgejo-runner-pinchi/docker-compose.yml para el porqué de cada uno.
-    command: ["dockerd", "-H", "tcp://0.0.0.0:2375", "--tls=false", "--dns=192.168.1.170"]
+    command: ["dockerd", "-H", "tcp://0.0.0.0:2375", "--tls=false", "--dns=192.168.10.2"]
     volumes:
       - forgejo-runner-ryzen-dind-data:/var/lib/docker
     networks:

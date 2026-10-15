@@ -87,7 +87,7 @@
 # catálogo -- y las credenciales (token de Portainer, clave SSH, known_hosts,
 # vault) pasan a ser "recursos" cifrados en PostgreSQL con la clave maestra
 # `capataz-resources-master-key-v1` (Fernet, montada en api y runner como
-# `resources_master_key`). El catálogo (`capataz-catalog-v5`, formato v2)
+# `resources_master_key`). El catálogo (`capataz-catalog-v6`, formato v2)
 # declara esos recursos con `source: {file: <nombre>}`, que la api lee de
 # /run/capataz-resources/ en cada arranque: por eso los cuatro secrets de
 # siempre se montan en la api como ficheros ahí (target absoluto, Swarm lo
@@ -138,7 +138,7 @@ services:
         tmpfs:
           size: 67108864
     configs:
-      - source: capataz-catalog-v5
+      - source: capataz-catalog-v6
         target: /app/catalog/services.example.yaml
       - source: capataz-alembic-ini-v1
         target: /app/alembic.ini
@@ -147,18 +147,18 @@ services:
       - source: capataz-homelab-ca-v1
         target: /run/ca-certs/homelab-ca.crt
     secrets:
-      - source: capataz-database-url-v2
+      - source: capataz-database-url-v3
         target: database_url
-      - source: capataz-redis-url-v2
+      - source: capataz-redis-url-v4
         target: redis_url
       - source: capataz-cognito-client-secret-v1
         target: cognito_client_secret
-      - source: capataz-resources-master-key-v1
+      - source: capataz-resources-master-key-v2
         target: resources_master_key
       # Orígenes {file: ...} de los recursos del catálogo v5 (CAPATAZ_RESOURCES_DIR,
       # /run/capataz-resources por defecto). Directorio propio, nunca /run/secrets:
       # así un catálogo no puede importar database_url como recurso.
-      - source: capataz-portainer-token-v1
+      - source: capataz-portainer-token-v2
         target: /run/capataz-resources/portainer_token
       - source: capataz-runner-ssh-private-key-v1
         target: /run/capataz-resources/runner_ssh_private_key
@@ -172,6 +172,7 @@ services:
         mode: ingress
     networks:
       - capataz-net
+      - traefik-public
     command:
       - /bin/sh
       - -ec
@@ -192,16 +193,33 @@ services:
     logging:
       driver: loki
       options:
-        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        loki-url: "http://observability.404labo.net:3100/loki/api/v1/push"
         mode: non-blocking
         max-buffer-size: 4m
     deploy:
       replicas: 1
+      # `any` y no `on-failure` (2026-10-15, docs/31-docker-swarm.md): con on-failure
+      # una salida con código 0 (p. ej. un cierre limpio por SIGTERM tras fallar un
+      # healthcheck) NO se reprograma y el servicio se queda en 0/1 sin aviso.
       restart_policy:
-        condition: on-failure
+        condition: any
       resources:
         limits:
           memory: 768m
+      # Migrado del proveedor `file` de Traefik (IP:puerto fija en
+      # dynamic/routes.yml) al proveedor `swarm` (2026-09-29) -- capataz-api
+      # no tiene constraint de nodo, cambió de nodo dos veces en la misma
+      # tarde durante un incidente real y rompió capataz-api.404labo.net
+      # cada vez. Con labels, Traefik descubre el backend real
+      # automáticamente sin importar en qué nodo aterrice. Mismo patrón que
+      # markitdown-service (docker-swarm/stacks/markitdown/docker-compose.yml).
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.capataz-api-404labo-net.rule=Host(`capataz-api.404labo.net`)"
+        - "traefik.http.routers.capataz-api-404labo-net.entrypoints=websecure"
+        - "traefik.http.routers.capataz-api-404labo-net.tls=true"
+        - "traefik.http.routers.capataz-api-404labo-net.service=capataz-api"
+        - "traefik.http.services.capataz-api.loadbalancer.server.port=8000"
 
   capataz-runner:
     image: registry.404labo.net/capataz-runner:latest
@@ -227,12 +245,12 @@ services:
       - source: capataz-homelab-ca-v1
         target: /run/ca-certs/homelab-ca.crt
     secrets:
-      - source: capataz-database-url-v2
+      - source: capataz-database-url-v3
         target: database_url
-      - source: capataz-redis-url-v2
+      - source: capataz-redis-url-v4
         target: redis_url
       # Descifra las credenciales de cada ejecución (recursos del conector) en memoria.
-      - source: capataz-resources-master-key-v1
+      - source: capataz-resources-master-key-v2
         target: resources_master_key
     networks:
       - capataz-net
@@ -250,13 +268,13 @@ services:
     logging:
       driver: loki
       options:
-        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        loki-url: "http://observability.404labo.net:3100/loki/api/v1/push"
         mode: non-blocking
         max-buffer-size: 4m
     deploy:
       replicas: 1
       restart_policy:
-        condition: on-failure
+        condition: any
       resources:
         limits:
           memory: 1024m
@@ -296,6 +314,7 @@ services:
         mode: ingress
     networks:
       - capataz-net
+      - traefik-public
     read_only: true
     security_opt:
       - no-new-privileges:true
@@ -312,21 +331,34 @@ services:
     logging:
       driver: loki
       options:
-        loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+        loki-url: "http://observability.404labo.net:3100/loki/api/v1/push"
         mode: non-blocking
         max-buffer-size: 4m
     deploy:
       replicas: 1
       restart_policy:
-        condition: on-failure
+        condition: any
       resources:
         limits:
           memory: 256m
+      # Migrado del proveedor `file` de Traefik al proveedor `swarm`
+      # (2026-09-29) -- ver el comentario equivalente en capataz-api más
+      # arriba.
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.home-404labo-net.rule=Host(`home.404labo.net`)"
+        - "traefik.http.routers.home-404labo-net.entrypoints=websecure"
+        - "traefik.http.routers.home-404labo-net.tls=true"
+        - "traefik.http.routers.home-404labo-net.service=index"
+        - "traefik.http.services.index.loadbalancer.server.port=80"
 
 networks:
   capataz-net:
     driver: overlay
     attachable: true
+  traefik-public:
+    external: true
+    name: traefik_traefik-public
 
 configs:
   # Versionado en este repo -- file:, mismo patrón que traefik/routes.yml.
@@ -335,7 +367,14 @@ configs:
   # Vienen del checkout parcial del repo externo de Capataz en pi-utils, no
   # de este repo -- creados a mano (docker config create <nombre> <ruta en
   # pi-utils>, mismo criterio que un docker secret), no con `file:`.
-  capataz-catalog-v5:
+  # -v6 (2026-10-01): el backup de -v5 tras el incidente del Swarm (docs/31)
+  # resultó ser un catálogo formato v1 (de antes de ADR-008) -- capataz-api
+  # 0.1.10 lo rechaza en el arranque ("catalog version 1 is no longer
+  # supported"). Convertido con scripts/convert_catalog_v1_to_v2.py del repo
+  # externo de Capataz (genera los mismos ids de recursos/conectores que la
+  # migración 20260912_0009 espera, así que los 4 secrets de siempre se
+  # siguen leyendo sin cambios).
+  capataz-catalog-v6:
     external: true
   capataz-alembic-ini-v1:
     external: true
@@ -345,11 +384,37 @@ configs:
     external: true
 
 secrets:
-  capataz-database-url-v2:
+  # -v3 (2026-10-01): tras el incidente de la IP de advertise del Swarm
+  # (docs/31), -v2 se recreó a partir de un backup de credenciales previo al
+  # paso de capataz-api de classic Compose a Swarm -- arrastraba el alias de
+  # red de ese mundo ("postgres-main"/"valkey" en vez de los hostnames reales
+  # *.404labo.net) y, en database_url, el esquema de SQLAlchemy sin
+  # "+asyncpg" (capataz_api/alembic/env.py hace
+  # database_url.replace("postgresql+asyncpg", "postgresql+psycopg") para la
+  # migración síncrona; con solo "postgresql://" ese replace no encuentra
+  # nada y SQLAlchemy cae al driver psycopg2, que esta imagen ya no trae --
+  # "ModuleNotFoundError: No module named 'psycopg2'" en vivo). redis_url
+  # tenía el mismo alias legado y además le faltaba el esquema "rediss://"
+  # (Valkey solo escucha TLS, --tls-port, ver docker-swarm/stacks/valkey/
+  # docker-compose.yml) -- la contraseña del usuario ACL "capataz" en
+  # /srv/homelab/valkey/users.acl (pi-obs) sigue siendo válida, solo cambió
+  # el esquema/host. database_url sí se rotó (ALTER USER en postgres-main,
+  # sin pérdida de datos) porque el backup no tenía forma de confirmarse
+  # como vigente.
+  capataz-database-url-v3:
     external: true
-  capataz-redis-url-v2:
+  # -v4: -v3 arrancaba capataz-api pero capataz-runner (Celery) moría con
+  # "A rediss:// URL must have parameter ssl_cert_reqs..." -- redis-py lo
+  # tolera sin el parámetro (cae a verificación insegura con un warning),
+  # el backend de resultados de Celery no. Añadido "?ssl_cert_reqs=required"
+  # a la URL -- la verificación real sigue viniendo de SSL_CERT_FILE (CA
+  # interna de homelab), ya configurado en ambos servicios.
+  capataz-redis-url-v4:
     external: true
-  capataz-portainer-token-v1:
+  # -v2 (2026-10-01): -v1 venía del mismo backup obsoleto que database_url/
+  # redis_url -- Portainer lo rechazaba ("Portainer authentication was
+  # rejected"). Token de acceso nuevo creado a mano en Portainer (usuario).
+  capataz-portainer-token-v2:
     external: true
   capataz-cognito-client-secret-v1:
     external: true
@@ -361,7 +426,15 @@ secrets:
     external: true
   # Clave Fernet (una por línea; la primera cifra, todas descifran) creada a mano
   # con `docker secret create` -- sin ella los recursos guardados son irrecuperables.
-  capataz-resources-master-key-v1:
+  # -v2 (2026-10-01): el backup de -v1 tras el incidente del Swarm (docs/31) no
+  # tenía formato de clave Fernet válido (64 bytes, no 44) -- rechazado en vivo
+  # por capataz-api ("resources_master_key contains an invalid Fernet key").
+  # Clave nueva generada (decisión explícita del usuario, entorno de prueba) --
+  # los recursos del catálogo (capataz-catalog-v6, montados como ficheros en
+  # /run/capataz-resources/) se re-cifran solos en el próximo arranque; solo se
+  # pierde algo si se había añadido un recurso ad-hoc desde la UI sin respaldo
+  # en el catálogo.
+  capataz-resources-master-key-v2:
     external: true
 
 volumes:
@@ -369,5 +442,5 @@ volumes:
     driver: local
     driver_opts:
       type: nfs
-      o: "addr=192.168.1.180,rw,vers=3"
+      o: "addr=192.168.10.6,rw,vers=3"
       device: ":/volume1/nfs-data/capataz/api-alembic"

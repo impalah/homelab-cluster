@@ -1,7 +1,7 @@
 # Imagen mínima con Network UPS Tools para el SAI (Salicru SPS 2200 SOHO+)
-# conectado por USB a este nodo -- driver usbhid-ups, subdriver
+# conectado por USB a este nodo (pi-dns) -- driver usbhid-ups, subdriver
 # "Phoenixtec/Liebert HID" confirmado en vivo contra el hardware real (ver
-# docs/33-nut-sai.md). Se construye y ejecuta SIEMPRE en pi-obs (arm64) --
+# docs/33-nut-sai.md). Se construye y ejecuta SIEMPRE en pi-dns (arm64) --
 # no se distribuye por registry.404labo.net, tiene un único consumidor
 # (este mismo nodo), así que no hace falta el build multi-arch que sí
 # necesitan apikey-service/markitdown-service.

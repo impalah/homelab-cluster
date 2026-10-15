@@ -4,7 +4,7 @@
 # Genera la CA raíz interna del clúster — SOLO SE EJECUTA UNA VEZ. Instalar
 # su certificado público (ca.crt) en cada dispositivo de la LAN es lo que
 # hace que los navegadores dejen de avisar sobre "certificado no válido"
-# para cualquier *.home.arpa, sin tener que aceptar una excepción manual
+# para cualquier *.404labo.net, sin tener que aceptar una excepción manual
 # por sitio ni volver a instalar nada cuando se regenere el certificado de
 # servicio (generate-cert.sh) en el futuro.
 #

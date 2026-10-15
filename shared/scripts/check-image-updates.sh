@@ -9,11 +9,25 @@
 # más reciente para el MISMO tag que la que está corriendo.
 #
 # Escribe el resultado como métricas Prometheus (textfile collector) en
-# /srv/homelab/pi-obs/node-exporter-textfile/image-updates.prom, leídas por
-# el node-exporter de pi-obs y visibles en Grafana.
+# /srv/homelab/node-exporter-textfile/image-updates.prom, leídas por el
+# node-exporter de ESE MISMO nodo (stack `common`) y visibles en Grafana.
 #
-# Pensado para ejecutarse EN pi-obs (vía cron/systemd timer), con acceso SSH
-# al resto de nodos. Ver docs/16-mantenimiento-actualizaciones.md.
+# Corre LOCALMENTE en cada nodo por cron, solo sobre sus propios contenedores
+# -- igual que check-os-updates.sh. Hasta 2026-10-08 era un único job
+# centralizado en pi-obs que entraba por SSH a los demás nodos; se descentralizó
+# al retirar las Raspberry Pi del Swarm: no depende de ningún nodo concreto, no
+# necesita claves SSH entre nodos (había que autorizar a mano la de pi-obs en
+# cada uno) y un nodo caído solo deja sin refrescar su propio fichero.
+# Requiere `docker login registry.404labo.net` del usuario que lo ejecuta (si
+# no, las imágenes del registro privado se omiten sin avisar) y
+# `docker buildx` + `python3`.
+#
+# Uso: bash check-image-updates.sh [nombre-del-nodo]
+#   El nombre es el label `node` de las métricas; por defecto `hostname -s`.
+#   ryzen hay que pasarlo explícito (su hostname es `mole`, el clúster lo
+#   llama `ryzen`). Cron típico (minuto distinto por nodo, para no lanzar
+#   todas las consultas anónimas a Docker Hub a la vez):
+#     35 3 * * * bash /srv/homelab/shared/scripts/check-image-updates.sh ryzen
 #
 # Aviso opcional por ntfy (mejora 4, docs/22-mejoras-futuras.md/
 # docs/34-ntfy-notificaciones.md): exportar NTFY_TOKEN (token de un usuario
@@ -31,38 +45,17 @@
 # =============================================================================
 set -uo pipefail
 
-OUT_DIR="/srv/homelab/pi-obs/node-exporter-textfile"
+OUT_DIR="/srv/homelab/node-exporter-textfile"
 OUT_FILE="${OUT_DIR}/image-updates.prom"
 TMP_FILE=$(mktemp)
+NODE="${1:-$(hostname -s)}"
 
-mkdir -p "${OUT_DIR}"
+if [ ! -d "${OUT_DIR}" ]; then
+  echo "[ERROR] No existe ${OUT_DIR} -- ¿node-exporter de este nodo tiene montado el textfile collector? (mejora 36)" >&2
+  exit 1
+fi
 
-# nombre -> "usuario@ip" ("local" si este script corre en ese mismo nodo).
-# Pensado para ejecutarse EN pi-obs — necesita su propia clave SSH autorizada
-# en el resto de nodos (incluido ryzen, que no acepta SSH por defecto; hubo
-# que instalar/activar openssh-server ahí expresamente para esto).
-declare -A TARGETS=(
-  [ryzen]="linus@192.168.1.150"
-  [retaco]="u-data@192.168.1.174"
-  [pi-dns]="u-dns@192.168.1.170"
-  [pi-obs]="local"
-  [pi-sonar]="u-sonar@192.168.1.172"
-  [pi-utils]="u-utils@192.168.1.173"
-  # Mejora 36, punto 5 (docs/22-mejoras-futuras.md): "continuación en Swarm"
-  # -- pinchi faltaba aquí desde que se incorporó al clúster (mejora 30,
-  # posterior a este script), así que cualquier tarea Swarm que aterrizara
-  # ahí (registry, ntfy...) quedaba invisible a esta vigilancia. Encontrado
-  # real al auditar los 7 nodos para esta mejora, no asumido. PENDIENTE:
-  # la clave SSH de pi-obs ("pi-obs-cluster-admin") todavía no está
-  # autorizada en pinchi (u-forge) -- el bucle de abajo lo trata como
-  # "nodo inalcanzable" (WARN, sin romper el resto) hasta que se autorice
-  # a mano; es una acción de seguridad (tocar authorized_keys en un nodo
-  # remoto) que se ha dejado fuera de este cambio a propósito, pendiente
-  # de confirmación explícita del usuario.
-  [pinchi]="u-forge@192.168.1.175"
-)
-
-# Script que se ejecuta EN cada nodo remoto: lista, para cada contenedor sin
+# Lista, en este nodo, para cada contenedor sin
 # la label de watchtower, su nombre, su imagen (tal cual usada en el
 # docker-compose, con tag) y el digest de la imagen local que tiene descargada.
 REMOTE_SCRIPT='
@@ -82,52 +75,43 @@ done
   echo "# TYPE docker_image_outdated gauge"
 } > "${TMP_FILE}"
 
-for node in "${!TARGETS[@]}"; do
-  target="${TARGETS[$node]}"
-  echo "[INFO] Revisando ${node}..." >&2
+echo "[INFO] Revisando ${NODE}..." >&2
+containers=$(bash -c "${REMOTE_SCRIPT}")
 
-  if [ "${target}" = "local" ]; then
-    containers=$(bash -c "${REMOTE_SCRIPT}")
-  else
-    containers=$(ssh -o ConnectTimeout=8 "${target}" "${REMOTE_SCRIPT}" 2>/dev/null)
-  fi
+if [ -z "${containers}" ]; then
+  echo "[WARN] ${NODE}: sin contenedores que comprobar" >&2
+fi
 
-  if [ -z "${containers}" ]; then
-    echo "[WARN] ${node}: sin datos (¿nodo inalcanzable?)" >&2
+while IFS='|' read -r container image localdigest; do
+  [ -z "${container}" ] && continue
+
+  # Pequeña pausa entre consultas al registro — Docker Hub anónimo limita
+  # a 100 peticiones/6h por IP; con ~25 imágenes y una ejecución diaria no
+  # debería acercarse al límite, pero conviene no ir a ráfaga.
+  sleep 1
+
+  remotedigest=$(docker buildx imagetools inspect "${image}" --format '{{json .Manifest}}' 2>/dev/null \
+    | python3 -c "import sys,json; d=sys.stdin.read().strip(); print(json.loads(d).get('digest','') if d else '')" 2>/dev/null)
+
+  if [ -z "${remotedigest}" ]; then
+    # No se pudo consultar el registro (imagen local sin publicar, como
+    # whisper-service; límite de peticiones anónimas de Docker Hub si se
+    # ha ejecutado el script varias veces seguidas; o problema de red) —
+    # se omite, no se reporta como 0 (falso "está al día").
     continue
   fi
 
-  while IFS='|' read -r container image localdigest; do
-    [ -z "${container}" ] && continue
+  if [ -n "${localdigest}" ] && [ "${localdigest}" != "${remotedigest}" ]; then
+    status=1
+  else
+    status=0
+  fi
 
-    # Pequeña pausa entre consultas al registro — Docker Hub anónimo limita
-    # a 100 peticiones/6h por IP; con ~25 imágenes y una ejecución diaria no
-    # debería acercarse al límite, pero conviene no ir a ráfaga.
-    sleep 1
-
-    remotedigest=$(docker buildx imagetools inspect "${image}" --format '{{json .Manifest}}' 2>/dev/null \
-      | python3 -c "import sys,json; d=sys.stdin.read().strip(); print(json.loads(d).get('digest','') if d else '')" 2>/dev/null)
-
-    if [ -z "${remotedigest}" ]; then
-      # No se pudo consultar el registro (imagen local sin publicar, como
-      # whisper-service; límite de peticiones anónimas de Docker Hub si se
-      # ha ejecutado el script varias veces seguidas; o problema de red) —
-      # se omite, no se reporta como 0 (falso "está al día").
-      continue
-    fi
-
-    if [ -n "${localdigest}" ] && [ "${localdigest}" != "${remotedigest}" ]; then
-      status=1
-    else
-      status=0
-    fi
-
-    echo "docker_image_outdated{node=\"${node}\",container=\"${container}\",image=\"${image}\"} ${status}" >> "${TMP_FILE}"
-  done <<< "${containers}"
-done
+  echo "docker_image_outdated{node=\"${NODE}\",container=\"${container}\",image=\"${image}\"} ${status}" >> "${TMP_FILE}"
+done <<< "${containers}"
 
 chmod 644 "${TMP_FILE}"
-mv "${TMP_FILE}" "${OUT_FILE}"
+mv "${TMP_FILE}" "${OUT_FILE}" || { echo "[ERROR] No se pudo escribir ${OUT_FILE} (¿permisos de ${OUT_DIR} para $(id -un)?)" >&2; exit 1; }
 echo "[OK] Escrito ${OUT_FILE}" >&2
 grep -c "^docker_image_outdated" "${OUT_FILE}" | xargs echo "[INFO] Contenedores comprobados:" >&2
 outdated=$(grep "} 1$" "${OUT_FILE}")

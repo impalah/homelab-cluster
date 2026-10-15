@@ -1,6 +1,6 @@
 # retaco — Nodo de datos y automatización (PostgreSQL + Qdrant + n8n-main + registry + conversión de documentos + Open WebUI)
 
-**IP:** `192.168.1.174` **Hardware:** MiniPC Ryzen 5, 16 GB RAM, 512 GB disco
+**IP:** `192.168.10.7` **Hardware:** MiniPC Ryzen 5, 16 GB RAM, 512 GB disco
 
 ## Rol del nodo
 
@@ -43,7 +43,7 @@ docker compose ps
 
 - Ubuntu Server 24.04 LTS (o Desktop, según prefieras) instalado en el MiniPC
 - Docker Engine instalado (`shared/scripts/install-docker-ubuntu.sh`) — no hace falta NVIDIA Container Toolkit, este nodo no usa GPU
-- IP estática asignada: `192.168.1.174`
+- IP estática asignada: `192.168.10.7`
 
 ## Estructura
 

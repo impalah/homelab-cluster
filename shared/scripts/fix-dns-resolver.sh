@@ -3,7 +3,7 @@
 # fix-dns-resolver.sh
 # Comprueba, en cada nodo, que la resolución de *.404labo.net funciona de
 # verdad — es decir, que systemd-resolved está usando pi-dns
-# (192.168.1.170) y no cae al DNS secundario del netplan (1.1.1.1). Si no
+# (192.168.10.2) y no cae al DNS secundario del netplan (1.1.1.1). Si no
 # funciona, reinicia systemd-resolved en ese nodo (mismo fix aplicado a
 # mano en pi-sonar cuando SonarQube no podía resolver postgresql.404labo.net
 # tras un encendido físico — ver docs/13-troubleshooting.md,
@@ -27,7 +27,7 @@
 #
 # Uso: bash fix-dns-resolver.sh <nodo|all>
 #
-# Nodos válidos: pi-dns | pi-obs | pi-sonar | pi-utils | retaco | pinchi | all
+# Nodos válidos: pi-dns | pi-obs | pi-sonar | pi-utils | retaco | pinchi | miugarita | all
 # (ryzen/mole no se incluye — se ejecuta este script localmente ahí, no
 # tiene sentido comprobarse a sí mismo por SSH)
 # =============================================================================
@@ -41,17 +41,18 @@ NC='\033[0m'
 NODE="${1:-}"
 if [ -z "${NODE}" ]; then
   echo "[ERROR] Uso: fix-dns-resolver.sh <nodo|all>"
-  echo "        Nodos válidos: pi-dns | pi-obs | pi-sonar | pi-utils | retaco | pinchi | all"
+  echo "        Nodos válidos: pi-dns | pi-obs | pi-sonar | pi-utils | retaco | pinchi | miugarita | all"
   exit 1
 fi
 
 declare -A TARGETS=(
-  [pi-dns]="u-dns@192.168.1.170"
-  [pi-obs]="u-obs@192.168.1.171"
-  [pi-sonar]="u-sonar@192.168.1.172"
-  [pi-utils]="u-utils@192.168.1.173"
-  [retaco]="u-data@192.168.1.174"
-  [pinchi]="u-forge@192.168.1.175"
+  [pi-dns]="admin@192.168.10.2"
+  [pi-obs]="admin@192.168.10.4"
+  [pi-sonar]="admin@192.168.10.5"
+  [pi-utils]="admin@192.168.10.3"
+  [retaco]="admin@192.168.10.7"
+  [pinchi]="admin@192.168.10.8"
+  [miugarita]="admin@192.168.10.9"
 )
 
 # Hostname *.404labo.net a resolver como prueba en cada nodo, y la IP
@@ -65,14 +66,16 @@ declare -A TEST_QUERY=(
   [pi-utils]="pi-dns.404labo.net"
   [retaco]="pi-dns.404labo.net"
   [pinchi]="pi-dns.404labo.net"
+  [miugarita]="pi-dns.404labo.net"
 )
 declare -A TEST_EXPECTED=(
-  [pi-dns]="192.168.1.174"
-  [pi-obs]="192.168.1.170"
-  [pi-sonar]="192.168.1.170"
-  [pi-utils]="192.168.1.170"
-  [retaco]="192.168.1.170"
-  [pinchi]="192.168.1.170"
+  [pi-dns]="192.168.10.7"
+  [pi-obs]="192.168.10.2"
+  [pi-sonar]="192.168.10.2"
+  [pi-utils]="192.168.10.2"
+  [retaco]="192.168.10.2"
+  [pinchi]="192.168.10.2"
+  [miugarita]="192.168.10.2"
 )
 
 check_node() {
@@ -130,7 +133,7 @@ fi
 
 if [ "${NODE}" = "all" ]; then
   rc=0
-  for n in pi-dns pi-obs pi-sonar pi-utils retaco pinchi; do
+  for n in pi-dns pi-obs pi-sonar pi-utils retaco pinchi miugarita; do
     check_node "${n}" || rc=1
   done
   exit "${rc}"

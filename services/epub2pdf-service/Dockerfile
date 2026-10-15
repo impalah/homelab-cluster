@@ -112,6 +112,6 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 # sobreescribe el entrypoint:
 #   docker run --rm --entrypoint python3 \
 #     -v /ruta/entrada:/data/input:ro -v /ruta/salida:/data/output \
-#     registry.home.arpa/epub2pdf-service:latest \
+#     registry.404labo.net/epub2pdf-service:latest \
 #     -m epub2pdf_service.cli --input /data/input --output /data/output
 CMD ["python3", "-m", "uvicorn", "epub2pdf_service.main:app", "--host", "0.0.0.0", "--port", "8003", "--app-dir", "src"]

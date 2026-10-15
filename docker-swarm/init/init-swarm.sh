@@ -6,45 +6,49 @@
 # shared/scripts/deploy-infisical-cli.sh — no se ejecuta a mano en cada nodo.
 #
 # Uso:
-#   bash init-swarm.sh init         # docker swarm init en pinchi, en solitario
-#   bash init-swarm.sh join-all     # une retaco/pi-obs/pi-sonar/pi-utils como managers
-#   bash init-swarm.sh status       # docker node ls, contra pinchi
+#   bash init-swarm.sh init         # docker swarm init en retaco, en solitario
+#   bash init-swarm.sh join-all     # une pinchi/miugarita al Swarm
+#   bash init-swarm.sh status       # docker node ls, contra retaco
 #
 # ⚠️ "join-all" NO se ejecuta hasta validar el PoC de un solo nodo
 # (docker-swarm/poc/synthetic-db/) — ver docs/31-docker-swarm.md, Fase 0.
-# Todos los nodos del swarm son manager (decisión tomada: máxima tolerancia a
-# caídas, 2 pueden fallar sin perder quórum de escritura) — no hay "worker".
+# ⚠️ Actualizado el 2026-10-08 (retirada de las Raspberry Pi, docs/31): el
+# Swarm actual son 3 minipcs, bootstrap en `retaco` (no `pinchi`, como en el
+# diseño original de 5 managers). Tras la reconstrucción del 2026-09-29
+# `retaco` es el único manager real y pinchi/miugarita entraron como WORKER --
+# este script une como manager (token de manager), que es el diseño objetivo
+# pero NO se ha probado desde la reconstrucción; con 3 managers el quórum
+# aguanta la caída de 1 (no de 2). Para el estado real, `docker node ls`.
 # =============================================================================
 set -euo pipefail
 
-# pinchi es el primer manager (bootstrap) — el resto se unen a él, nunca al revés.
-BOOTSTRAP_USER="u-forge"
-BOOTSTRAP_IP="192.168.1.175"
+# retaco es el manager de bootstrap — el resto se unen a él, nunca al revés.
+BOOTSTRAP_USER="admin"
+BOOTSTRAP_IP="192.168.10.7"
 
 declare -A SWARM_NODES=(
-  [retaco]="u-data@192.168.1.174"
-  [pi-obs]="u-obs@192.168.1.171"
-  [pi-sonar]="u-sonar@192.168.1.172"
-  [pi-utils]="u-utils@192.168.1.173"
+  [pinchi]="admin@192.168.10.8"
+  [miugarita]="admin@192.168.10.9"
 )
-# pi-dns y ryzen quedan fuera del swarm por diseño (mejoras 37/39) — no aparecen aquí.
+# pi-dns y ryzen quedan fuera del swarm por diseño (mejoras 37/39); pi-obs, pi-sonar
+# y pi-utils salieron el 2026-10-08 -- no aparecen aquí.
 
 ACTION="${1:-}"
 
 case "${ACTION}" in
 
   init)
-    echo "[INFO] docker swarm init en pinchi (${BOOTSTRAP_IP}), nodo único."
+    echo "[INFO] docker swarm init en retaco (${BOOTSTRAP_IP}), nodo único."
     ssh "${BOOTSTRAP_USER}@${BOOTSTRAP_IP}" \
       "docker swarm init --advertise-addr ${BOOTSTRAP_IP}"
-    echo "[OK] Swarm iniciado. pinchi es manager en solitario."
+    echo "[OK] Swarm iniciado. retaco es manager en solitario."
     ;;
 
   join-all)
-    echo "[INFO] Obteniendo el token de manager desde pinchi..."
+    echo "[INFO] Obteniendo el token de manager desde retaco..."
     TOKEN=$(ssh "${BOOTSTRAP_USER}@${BOOTSTRAP_IP}" "docker swarm join-token -q manager")
     if [ -z "${TOKEN}" ]; then
-      echo "[ERROR] No se pudo obtener el join-token. ¿Está pinchi ya inicializado como swarm (init)?"
+      echo "[ERROR] No se pudo obtener el join-token. ¿Está retaco ya inicializado como swarm (init)?"
       exit 1
     fi
     for node in "${!SWARM_NODES[@]}"; do
@@ -55,7 +59,7 @@ case "${ACTION}" in
       echo "[OK] ${node} unido."
     done
     echo ""
-    echo "[OK] Los 5 nodos son managers. Verifica con: bash init-swarm.sh status"
+    echo "[OK] pinchi y miugarita unidos como managers. Verifica con: bash init-swarm.sh status"
     ;;
 
   status)

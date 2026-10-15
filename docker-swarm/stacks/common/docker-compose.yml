@@ -23,6 +23,9 @@
 # check-image-updates.sh) -- en pi-obs se deja como symlink al directorio
 # real para no tocar ese script; en el resto de nodos es un directorio vacío
 # nuevo (colector sin datos todavía, pero ya preparado para la mejora 36).
+# (2026-10-08: check-image-updates.sh ya escribe directamente en
+# `/srv/homelab/node-exporter-textfile` de cada nodo -- el symlink de pi-obs
+# deja de hacer falta.)
 #
 # ⚠️ BUG REAL encontrado y corregido (2026-09-01, verificando la mejora 36 en
 # vivo): los `ports:` de abajo estaban en sintaxis corta ("9100:9100" /
@@ -71,8 +74,11 @@ services:
       placement:
         constraints:
           - node.labels.common-stack == enabled
+      # `any` y no `on-failure` (2026-10-15, docs/31-docker-swarm.md): con on-failure
+      # una salida con código 0 (p. ej. un cierre limpio por SIGTERM tras fallar un
+      # healthcheck) NO se reprograma y el servicio se queda en 0/1 sin aviso.
       restart_policy:
-        condition: on-failure
+        condition: any
 
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:v0.55.1
@@ -99,7 +105,7 @@ services:
         constraints:
           - node.labels.common-stack == enabled
       restart_policy:
-        condition: on-failure
+        condition: any
 
 networks:
   common-net:

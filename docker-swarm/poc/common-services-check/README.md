@@ -20,9 +20,9 @@ cual para repetir la prueba en otro nodo, cambiando el `node.hostname` del `cons
 ## Repetir la prueba en otro nodo
 
 ```bash
-rsync -av docker-compose.yml u-<x>@192.168.1.17x:/srv/homelab/<nodo>/docker-swarm-check/
-ssh u-<x>@192.168.1.17x "cd /srv/homelab/<nodo>/docker-swarm-check && docker stack deploy -c docker-compose.yml check-swarm"
+rsync -av docker-compose.yml u-<x>@192.168.10.x:/srv/homelab/<nodo>/docker-swarm-check/
+ssh u-<x>@192.168.10.x "cd /srv/homelab/<nodo>/docker-swarm-check && docker stack deploy -c docker-compose.yml check-swarm"
 # editar antes el constraints (node.hostname == <nodo>) para que aterrice donde toca
-ssh u-<x>@192.168.1.17x "curl -s http://127.0.0.1:8181/metrics | grep '^container_last_seen{' | grep -v 'image=\"\"'"
-ssh u-<x>@192.168.1.17x "docker stack rm check-swarm"
+ssh u-<x>@192.168.10.x "curl -s http://127.0.0.1:8181/metrics | grep '^container_last_seen{' | grep -v 'image=\"\"'"
+ssh u-<x>@192.168.10.x "docker stack rm check-swarm"
 ```

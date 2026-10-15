@@ -1,6 +1,8 @@
 # pi-sonar — SonarQube + Bifrost
 
-**IP:** `192.168.1.172`  
+> ⚠️ **Desde 2026-10-08 esta Raspberry Pi ya no es miembro del Swarm ni aloja servicios** (solo `nut-upsmon`, cliente del SAI, y encendida como reserva): SonarQube corre en `miugarita` (stack Swarm `sonarqube`) y Bifrost flota entre los minipcs del Swarm. Lo que sigue es histórico — no lo uses como guía de despliegue. Ver `docs/31-docker-swarm.md`.
+
+**IP:** `192.168.10.5`  
 **Hardware:** Raspberry Pi 5 (8 GB RAM recomendado — SonarQube usa ~2.5 GB)
 
 ## Servicios

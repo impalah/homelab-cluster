@@ -2,18 +2,22 @@
 # =============================================================================
 # label-nodes.sh
 # Aplica los node labels de rol del swarm (docs/31-docker-swarm.md) — se
-# ejecuta UNA vez, después de que los 5 nodos ya son managers
+# ejecuta UNA vez, después de que los 3 nodos ya están en el Swarm
 # (init-swarm.sh join-all). `docker node update` solo funciona desde un
-# manager, así que se ejecuta por SSH contra pinchi (el bootstrap).
+# manager, así que se ejecuta por SSH contra retaco (el bootstrap desde el
+# 2026-09-29, ver docs/31-docker-swarm.md).
 #
-# role=stateful   -> retaco, pinchi (16 GB RAM / 500 GB SSD) — destino por
-#                     defecto de los servicios con estado NUEVOS (mejora 33).
-# role=stateless  -> pi-obs, pi-sonar, pi-utils (Raspberry Pi).
+# role=stateful   -> retaco, pinchi, miugarita (16 GB RAM / 500 GB SSD) —
+#                     destino por defecto de los servicios con estado NUEVOS
+#                     (mejora 33). Desde la retirada de las Raspberry Pi del
+#                     Swarm (2026-10-08) todos los nodos son stateful.
+# role=stateless  -> ninguno hoy (antes: pi-obs, pi-sonar, pi-utils).
+# Además `common-stack=enabled` en los 3 (node-exporter/cadvisor, stack common).
 #
-# Los servicios con estado que YA existen hoy en pi-obs/pi-sonar (Loki,
-# Prometheus, Grafana, SonarQube) no se mueven — se quedan pinnados a su nodo
-# actual con `node.hostname==<nodo>` en su propio stack, sin depender de este
-# label. El label solo gobierna dónde aterriza algo nuevo por defecto.
+# Los servicios con estado que necesitan un nodo concreto (Postgres, Qdrant,
+# Infisical, SonarQube, observabilidad...) se pinnan con `node.hostname==<nodo>`
+# en su propio stack, sin depender de este label. El label solo gobierna
+# dónde aterriza algo nuevo por defecto.
 #
 # ⚠️ Los nombres de nodo usados aquí (retaco, pinchi, pi-obs...) asumen que
 # `docker node ls` los reporta igual que el hostname del sistema — confirmar
@@ -21,11 +25,11 @@
 # =============================================================================
 set -euo pipefail
 
-BOOTSTRAP_USER="u-forge"
-BOOTSTRAP_IP="192.168.1.175"
+BOOTSTRAP_USER="admin"
+BOOTSTRAP_IP="192.168.10.7"
 
-STATEFUL_NODES=("retaco" "pinchi")
-STATELESS_NODES=("pi-obs" "pi-sonar" "pi-utils")
+STATEFUL_NODES=("retaco" "pinchi" "miugarita")
+STATELESS_NODES=()
 
 label_node() {
   local node="$1"
@@ -36,9 +40,10 @@ label_node() {
 
 for n in "${STATEFUL_NODES[@]}"; do
   label_node "${n}" "stateful"
+  ssh "${BOOTSTRAP_USER}@${BOOTSTRAP_IP}" "docker node update --label-add common-stack=enabled ${n}"
 done
 
-for n in "${STATELESS_NODES[@]}"; do
+for n in ${STATELESS_NODES[@]+"${STATELESS_NODES[@]}"}; do
   label_node "${n}" "stateless"
 done
 
