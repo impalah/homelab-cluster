@@ -1,7 +1,7 @@
 name: homelab-pi-dns
 
 # =============================================================================
-# Stack del nodo pi-dns (192.168.1.170)
+# Stack del nodo pi-dns (192.168.10.2)
 # Servicios: unbound (DNS recursivo), pihole (DNS autoritativo + ad-block), nginx (proxy inverso)
 # IMPORTANTE: systemd-resolved debe estar deshabilitado en el host antes de arrancar.
 # =============================================================================
@@ -14,7 +14,7 @@ name: homelab-pi-dns
 x-logging: &loki-logging
   driver: loki
   options:
-    loki-url: "http://192.168.1.171:3100/loki/api/v1/push"
+    loki-url: "http://observability.404labo.net:3100/loki/api/v1/push"
     loki-external-labels: "node=pi-dns"
     mode: non-blocking
     max-buffer-size: 4m
@@ -22,32 +22,68 @@ x-logging: &loki-logging
 services:
 
   # ---------------------------------------------------------------------------
-  # nut-upsmon — cliente NUT: monitoriza el SAI remoto en pi-obs
-  # (192.168.1.171:3493) y apaga ESTE host si el SAI ordena un apagado por
-  # bateria critica. Ver docs/33-nut-sai.md.
+  # nut-server — Network UPS Tools: driver usbhid-ups + upsd + upsmon local
+  # ("primary"), todo en un solo contenedor (ver pi-dns/nut-server/
+  # entrypoint.sh). Este es el nodo con el SAI físico conectado por USB
+  # (Salicru SPS 2200 SOHO+, `06da:ffff` -- docs/33-nut-sai.md).
   #
-  # privileged: true IMPRESCINDIBLE -- confirmado en vivo (pinchi,
-  # 2026-09-01): sin el, AppArmor bloquea la conexion D-Bus al host real
-  # ("AppArmor policy prevents this sender..."), y el apagado real fallaria
-  # en silencio justo cuando mas falta hace.
+  # Vivía en pi-obs hasta 2026-10-08: el cable USB del SAI apareció enchufado
+  # aquí (no en pi-obs) y se decidió dejarlo -- pi-dns es el único nodo que
+  # se queda fuera de la retirada de las Raspberry Pi del Swarm, siempre
+  # encendido y fuera del clúster a propósito, así que el servidor NUT ya no
+  # depende de un nodo en vías de desaparecer. Sustituye al cliente
+  # `nut-upsmon` que había aquí: el upsmon "primary" de este mismo contenedor
+  # ya apaga ESTE host, no hace falta un cliente aparte.
+  #
+  # Compose CLÁSICO -- pi-dns no pertenece al Swarm, y además el hardware USB
+  # está pinnado a este nodo concreto.
+  #
+  # "/dev/bus/usb" se monta ENTERO (no un /dev/hidrawN concreto) porque el
+  # número de bus/dispositivo cambia cada vez que el SAI se re-enumera --
+  # privileged: true para que el driver pueda abrir el dispositivo real sin
+  # depender de una regla udev de permisos, y para que la conexión D-Bus al
+  # host no la bloquee AppArmor (confirmado en vivo en pinchi, 2026-09-01).
+  #
+  # "/run/dbus/system_bus_socket" compartido con el host -- lo usa
+  # shared/scripts/nut-shutdown-host.sh (SHUTDOWNCMD de upsmon) para apagar
+  # el SO real de este nodo vía logind, no el contenedor.
+  #
+  # Puerto 3493 publicado en la LAN a propósito: lo consumen los upsmon
+  # "secondary" del resto de nodos y el nut-exporter de Prometheus.
   # ---------------------------------------------------------------------------
-  nut-upsmon:
-    build: /srv/homelab/shared/docker/nut-client
-    image: nut-client:local
-    container_name: nut-upsmon
+  nut-server:
+    build: ./nut-server
+    image: nut-server:local
+    container_name: nut-server
     logging: *loki-logging
     restart: unless-stopped
     privileged: true
     environment:
       NUT_MONUSER_PASSWORD: ${NUT_MONUSER_PASSWORD}
+      NUT_ADMIN_PASSWORD: ${NUT_ADMIN_PASSWORD}
     volumes:
+      - /dev/bus/usb:/dev/bus/usb
       - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
-      - /srv/homelab/shared/config/nut/nut-client.conf:/etc/nut/nut.conf:ro
-      - /srv/homelab/shared/config/nut/upsmon-client.conf.template:/etc/nut/upsmon.conf.template:ro
+      - /srv/homelab/pi-dns/config/nut/nut.conf:/etc/nut/nut.conf:ro
+      - /srv/homelab/pi-dns/config/nut/ups.conf:/etc/nut/ups.conf:ro
+      - /srv/homelab/pi-dns/config/nut/upsd.conf:/etc/nut/upsd.conf:ro
+      - /srv/homelab/pi-dns/config/nut/upsd.users.template:/etc/nut/upsd.users.template:ro
+      - /srv/homelab/pi-dns/config/nut/upsmon.conf.template:/etc/nut/upsmon.conf.template:ro
       - /srv/homelab/shared/scripts/nut-shutdown-host.sh:/usr/local/bin/nut-shutdown-host.sh:ro
       - /srv/homelab/shared/scripts/nut-notify.sh:/usr/local/bin/nut-notify.sh:ro
+    ports:
+      - "3493:3493"
     networks:
-      - pi-dns-net
+      pi-dns-net:
+        # IP fija (la que ya tiene hoy): todas las demás de esta red lo son, y una
+        # dinámica puede ocupar la de otra al arrancar todos a la vez.
+        ipv4_address: 172.20.0.4
+    healthcheck:
+      test: ["CMD-SHELL", "upsc sai@localhost > /dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
 
   # ---------------------------------------------------------------------------
   # unbound — Resolvedor DNS recursivo local
@@ -86,13 +122,21 @@ services:
       TZ: ${TZ:-Europe/Madrid}
       # Pi-hole v6 ya no usa WEBPASSWORD (variable de v5, ignorada silenciosamente)
       FTLCONF_webserver_api_password: ${PIHOLE_PASSWORD}
-      PIHOLE_DNS_: ${PIHOLE_DNS_1:-172.20.0.2#5335}
-      DNSSEC: ${PIHOLE_DNSSEC:-false}
+      # Upstream: el Unbound local (172.20.0.2, puerto 5335). ⚠️ Pi-hole v6
+      # solo entiende las variables FTLCONF_*; las de v5 (`PIHOLE_DNS_`,
+      # `DNSSEC`) que había aquí se IGNORAN en silencio, y el upstream quedó
+      # a mano en 8.8.8.8/8.8.4.4 (descubierto el 2026-10-15). Con FTLCONF_*
+      # el valor queda fijado en cada arranque y la interfaz web lo muestra de
+      # solo lectura. Ver docs/41-dns-pihole-unbound.md.
+      FTLCONF_dns_upstreams: ${PIHOLE_DNS_1:-172.20.0.2#5335}
+      # Pi-hole NO valida DNSSEC: lo hace Unbound (auto-trust-anchor), validar
+      # dos veces solo añade latencia.
+      FTLCONF_dns_dnssec: ${PIHOLE_DNSSEC:-false}
       VIRTUAL_HOST: ${VIRTUAL_HOST:-pi-dns.404labo.net}
       # Pi-hole v6 ya no usa DNSMASQ_LISTENING (variable de v5, ignorada
       # silenciosamente). Sin esto, Pi-hole rechaza consultas de cualquier
       # IP que no considere "red local" (ve la red interna de Docker como
-      # local, pero no la LAN real 192.168.1.0/24) con el error de log
+      # local, pero no la LAN real 192.168.10.0/24) con el error de log
       # "dnsmasq: ignoring query from non-local network".
       FTLCONF_dns_listeningMode: ALL
       # Deshabilitar DHCP de Pi-hole (el router gestiona DHCP)
@@ -104,10 +148,10 @@ services:
       - "53:53/tcp"
       - "53:53/udp"
       # Mejora 41 (cierre, 2026-08-28): antes solo en 127.0.0.1 -- nginx
-      # hacía de intermediario para el resto de la LAN vía pihole.home.arpa.
+      # hacía de intermediario para el resto de la LAN vía pihole.404labo.net.
       # Con nginx decomisionado, el panel se publica directo en la interfaz
       # real del host, sin hostname ni proxy delante (decisión explícita del
-      # usuario) -- accesible en http://192.168.1.170:8053.
+      # usuario) -- accesible en http://192.168.10.2:8053.
       - "8053:80"
     networks:
       pi-dns-net:
@@ -124,22 +168,22 @@ services:
   # ---------------------------------------------------------------------------
   # apikey-service y nginx — RETIRADOS (mejora 41, cierre, 2026-08-28).
   #
-  # nginx era el proxy inverso original de *.home.arpa; desde el cutover de
+  # nginx era el proxy inverso original de *.404labo.net; desde el cutover de
   # DNS de la mejora 33/39 (2026-08-26) ya no servía tráfico real (todos los
   # hostnames apuntaban a Traefik en el Swarm), se dejaba desplegado sin
   # tocar solo como vía de rollback inmediata. Con la mejora 41 cerrada
-  # (todo *.404labo.net verificado sano, home.arpa retirado de Pi-hole) ese
+  # (todo *.404labo.net verificado sano, 404labo.net retirado de Pi-hole) ese
   # rollback deja de tener sentido -- se paró y se retiró el contenedor. Su
   # config (pi-dns/config/nginx/) se deja en el repo como referencia
   # histórica, no se despliega en ningún sitio. El certificado de
-  # *.home.arpa (generate-cert.sh) queda igual de obsoleto -- no se genera
+  # *.404labo.net (generate-cert.sh) queda igual de obsoleto -- no se genera
   # ninguno nuevo.
   #
   # apikey-service (esta copia local) solo existía para el auth_request de
   # nginx -- el Swarm tiene su propia instancia canónica
   # (docker-swarm/stacks/apikey-service/, la que usa el middleware
   # apikey-auth de Traefik), alcanzable en cualquier nodo por routing mesh
-  # en el puerto 8091 (p. ej. http://192.168.1.175:8091) para gestión
+  # en el puerto 8091 (p. ej. http://192.168.10.8:8091) para gestión
   # administrativa directa. Sin nginx, esta copia de pi-dns no tenía ya
   # ningún consumidor -- se retiró junto con él en vez de dejarla huérfana.
   #
@@ -151,10 +195,10 @@ services:
 
   # ---------------------------------------------------------------------------
   # tailscale — Subnet router: acceso remoto autenticado a toda la LAN
-  # (192.168.1.0/24) vía Tailscale, incluida la resolución de *.404labo.net
+  # (192.168.10.0/24) vía Tailscale, incluida la resolución de *.404labo.net
   # (Split DNS configurado en el panel de Tailscale, apuntando a este mismo
   # nodo — ver docs/18-tailscale.md; "Restrict to domain" movido de
-  # home.arpa a 404labo.net al cerrar la mejora 41, 2026-08-28). network_mode: host a propósito — un
+  # 404labo.net a 404labo.net al cerrar la mejora 41, 2026-08-28). network_mode: host a propósito — un
   # subnet router necesita la interfaz de red real del host, no la red bridge
   # de Docker. TS_ACCEPT_DNS=false porque este nodo YA es el servidor DNS del
   # clúster (Pi-hole+Unbound) — dejar que Tailscale reescriba su propio
@@ -181,7 +225,7 @@ services:
     environment:
       TS_AUTHKEY: ${TS_AUTHKEY:-}
       TS_USERSPACE: "false"
-      TS_EXTRA_ARGS: --advertise-routes=192.168.1.0/24 --accept-dns=false
+      TS_EXTRA_ARGS: --advertise-routes=192.168.10.0/24 --accept-dns=false
       TS_STATE_DIR: /var/lib/tailscale
     volumes:
       - /srv/homelab/pi-dns/tailscale/state:/var/lib/tailscale
