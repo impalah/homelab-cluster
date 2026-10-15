@@ -16,7 +16,7 @@
 # en vez de perseguir una coexistencia que el propio empaquetado no permite.
 #
 # Uso: bash setup-firewall.sh <nodo|all>
-# Nodos válidos: ryzen | retaco | pi-obs | pi-sonar | pi-utils | pinchi | miugarita | all
+# Nodos válidos: ryzen | retaco | pi-obs | pi-sonar | pi-dns2 | pinchi | miugarita | all
 #
 # IPs actualizadas (2026-09-28): migración de red al router Cudy R700,
 # esquema 192.168.10.x -- ver docs/02-plan-ip-y-dns.md. `miugarita` añadido
@@ -28,7 +28,7 @@ set -euo pipefail
 NODE="${1:-}"
 if [ -z "${NODE}" ]; then
   echo "[ERROR] Uso: setup-firewall.sh <nodo|all>"
-  echo "        Nodos válidos: ryzen | retaco | pi-obs | pi-sonar | pi-utils | pinchi | miugarita | all"
+  echo "        Nodos válidos: ryzen | retaco | pi-obs | pi-sonar | pi-dns2 | pinchi | miugarita | all"
   exit 1
 fi
 
@@ -38,7 +38,7 @@ declare -A TARGETS=(
   [retaco]="admin@192.168.10.7"
   [pi-obs]="admin@192.168.10.4"
   [pi-sonar]="admin@192.168.10.5"
-  [pi-utils]="admin@192.168.10.3"
+  [pi-dns2]="admin@192.168.10.3"
   [pinchi]="admin@192.168.10.8"
   [miugarita]="admin@192.168.10.9"
 )
@@ -86,7 +86,7 @@ setup_node() {
 }
 
 if [ "${NODE}" = "all" ]; then
-  for n in ryzen retaco pi-obs pi-sonar pi-utils pinchi miugarita; do
+  for n in ryzen retaco pi-obs pi-sonar pi-dns2 pinchi miugarita; do
     setup_node "${n}"
   done
 else

@@ -8,6 +8,8 @@
 #
 # Uso:
 #   PIHOLE_PASSWORD=xxx bash load-dns-records.sh
+#   PIHOLE_PASSWORD=xxx PIHOLE_URLS="http://192.168.10.2:8053 http://192.168.10.3:8053" \
+#     bash load-dns-records.sh        # pi-dns y pi-dns2 (misma contraseña en ambos)
 #
 # Requiere: curl, jq (sudo apt install -y jq)
 #
@@ -50,6 +52,9 @@ PIHOLE_PASSWORD="${PIHOLE_PASSWORD:?Debes exportar PIHOLE_PASSWORD}"
 # .404labo.net/.404labo.net (dependería de la propia resolución que este
 # script está a punto de (re)cargar) -- IP:puerto directo de Pi-hole, sin
 # nginx delante (decomisionado en el mismo cierre).
+# `pi-dns2` (mejora 55, antes pi-utils). `pi-utils` queda como alias TRANSITORIO para no
+# romper nada que use el nombre antiguo (retirarlo cuando no quede ninguno).
+# ⚠️ Dentro del literal JSON de abajo NO puede haber comentarios `#`: jq fallaría.
 HOSTS='[
   "192.168.10.10 ryzen.404labo.net",
   "192.168.10.7 retaco.404labo.net",
@@ -59,6 +64,7 @@ HOSTS='[
   "192.168.10.2 pi-dns.404labo.net",
   "192.168.10.4 pi-obs.404labo.net",
   "192.168.10.5 pi-sonar.404labo.net",
+  "192.168.10.3 pi-dns2.404labo.net",
   "192.168.10.3 pi-utils.404labo.net",
   "192.168.10.8 pinchi.404labo.net",
   "192.168.10.9 miugarita.404labo.net",
@@ -93,19 +99,37 @@ HOSTS='[
   "192.168.10.7 komodo.404labo.net"
 ]'
 
-echo "[INFO] Autenticando en ${PIHOLE_URL}..."
-SID=$(curl -sk -X POST "${PIHOLE_URL}/api/auth" \
-  -H "Content-Type: application/json" \
-  -d "{\"password\":\"${PIHOLE_PASSWORD}\"}" | jq -r '.session.sid')
+# Uno o varios Pi-hole (pi-dns y pi-dns2, mejora 55): se aplica la MISMA lista a
+# cada uno. Usan la misma contraseña de la API. `PIHOLE_URLS` (separadas por
+# espacios) manda sobre `PIHOLE_URL`; el repo es la fuente de verdad, nunca
+# editar los registros a mano en un solo Pi-hole.
+URLS="${PIHOLE_URLS:-${PIHOLE_URL}}"
+EXPECTED=$(echo "${HOSTS}" | jq 'length')
+FALLOS=0
 
-if [ -z "${SID}" ] || [ "${SID}" = "null" ]; then
-  echo "[ERROR] No se pudo autenticar (contraseña incorrecta o Pi-hole no responde)"
-  exit 1
-fi
+for URL in ${URLS}; do
+  echo "[INFO] Autenticando en ${URL}..."
+  SID=$(curl -sk --max-time 15 -X POST "${URL}/api/auth" \
+    -H "Content-Type: application/json" \
+    -d "{\"password\":\"${PIHOLE_PASSWORD}\"}" | jq -r '.session.sid')
 
-echo "[INFO] Aplicando registros DNS locales..."
-COUNT=$(curl -sk -X PATCH "${PIHOLE_URL}/api/config/dns" \
-  -H "sid: ${SID}" -H "Content-Type: application/json" \
-  -d "{\"config\":{\"dns\":{\"hosts\":${HOSTS}}}}" | jq '.config.dns.hosts | length')
+  if [ -z "${SID}" ] || [ "${SID}" = "null" ]; then
+    echo "[ERROR] ${URL}: no se pudo autenticar (contraseña incorrecta o Pi-hole no responde)"
+    FALLOS=$((FALLOS + 1)); continue
+  fi
 
-echo "[OK] ${COUNT} registros aplicados."
+  echo "[INFO] ${URL}: aplicando registros DNS locales..."
+  COUNT=$(curl -sk --max-time 30 -X PATCH "${URL}/api/config/dns" \
+    -H "sid: ${SID}" -H "Content-Type: application/json" \
+    -d "{\"config\":{\"dns\":{\"hosts\":${HOSTS}}}}" | jq '.config.dns.hosts | length')
+
+  if [ "${COUNT}" = "${EXPECTED}" ]; then
+    echo "[OK] ${URL}: ${COUNT} registros aplicados."
+  else
+    echo "[ERROR] ${URL}: se esperaban ${EXPECTED} registros y hay '${COUNT}'"
+    FALLOS=$((FALLOS + 1))
+  fi
+  curl -sk --max-time 10 -X DELETE "${URL}/api/auth" -H "sid: ${SID}" >/dev/null 2>&1 || true
+done
+
+[ "${FALLOS}" -eq 0 ] || exit 1

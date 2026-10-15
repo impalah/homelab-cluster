@@ -61,7 +61,7 @@ set -uo pipefail
 # siempre `admin` (docs/38-acceso-ssh-nodos.md).
 declare -A NODE_IPS=(
   [pi-dns]="192.168.10.2"
-  [pi-utils]="192.168.10.3"
+  [pi-dns2]="192.168.10.3"
   [pi-obs]="192.168.10.4"
   [pi-sonar]="192.168.10.5"
   [retaco]="192.168.10.7"
@@ -69,7 +69,7 @@ declare -A NODE_IPS=(
   [miugarita]="192.168.10.9"
   [ryzen]="192.168.10.10"
 )
-ALL_NODES=(retaco pinchi miugarita ryzen pi-dns pi-obs pi-sonar pi-utils)
+ALL_NODES=(retaco pinchi miugarita ryzen pi-dns pi-obs pi-sonar pi-dns2)
 
 APPLY=0
 KEEP_DAYS=7

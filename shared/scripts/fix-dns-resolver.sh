@@ -3,7 +3,7 @@
 # fix-dns-resolver.sh
 # Comprueba, en cada nodo, que la resolución de *.404labo.net funciona de
 # verdad — es decir, que systemd-resolved está usando pi-dns
-# (192.168.10.2) y no cae al DNS secundario del netplan (1.1.1.1). Si no
+# (192.168.10.2) o pi-dns2 (192.168.10.3) y no cae a un DNS público (9.9.9.9 por DHCP). Si no
 # funciona, reinicia systemd-resolved en ese nodo (mismo fix aplicado a
 # mano en pi-sonar cuando SonarQube no podía resolver postgresql.404labo.net
 # tras un encendido físico — ver docs/13-troubleshooting.md,
@@ -13,13 +13,14 @@
 # un hostname *.404labo.net real (getent, es decir, por la misma ruta que
 # usa cualquier proceso del nodo — incluido el daemon de Docker al hacer
 # pull de registry.404labo.net) y compara la IP devuelta con la esperada.
-# 1.1.1.1 (el DNS secundario) no conoce ningún registro 404labo.net, así que
-# una respuesta correcta solo puede venir de pi-dns — sin ambigüedad.
+# Un DNS público (9.9.9.9) no conoce ningún registro 404labo.net, así que una
+# respuesta correcta solo puede venir de un Pi-hole — sin ambigüedad. (Con dos
+# Pi-hole la prueba no distingue cuál contestó: basta con que alguno responda.)
 #
-# pi-dns es la excepción: ahí systemd-resolved está deshabilitado a propósito
+# pi-dns y pi-dns2 (mejora 55) son la excepción: ahí systemd-resolved está deshabilitado a propósito
 # (Pi-hole ocupa el puerto 53 y /etc/resolv.conf apunta a 127.0.0.1 — ver
 # pi-dns/README.md), así que en pi-dns solo se COMPRUEBA; nunca se reinicia
-# systemd-resolved (arrancarlo ahí es justo lo que no hay que hacer). Si pi-dns
+# systemd-resolved (arrancarlo ahí es justo lo que no hay que hacer). Si pi-dns/pi-dns2
 # falla, lo que hay que revisar son los contenedores pihole/unbound.
 #
 # Un nodo inaccesible por SSH (apagado, colgado) se informa y se sigue con el
@@ -27,7 +28,7 @@
 #
 # Uso: bash fix-dns-resolver.sh <nodo|all>
 #
-# Nodos válidos: pi-dns | pi-obs | pi-sonar | pi-utils | retaco | pinchi | miugarita | all
+# Nodos válidos: pi-dns | pi-obs | pi-sonar | pi-dns2 | retaco | pinchi | miugarita | all
 # (ryzen/mole no se incluye — se ejecuta este script localmente ahí, no
 # tiene sentido comprobarse a sí mismo por SSH)
 # =============================================================================
@@ -41,7 +42,7 @@ NC='\033[0m'
 NODE="${1:-}"
 if [ -z "${NODE}" ]; then
   echo "[ERROR] Uso: fix-dns-resolver.sh <nodo|all>"
-  echo "        Nodos válidos: pi-dns | pi-obs | pi-sonar | pi-utils | retaco | pinchi | miugarita | all"
+  echo "        Nodos válidos: pi-dns | pi-obs | pi-sonar | pi-dns2 | retaco | pinchi | miugarita | all"
   exit 1
 fi
 
@@ -49,7 +50,7 @@ declare -A TARGETS=(
   [pi-dns]="admin@192.168.10.2"
   [pi-obs]="admin@192.168.10.4"
   [pi-sonar]="admin@192.168.10.5"
-  [pi-utils]="admin@192.168.10.3"
+  [pi-dns2]="admin@192.168.10.3"
   [retaco]="admin@192.168.10.7"
   [pinchi]="admin@192.168.10.8"
   [miugarita]="admin@192.168.10.9"
@@ -63,7 +64,7 @@ declare -A TEST_QUERY=(
   [pi-dns]="retaco.404labo.net"
   [pi-obs]="pi-dns.404labo.net"
   [pi-sonar]="pi-dns.404labo.net"
-  [pi-utils]="pi-dns.404labo.net"
+  [pi-dns2]="retaco.404labo.net"
   [retaco]="pi-dns.404labo.net"
   [pinchi]="pi-dns.404labo.net"
   [miugarita]="pi-dns.404labo.net"
@@ -72,7 +73,7 @@ declare -A TEST_EXPECTED=(
   [pi-dns]="192.168.10.7"
   [pi-obs]="192.168.10.2"
   [pi-sonar]="192.168.10.2"
-  [pi-utils]="192.168.10.2"
+  [pi-dns2]="192.168.10.7"
   [retaco]="192.168.10.2"
   [pinchi]="192.168.10.2"
   [miugarita]="192.168.10.2"
@@ -91,7 +92,7 @@ check_node() {
 
   # En pi-dns no se reinicia nada (ver cabecera): solo se informa.
   local fix_cmd="sudo systemctl restart systemd-resolved"
-  if [ "${name}" = "pi-dns" ]; then
+  if [ "${name}" = "pi-dns" ] || [ "${name}" = "pi-dns2" ]; then
     fix_cmd="false"
   fi
 
@@ -126,14 +127,14 @@ fi
     OK)        echo -e "  ${GREEN}[OK]${NC}    ${name} — ${query} → ${value}" ;;
     FIXED)     echo -e "  ${YELLOW}[FIXED]${NC} ${name} — estaba mal (${value%%->*}), reiniciado systemd-resolved, ahora resuelve: ${value##*->}" ;;
     STILLFAIL) echo -e "  ${RED}[FAIL]${NC}  ${name} — sigue sin resolver ${query} correctamente tras reiniciar systemd-resolved (obtenido: ${value}) — revisar a mano"; return 1 ;;
-    NOFIX)     echo -e "  ${RED}[FAIL]${NC}  ${name} — no resuelve ${query} (obtenido: ${value}); en pi-dns no se toca systemd-resolved — revisar los contenedores pihole/unbound"; return 1 ;;
+    NOFIX)     echo -e "  ${RED}[FAIL]${NC}  ${name} — no resuelve ${query} (obtenido: ${value}); en pi-dns/pi-dns2 no se toca systemd-resolved — revisar los contenedores pihole/unbound (docs/41)"; return 1 ;;
     *)         echo -e "  ${RED}[FAIL]${NC}  ${name} — salida inesperada: ${result}"; return 1 ;;
   esac
 }
 
 if [ "${NODE}" = "all" ]; then
   rc=0
-  for n in pi-dns pi-obs pi-sonar pi-utils retaco pinchi miugarita; do
+  for n in pi-dns pi-obs pi-sonar pi-dns2 retaco pinchi miugarita; do
     check_node "${n}" || rc=1
   done
   exit "${rc}"

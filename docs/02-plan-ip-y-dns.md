@@ -11,7 +11,7 @@
 | pi-obs.404labo.net | 192.168.10.4 | (Pi sin servicios desde 2026-10-08) |
 | miugarita.404labo.net / observability.404labo.net | 192.168.10.9 |
 | pi-sonar.404labo.net | 192.168.10.5 |
-| pi-utils.404labo.net | 192.168.10.3 |
+| pi-dns2.404labo.net | 192.168.10.3 |
 | pinchi.404labo.net | 192.168.10.8 |
 | miugarita.404labo.net | 192.168.10.9 |
 | ketekasko.404labo.net (NAS UGREEN, fuera del clúster Docker) | 192.168.10.6 |
@@ -78,7 +78,7 @@ Si Pi-hole no está disponible durante el arranque inicial, se puede añadir man
 192.168.10.2  pi-dns.404labo.net
 192.168.10.4  pi-obs.404labo.net
 192.168.10.5  pi-sonar.404labo.net
-192.168.10.3  pi-utils.404labo.net
+192.168.10.3  pi-dns2.404labo.net
 192.168.10.8  pinchi.404labo.net
 192.168.10.9  miugarita.404labo.net
 192.168.10.6  ketekasko.404labo.net

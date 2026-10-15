@@ -14,7 +14,7 @@ Gestión centralizada de dos cosas distintas, con estrategias distintas porque e
 Activo en los seis nodos. Configuración en `shared/config/apt/`:
 
 - `51-homelab-unattended.conf` — deja el valor por defecto de Ubuntu (solo `-security`/ESM, no `-updates` general). `Automatic-Reboot "false"` explícito — **ningún nodo se reinicia solo**.
-- `20auto-upgrades.conf` — activa los temporizadores periódicos. Sin esto, `unattended-upgrades` puede estar instalado pero no ejecutarse nunca — justo lo que se encontró desactivado en `pi-sonar` y `pi-utils` al auditar el clúster.
+- `20auto-upgrades.conf` — activa los temporizadores periódicos. Sin esto, `unattended-upgrades` puede estar instalado pero no ejecutarse nunca — justo lo que se encontró desactivado en `pi-sonar` y `pi-dns2` al auditar el clúster.
 
 ```bash
 sudo bash /srv/homelab/shared/scripts/setup-unattended-upgrades.sh
@@ -32,7 +32,7 @@ bash /srv/homelab/shared/scripts/update-os.sh <nodo|all>
 ```
 
 - Actualiza, limpia paquetes huérfanos, **avisa si hace falta reiniciar** — nunca reinicia solo.
-- Con `all`: `ryzen retaco pi-obs pi-sonar pi-utils pi-dns` — **`pi-dns` siempre el último**.
+- Con `all`: `ryzen retaco pi-obs pi-sonar pi-dns2 pi-dns` — **`pi-dns` siempre el último**.
 - Requiere ejecutarse desde un equipo con SSH a todos los nodos (`ryzen`/`mole`).
 - ⚠️ **`pinchi` no está en esta lista** (ni en `setup-unattended-upgrades.sh`) — se incorporó al clúster (mejora 30) después de escribirse estos dos scripts y nunca se añadió. Confirmado en vivo (2026-09-01, auditando la mejora 36) que `pinchi` ya trae `unattended-upgrades` activo por defecto de la instalación base de Ubuntu Server, pero **sin** la configuración explícita del repo (`51-homelab-unattended.conf`/`20auto-upgrades.conf`) — funciona, pero no de forma verificada/uniforme con el resto. Pendiente, no bloqueante: añadir `pinchi` a los mapas de nodos de ambos scripts.
 

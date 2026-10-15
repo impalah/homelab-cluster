@@ -49,7 +49,7 @@
 # =============================================================================
 set -euo pipefail
 
-# Los 3 nodos del Swarm (retaco/pinchi/miugarita; pi-obs/pi-sonar/pi-utils
+# Los 3 nodos del Swarm (retaco/pinchi/miugarita; pi-obs/pi-sonar/pi-dns2
 # salieron el 2026-10-08) -- cualquiera puede ser el que de verdad
 # origina la petición proxificada por Traefik (mode: global), ver cabecera.
 SWARM_NODE_IPS="192.168.10.7 192.168.10.8 192.168.10.9"
@@ -95,7 +95,7 @@ declare -A NODE_PORTS=(
   [ryzen]="8080 11434 9800 8010 8188"      # open-webui ollama whisper vllm comfyui
   [retaco]="5678 6333 5000 8003 8004"        # n8n-main qdrant(fijo) registry epub2pdf-service pdf2chunks-service
   # Desde 2026-10-08 (retirada de las Raspberry Pi): los puertos de lo que vivía en
-  # pi-obs/pi-sonar/pi-utils se reasignan a donde viven hoy. No se incluye el 3100
+  # pi-obs/pi-sonar/pi-dns2 se reasignan a donde viven hoy. No se incluye el 3100
   # (Loki) a propósito -- ryzen y pi-dns, fuera del Swarm, le empujan logs.
   [pinchi]="19001 8222 1200 8001 5679"      # portainer vaultwarden rsshub markitdown n8n-aux
   [miugarita]="3000 9090 19000"             # grafana prometheus sonarqube

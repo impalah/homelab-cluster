@@ -1,5 +1,7 @@
 # 10 — Instalación y configuración: pi-utils (192.168.10.3)
 
+> ⚠️ **Nodo renombrado el 2026-10-15:** `pi-utils` es ahora `pi-dns2` (DNS de respaldo, mejora 55; ver `pi-dns2/README.md` y `docs/41-dns-pihole-unbound.md`). Este documento es histórico y conserva el nombre antiguo.
+
 > ⚠️ **Retirada 2026-10-08 — documento histórico.** Esta Raspberry Pi ya no es miembro del Swarm ni aloja servicios: los servicios de `pi-utils` corren hoy como stacks Swarm repartidos entre `pinchi`/`retaco`/`miugarita`. Se conserva como registro de cómo se instaló; para el estado actual, `docs/31-docker-swarm.md` y `README.md`.
 
 ## Rol del nodo

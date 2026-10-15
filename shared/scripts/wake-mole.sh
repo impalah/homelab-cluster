@@ -7,27 +7,28 @@
 # NIC/kernel lo soportan, limitaciones de la BIOS) en docs/19-wake-on-lan.md.
 #
 # Uso: bash wake-mole.sh [nodo]
-#   nodo — desde qué nodo del clúster se envía el paquete (por defecto pi-utils)
-#          Válidos: pi-utils | pi-dns | pi-obs | pi-sonar | retaco | pinchi | miugarita
+#   nodo — desde qué nodo del clúster se envía el paquete (por defecto pi-dns2)
+#          Válidos: pi-dns2 (alias pi-utils) | pi-dns | pi-obs | pi-sonar | retaco | pinchi | miugarita
 #
 # El envío funciona desde cualquier nodo de la misma LAN (192.168.10.0/24) —
 # el magic packet es un broadcast de capa 2/UDP, no importa el origen exacto
-# mientras esté en el mismo segmento. pi-utils es el valor por defecto solo
-# por convención (nodo "de utilidades" del clúster).
+# mientras esté en el mismo segmento. pi-dns2 (antes pi-utils, mejora 55) es el valor
+# por defecto solo por convención: es un nodo siempre encendido y fuera del Swarm.
 # =============================================================================
 set -euo pipefail
 
 MOLE_MAC="50:eb:f6:97:31:a1"
 BROADCAST="192.168.10.255"
 
-NODE="${1:-pi-utils}"
+NODE="${1:-pi-dns2}"
 
 declare -A TARGETS=(
   [retaco]="admin@192.168.10.7"
   [pi-dns]="admin@192.168.10.2"
   [pi-obs]="admin@192.168.10.4"
   [pi-sonar]="admin@192.168.10.5"
-  [pi-utils]="admin@192.168.10.3"
+  [pi-dns2]="admin@192.168.10.3"
+  [pi-utils]="admin@192.168.10.3"   # alias del nombre antiguo
   [pinchi]="admin@192.168.10.8"
   [miugarita]="admin@192.168.10.9"
 )
@@ -35,7 +36,7 @@ declare -A TARGETS=(
 target="${TARGETS[$NODE]:-}"
 if [ -z "${target}" ]; then
   echo "[ERROR] Nodo desconocido: '${NODE}'"
-  echo "        Nodos válidos: pi-utils | pi-dns | pi-obs | pi-sonar | retaco | pinchi | miugarita"
+  echo "        Nodos válidos: pi-dns2 | pi-dns | pi-obs | pi-sonar | retaco | pinchi | miugarita"
   exit 1
 fi
 

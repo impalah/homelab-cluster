@@ -1,6 +1,6 @@
 # 11 — Operación diaria del clúster
 
-> ⚠️ **Actualización 2026-10-08**: `pi-obs`/`pi-sonar`/`pi-utils` ya no alojan servicios ni son del Swarm (solo `nut-upsmon`); sus secciones de abajo son históricas. La observabilidad y SonarQube están en `miugarita` (`bash check-health.sh miugarita` desde el propio nodo). Para los servicios del Swarm, `docker service ls` en `retaco`. `miugarita` se accede con `ssh -i <clave> admin@192.168.10.9` (`docs/38-acceso-ssh-nodos.md`).
+> ⚠️ **Actualización 2026-10-08**: `pi-obs`/`pi-sonar`/`pi-dns2` ya no alojan servicios ni son del Swarm (solo `nut-upsmon`); sus secciones de abajo son históricas. La observabilidad y SonarQube están en `miugarita` (`bash check-health.sh miugarita` desde el propio nodo). Para los servicios del Swarm, `docker service ls` en `retaco`. `miugarita` se accede con `ssh -i <clave> admin@192.168.10.9` (`docs/38-acceso-ssh-nodos.md`).
 
 > Para logs, reinicios, consola dentro de un contenedor o ver uso de CPU/RAM sin usar la terminal, **Portainer** (`https://portainer.404labo.net`) cubre gran parte de lo que hay en esta página desde una interfaz, para los seis nodos — ver `docs/10-instalacion-pi4-utils.md`. Los comandos de abajo siguen siendo la referencia para todo lo que no cubre la interfaz (copias de seguridad, cron, rotación de credenciales, etc.).
 
@@ -79,10 +79,10 @@ curl -s http://192.168.10.9:19000/api/system/status | jq .
 docker compose logs -f sonarqube
 ```
 
-### pi-utils (192.168.10.3)
+### pi-dns2 (192.168.10.3)
 
 ```bash
-cd /srv/homelab/pi-utils && docker compose ps
+cd /srv/homelab/pi-dns2 && docker compose ps
 docker compose logs -f markitdown-service
 docker compose logs -f n8n-aux
 ```
@@ -103,7 +103,7 @@ for target in \
   "admin@192.168.10.2:pi-dns" \
   "admin@192.168.10.4:pi-obs" \
   "admin@192.168.10.5:pi-sonar" \
-  "admin@192.168.10.3:pi-utils" \
+  "admin@192.168.10.3:pi-dns2" \
   "admin@192.168.10.8:pinchi" \
   "admin@192.168.10.9:miugarita"
 do
@@ -141,7 +141,7 @@ ssh admin@192.168.10.2   "bash /srv/homelab/shared/scripts/update-stack.sh pi-dn
 ssh admin@192.168.10.7  "bash /srv/homelab/shared/scripts/update-stack.sh retaco"
 ssh admin@192.168.10.4   "bash /srv/homelab/shared/scripts/update-stack.sh pi-obs"
 ssh admin@192.168.10.5 "bash /srv/homelab/shared/scripts/update-stack.sh pi-sonar"
-ssh admin@192.168.10.3 "bash /srv/homelab/shared/scripts/update-stack.sh pi-utils"
+ssh admin@192.168.10.3 "bash /srv/homelab/shared/scripts/update-stack.sh pi-dns2"
 # ryzen: ejecutar localmente si esta terminal ya está en ryzen (ver CLAUDE.md), si no:
 ssh linus@192.168.10.10   "bash /srv/homelab/shared/scripts/update-stack.sh ryzen"
 ```
@@ -224,7 +224,7 @@ Host pi-sonar
   User homelab
   IdentityFile ~/.ssh/id_ed25519
 
-Host pi-utils
+Host pi-dns2
   HostName 192.168.10.3
   User homelab
   IdentityFile ~/.ssh/id_ed25519

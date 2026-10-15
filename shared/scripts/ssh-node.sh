@@ -30,7 +30,7 @@ FALLBACK_DIR="${INFISICAL_FALLBACK_DIR:-$HOME/claves-temporales}"
 
 declare -A NODE_IPS=(
   [pi-dns]="192.168.10.2"
-  [pi-utils]="192.168.10.3"
+  [pi-dns2]="192.168.10.3"
   [pi-obs]="192.168.10.4"
   [pi-sonar]="192.168.10.5"
   [retaco]="192.168.10.7"
@@ -40,6 +40,7 @@ declare -A NODE_IPS=(
 )
 
 NODE="${1:-}"
+[ "${NODE}" = "pi-utils" ] && NODE="pi-dns2"   # alias del nombre antiguo (mejora 55)
 if [ -z "${NODE}" ] || [ -z "${NODE_IPS[$NODE]:-}" ]; then
   echo "[ERROR] Uso: ssh-node.sh <nodo> [comando...]" >&2
   echo "        Nodos: $(printf '%s ' "${!NODE_IPS[@]}" | tr ' ' '\n' | sort | tr '\n' ' ')" >&2
@@ -52,11 +53,15 @@ IP="${NODE_IPS[$NODE]}"
 # igual que el resto (Ansible/Capataz entran por la misma vía). Si está
 # apagado (Wake-on-LAN, docs/19), despertarlo antes con wake-mole.sh.
 
-LOCAL_KEY="${FALLBACK_DIR}/${NODE}-id_ed25519"
+# Mejora 55: `pi-utils` pasó a llamarse `pi-dns2`; el nombre antiguo sigue
+# aceptándose como alias (la clave vive ya en Infisical /pi-dns2).
+[ "${NODE}" = "pi-utils" ] && NODE="pi-dns2"
+KEY_NODE="${NODE}"
+LOCAL_KEY="${FALLBACK_DIR}/${KEY_NODE}-id_ed25519"
 
 if [ "${SSH_NODE_DRY_RUN:-0}" = "1" ]; then
   echo "ssh ${USER_NAME}@${IP}  (nodo ${NODE})"
-  echo "clave: Infisical ${PROJECT_ID} env=${INFISICAL_ENV} path=/${NODE} PRIVATE_KEY"
+  echo "clave: Infisical ${PROJECT_ID} env=${INFISICAL_ENV} path=/${KEY_NODE} PRIVATE_KEY"
   [ -f "${LOCAL_KEY}" ] && echo "respaldo local presente: ${LOCAL_KEY}" || echo "respaldo local: no"
   exit 0
 fi
@@ -70,7 +75,7 @@ trap 'ssh-agent -k >/dev/null 2>&1 || true' EXIT
 # `timeout` + stdin cerrado: sin sesión, `infisical` pediría un login interactivo
 # y se quedaría colgado -- así falla en segundos y se cae al respaldo local.
 if timeout 20 infisical secrets get PRIVATE_KEY --plain \
-     --projectId="${PROJECT_ID}" --env="${INFISICAL_ENV}" --path="/${NODE}" </dev/null 2>/dev/null \
+     --projectId="${PROJECT_ID}" --env="${INFISICAL_ENV}" --path="/${KEY_NODE}" </dev/null 2>/dev/null \
    | ssh-add - >/dev/null 2>&1; then
   :
 elif [ -f "${LOCAL_KEY}" ]; then

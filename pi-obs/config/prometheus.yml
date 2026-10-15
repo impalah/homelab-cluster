@@ -107,6 +107,15 @@ scrape_configs:
         labels:
           node: pi-dns
 
+  # pi-dns2 (mejora 55, antes pi-utils): DNS de respaldo. Solo node-exporter;
+  # incluye las métricas de dns-guard.sh (textfile collector) que usan las
+  # alertas de grafana/alerting/dns.yml.
+  - job_name: node-exporter-pi-dns2
+    static_configs:
+      - targets: ["192.168.10.3:9100"]
+        labels:
+          node: pi-dns2
+
 
 
   - job_name: node-exporter-pinchi

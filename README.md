@@ -13,7 +13,8 @@ Infraestructura doméstica distribuida en 8 máquinas: cuatro PCs (Ryzen 9 `ryze
 | pi-dns.404labo.net | 192.168.10.2   | fuera            | DNS (Pi-hole + Unbound) + Tailscale subnet router + servidor NUT del SAI físico del clúster (`docs/33-nut-sai.md`) — sin nginx, sin apikey-service |
 | pinchi.404labo.net | 192.168.10.8   | worker           | Nodo Swarm de propósito general (`docs/30-instalacion-pinchi.md`): Portainer, Vaultwarden, n8n-aux, RSSHub... y runner de Forgejo Actions |
 | miugarita.404labo.net | 192.168.10.9 | worker           | Observabilidad (Loki, Tempo, Prometheus, Grafana; alias `observability.404labo.net`) y SonarQube (`docs/39-instalacion-miugarita.md`) |
-| pi-obs / pi-sonar / pi-utils (`.4` / `.5` / `.3`) | — | fuera (reserva) | Raspberry Pi **sin servicios** desde 2026-10-08: solo `nut-upsmon` (cliente del SAI). Siguen encendidas como capacidad de reserva |
+| pi-obs / pi-sonar (`.4` / `.5`) | — | fuera (reserva) | Raspberry Pi **sin servicios** desde 2026-10-08: solo `nut-upsmon` (cliente del SAI). Siguen encendidas como capacidad de reserva |
+| pi-dns2 (`.3`, antes `pi-utils`) | `http://192.168.10.3:8053` (panel) | fuera | **DNS de respaldo** (Pi-hole + Unbound, mejora 55, `docs/41-dns-pihole-unbound.md`): secundario que reparte el DHCP del R700. Además `nut-upsmon` |
 
 ---
 
@@ -150,7 +151,8 @@ homelab-cluster/
 ├── retaco/             ← Mayormente histórico -- registry es lo único que sigue en Compose clásico
 ├── pi-dns/             ← DNS local (Pi-hole + Unbound) + Tailscale -- fuera del Swarm, sin nginx
 ├── pinchi/ miugarita/  ← Compose clásico de los minipcs (cliente NUT; pinchi además runners de Forgejo)
-└── pi-obs/ pi-sonar/ pi-utils/ ← Raspberry Pi fuera del Swarm desde 2026-10-08: solo nut-upsmon; el resto, histórico
+├── pi-dns2/            ← DNS de respaldo (Pi-hole + Unbound + nut-upsmon), antes `pi-utils`; fuera del Swarm
+└── pi-obs/ pi-sonar/   ← Raspberry Pi fuera del Swarm desde 2026-10-08: solo nut-upsmon; el resto, histórico
 ```
 
 ---

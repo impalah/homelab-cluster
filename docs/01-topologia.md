@@ -13,9 +13,12 @@ Se trata de siete nodos conectados a la misma red local doméstica. Docker Swarm
 | `pi-dns` | 192.168.10.2 | DNS interno (Pi-hole + Unbound), subnet router de Tailscale y servidor NUT del SAI — fuera del Swarm |
 | `pinchi` | 192.168.10.8 | Swarm (worker): Portainer, Vaultwarden, n8n-aux, RSSHub, markitdown…, runner de Forgejo Actions. Ver `docs/30-instalacion-pinchi.md` |
 | `miugarita` | 192.168.10.9 | Swarm (worker): observabilidad (alias `observability.404labo.net`) y SonarQube. Ver `docs/39-instalacion-miugarita.md` |
-| `pi-obs`, `pi-sonar`, `pi-utils` | 192.168.10.4 / .5 / .3 | **Sin servicios desde 2026-10-08** (Raspberry Pi fuera del Swarm): solo `nut-upsmon`, encendidas como reserva |
+| `pi-obs`, `pi-sonar` | 192.168.10.4 / .5 | **Sin servicios desde 2026-10-08** (Raspberry Pi fuera del Swarm): solo `nut-upsmon`, encendidas como reserva |
+| `pi-dns2` (antes `pi-utils`) | 192.168.10.3 | **DNS de respaldo** desde 2026-10-15 (mejora 55): Pi-hole + Unbound + `nut-upsmon`, fuera del Swarm. Secundario DHCP del R700 (`docs/41`) |
 
-> **Actualización 2026-10-08 — el Swarm son ahora 3 minipcs (`retaco`, `pinchi`, `miugarita`).** Las tres Raspberry Pi salieron del Swarm y sus servicios se repartieron entre los minipcs (historia y lecciones en `docs/31-docker-swarm.md`). **Los diagramas y las secciones por nodo de más abajo ("5 managers", `pi-obs`, `pi-sonar`, `pi-utils`) describen el estado anterior y se conservan como histórico**: para saber dónde corre algo hoy, `docker service ps <servicio>` o la tabla de `README.md`. Observabilidad y SonarQube están fijados a `miugarita`; Valkey y el resto de servicios sin nodo fijo flotan entre los 3.
+> **Convención de nombres:** `pi-utils` se renombró a `pi-dns2` el 2026-10-15. Los textos históricos (incidentes, migraciones, instalaciones antiguas) conservan `pi-utils` porque así se llamaba entonces el nodo; `pi-utils.404labo.net` sigue resolviendo como alias transitorio.
+
+> **Actualización 2026-10-08 — el Swarm son ahora 3 minipcs (`retaco`, `pinchi`, `miugarita`).** Las tres Raspberry Pi salieron del Swarm y sus servicios se repartieron entre los minipcs (historia y lecciones en `docs/31-docker-swarm.md`). **Los diagramas y las secciones por nodo de más abajo ("5 managers", `pi-obs`, `pi-sonar`, `pi-dns2`) describen el estado anterior y se conservan como histórico**: para saber dónde corre algo hoy, `docker service ps <servicio>` o la tabla de `README.md`. Observabilidad y SonarQube están fijados a `miugarita`; Valkey y el resto de servicios sin nodo fijo flotan entre los 3.
 
 > La misma red local aloja además un octavo dispositivo, el NAS UGREEN NASync `ketekasko` (192.168.10.6) — no es un nodo del clúster Docker (no tiene `docker-compose.yml` ni directorio propio en este repo), pero sí resuelve por DNS interno y aparece como tarjeta en el panel `home.404labo.net`. Detalle completo en `docs/21-configuracion-nas-ugreen.md`.
 
@@ -34,7 +37,7 @@ flowchart TB
     Switch --- pidns["pi-dns\n192.168.10.2\nRaspberry Pi 5"]
     Switch --- piobs["pi-obs\n192.168.10.4\nRaspberry Pi 5"]
     Switch --- pisonar["pi-sonar\n192.168.10.5\nRaspberry Pi 5"]
-    Switch --- piutils["pi-utils\n192.168.10.3\nRaspberry Pi 5"]
+    Switch --- piutils["pi-dns2\n192.168.10.3\nRaspberry Pi 5"]
     Switch --- pinchi["pinchi\n192.168.10.8\nPC GMKtec NucBox G10 Pro\n(solo sistema base)"]
     Switch --- nas["ketekasko (NAS UGREEN)\n192.168.10.6\nfuera del clúster Docker"]
 ```
@@ -267,7 +270,9 @@ Extraído directamente de los 7 ficheros `docker-compose.yml`/`docker-compose.ob
 | `watchtower` | Sin límite | `docker.sock:ro` | Sin puerto publicado | No expuesto vía nginx |
 | `promtail` | Sin límite | `promtail-config.yaml:ro`; `data`; `docker.sock:ro`; `/var/lib/docker/containers:ro` | Sin puerto publicado | No expuesto vía nginx |
 
-### `pi-utils` (192.168.10.3)
+### `pi-dns2` (192.168.10.3, antes `pi-utils`)
+
+> Desde 2026-10-15 es el DNS de respaldo (Pi-hole + Unbound + `nut-upsmon`): ver `pi-dns2/README.md` y `docs/41-dns-pihole-unbound.md`. La tabla de abajo es el inventario HISTÓRICO de cuando alojaba servicios.
 
 > ⚠️ Histórico (hasta 2026-10-08): sus servicios flotan entre `pinchi`/`retaco`/`miugarita`.
 
@@ -419,7 +424,7 @@ Los documentos de `docs/` están numerados siguiendo el orden real en que hay qu
 1. **Fundamentos** (`docs/02` a `docs/04`) — planificación de IP y DNS, instalación base del sistema operativo, servicios comunes a todos los nodos. No tienen dependencias entre sí, así que se hacen antes que cualquier nodo.
 2. **`retaco` en primer lugar** (`docs/05`) — aunque `pi-dns` es, conceptualmente, la "puerta de entrada" del clúster, su propio `docker-compose.yml` **no arranca correctamente si `retaco` no está ya en marcha**: `apikey-service` (en `pi-dns`) necesita que su base de datos ya exista en `postgres-main` (retaco), y `nginx` (también en `pi-dns`) no arranca hasta que `apikey-service` esté en estado `healthy` (mediante `depends_on`). `retaco` también aloja el registro de imágenes privado (`registry.404labo.net`), que varios nodos necesitan más adelante para publicar y descargar imágenes (`apikey-service`, `markitdown-service`, `whisper-service`).
 3. **`pi-dns` en segundo lugar** (`docs/06`) — con `retaco` ya en marcha, `apikey-service` puede arrancar correctamente, y `nginx` con él. A partir de aquí, el resto del clúster ya puede resolver `*.404labo.net` y pasar por la puerta de entrada HTTPS.
-4. **El resto de los nodos, en cualquier orden entre sí** (`docs/07` a `docs/10`) — `ryzen`, `pi-obs`, `pi-sonar` y `pi-utils`. Todos dan por hecho que `pi-dns` y `retaco` ya están en marcha (entidad certificadora interna, DNS, registro privado, bases de datos aisladas en `postgres-main`), pero no dependen unos de otros.
+4. **El resto de los nodos, en cualquier orden entre sí** (`docs/07` a `docs/10`) — `ryzen`, `pi-obs`, `pi-sonar` y `pi-dns2`. Todos dan por hecho que `pi-dns` y `retaco` ya están en marcha (entidad certificadora interna, DNS, registro privado, bases de datos aisladas en `postgres-main`), pero no dependen unos de otros.
 5. **Operación** (`docs/11` en adelante) — una vez el clúster está en pie: uso diario, copias de seguridad, resolución de problemas, monitorización, entidad certificadora interna, mantenimiento, cortafuegos, acceso remoto, Wake-on-LAN, y el apagado y encendido ordenado para tareas de mantenimiento físico (`docs/20-apagado-y-encendido-cluster.md`, que sigue exactamente este mismo orden de dependencias al volver a encender el clúster), además de la configuración del NAS UGREEN (`docs/21-configuracion-nas-ugreen.md`, un dispositivo adicional de la red local, fuera del clúster de Docker). El documento `docs/22-mejoras-futuras.md` cierra la documentación a propósito: es un listado de tareas pendientes, no un paso más a seguir.
 
 ## Índice de documentación

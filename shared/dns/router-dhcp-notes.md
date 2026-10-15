@@ -2,7 +2,7 @@
 
 ## Objetivo
 
-Asegurarse de que todos los dispositivos de la red doméstica usen `pi-dns` como servidor DNS primario, de modo que puedan resolver `*.404labo.net` sin ninguna configuración adicional en cada dispositivo.
+Asegurarse de que todos los dispositivos de la red doméstica usen `pi-dns` (`192.168.10.2`) como servidor DNS primario y `pi-dns2` (`192.168.10.3`) como secundario, de modo que puedan resolver `*.404labo.net` sin ninguna configuración adicional en cada dispositivo y sigan resolviendo si uno de los dos cae.
 
 ---
 
@@ -25,9 +25,9 @@ Buscar en el menú: `LAN` → `DHCP Server` o `Red local` → `Configuración DH
 | Campo | Valor |
 |---|---|
 | DNS primario | `192.168.10.2` |
-| DNS secundario | `1.1.1.1` |
+| DNS secundario | `192.168.10.3` (`pi-dns2`, Pi-hole + Unbound de respaldo, mejora 55) |
 
-> El DNS secundario `1.1.1.1` actúa como alternativa de respaldo automática si `pi-dns` está caído, pero en ese caso los nombres de host `*.404labo.net` no resolverán. Esto es el comportamiento esperado.
+> Hasta el 2026-10-15 el secundario era un DNS público (`9.9.9.9`), que no conoce `404labo.net`: si `pi-dns` caía, los nombres del clúster dejaban de resolverse (así `authentik-server` cayó tras el reinicio de pi-dns, docs/31). Con `pi-dns2` ambos Pi-hole contestan los mismos registros (se cargan desde el repo con `shared/scripts/load-dns-records.sh`, `PIHOLE_URLS`). Aplicado en el R700 el 2026-10-15. Las concesiones DHCP duran 24 h: los clientes recogen el secundario nuevo al renovar.
 
 ### Paso 4: Guardar y aplicar cambios
 
@@ -56,7 +56,7 @@ Para garantizar que los nodos del clúster siempre reciban la misma IP, añadir 
 | pi-dns | `xx:xx:xx:xx:xx:xx` | `192.168.10.2` |
 | pi-obs | `xx:xx:xx:xx:xx:xx` | `192.168.10.4` |
 | pi-sonar | `xx:xx:xx:xx:xx:xx` | `192.168.10.5` |
-| pi-utils | `xx:xx:xx:xx:xx:xx` | `192.168.10.3` |
+| pi-dns2 (antes pi-utils) | `xx:xx:xx:xx:xx:xx` | `192.168.10.3` |
 
 > Sustituir los valores `xx:xx:xx:xx:xx:xx` por las MAC reales de cada nodo.
 > Obtener MACs: `ip link show eth0 | grep ether`
@@ -90,7 +90,7 @@ Para routers con OpenWrt:
 
 ```
 # mediante SSH
-uci set dhcp.lan.dhcp_option='6,192.168.10.2,1.1.1.1'
+uci set dhcp.lan.dhcp_option='6,192.168.10.2,192.168.10.3'
 uci commit dhcp
 /etc/init.d/dnsmasq restart
 ```

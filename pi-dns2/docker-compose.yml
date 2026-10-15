@@ -1,0 +1,159 @@
+name: homelab-pi-dns2
+
+# =============================================================================
+# pi-dns2 (192.168.10.3) -- DNS de respaldo del clúster (mejora 55 de
+# docs/22-mejoras-futuras.md). Antes `pi-utils`, una Raspberry Pi 5 fuera del
+# Swarm desde la mejora 54 que solo corría nut-upsmon.
+#
+# Es un segundo Pi-hole + Unbound, equivalente al de `pi-dns` (192.168.10.2):
+# mismas variables, mismo Unbound, mismos registros locales (se cargan desde el
+# repo con shared/scripts/load-dns-records.sh, nunca a mano en un solo Pi-hole).
+# El checklist completo y el porqué de cada decisión: docs/41-dns-pihole-unbound.md.
+#
+# Diferencias deliberadas con pi-dns:
+#   - Sin el servidor NUT (el SAI y su cable USB están en pi-dns); aquí sigue el
+#     cliente nut-upsmon que ya tenía este nodo.
+#   - Sin subnet router de Tailscale (decisión pendiente, mejora 55, punto 5).
+#   - Sin cadvisor ni portainer-agent: Komodo ve el nodo por su Periphery.
+#
+# Red `pi-dns-net` con el MISMO nombre y rangos que en pi-dns: es una red bridge
+# local a cada host, no choca, y así dns-guard.sh (que asume pi-dns-net y
+# 172.20.0.2) funciona sin variables. Todas las IP son fijas, sin excepción.
+# =============================================================================
+
+x-logging: &loki-logging
+  driver: loki
+  options:
+    loki-url: "http://observability.404labo.net:3100/loki/api/v1/push"
+    loki-external-labels: "node=pi-dns2"
+    mode: non-blocking
+    max-buffer-size: 4m
+
+services:
+
+  # Resolvedor recursivo local, upstream de Pi-hole (puerto 5335). La misma
+  # configuración que pi-dns (pi-dns2/config/unbound/unbound.conf es una copia:
+  # si se cambia una, cambiar la otra).
+  unbound:
+    image: mvance/unbound-rpi:latest
+    container_name: unbound
+    logging: *loki-logging
+    restart: unless-stopped
+    volumes:
+      - /srv/homelab/pi-dns2/unbound/config/unbound.conf:/opt/unbound/etc/unbound/unbound.conf:ro
+    networks:
+      pi-dns-net:
+        ipv4_address: 172.20.0.2
+    healthcheck:
+      test: ["CMD-SHELL", "drill -p 5335 @127.0.0.1 example.com || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  pihole:
+    image: pihole/pihole:latest
+    container_name: pihole
+    logging: *loki-logging
+    restart: unless-stopped
+    depends_on:
+      unbound:
+        condition: service_healthy
+    ports:
+      - "53:53/tcp"
+      - "53:53/udp"
+      - "8053:80"       # panel y API directamente en la LAN, sin proxy (como pi-dns)
+    volumes:
+      - /srv/homelab/pi-dns2/pihole/etc-pihole:/etc/pihole
+      - /srv/homelab/pi-dns2/pihole/etc-dnsmasq.d:/etc/dnsmasq.d
+    environment:
+      TZ: ${TZ:-Europe/Madrid}
+      # ⚠️ Pi-hole v6 solo entiende FTLCONF_*; las variables de v5 (PIHOLE_DNS_,
+      # DNSSEC, WEBPASSWORD) se IGNORAN en silencio (docs/41).
+      FTLCONF_webserver_api_password: ${PIHOLE_PASSWORD}
+      FTLCONF_dns_upstreams: ${PIHOLE_DNS_1:-172.20.0.2#5335}
+      FTLCONF_dns_dnssec: ${PIHOLE_DNSSEC:-false}
+      FTLCONF_dns_listeningMode: ALL
+      VIRTUAL_HOST: ${VIRTUAL_HOST:-pi-dns2.404labo.net}
+      DHCP_ACTIVE: "false"
+    cap_add:
+      - NET_ADMIN
+    networks:
+      pi-dns-net:
+        ipv4_address: 172.20.0.3
+    healthcheck:
+      test: ["CMD-SHELL", "dig +short +norecurse +retry=0 @127.0.0.1 pi.hole || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # Cliente NUT: apaga ESTE host si el SAI ordena un apagado (docs/33-nut-sai.md).
+  nut-upsmon:
+    build: /srv/homelab/shared/docker/nut-client
+    image: nut-client:local
+    container_name: nut-upsmon
+    logging: *loki-logging
+    restart: unless-stopped
+    privileged: true
+    environment:
+      NUT_MONUSER_PASSWORD: ${NUT_MONUSER_PASSWORD}
+    volumes:
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+      - /srv/homelab/shared/config/nut/nut-client.conf:/etc/nut/nut.conf:ro
+      - /srv/homelab/shared/config/nut/upsmon-client.conf.template:/etc/nut/upsmon.conf.template:ro
+      - /srv/homelab/shared/scripts/nut-shutdown-host.sh:/usr/local/bin/nut-shutdown-host.sh:ro
+      - /srv/homelab/shared/scripts/nut-notify.sh:/usr/local/bin/nut-notify.sh:ro
+    networks:
+      pi-dns-net:
+        ipv4_address: 172.20.0.4
+
+  # Métricas del host y del guardián DNS (dns-guard.prom, textfile collector).
+  node-exporter:
+    image: prom/node-exporter:v1.8.0
+    container_name: node-exporter
+    logging: *loki-logging
+    restart: unless-stopped
+    pid: host
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+      - '--collector.textfile.directory=/host/textfile'
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+      - /srv/homelab/node-exporter-textfile:/host/textfile:ro
+    ports:
+      - "9100:9100"
+    networks:
+      pi-dns-net:
+        ipv4_address: 172.20.0.5
+
+  # Solo actualiza lo que lleve la etiqueta com.centurylinklabs.watchtower.enable
+  # (nada en este nodo hoy): se mantiene por paridad con el resto de nodos.
+  watchtower:
+    image: nickfedor/watchtower:latest
+    container_name: watchtower
+    logging: *loki-logging
+    restart: unless-stopped
+    environment:
+      WATCHTOWER_LABEL_ENABLE: "true"
+      WATCHTOWER_CLEANUP: "true"
+      WATCHTOWER_SCHEDULE: "0 0 4 * * *"
+      WATCHTOWER_INCLUDE_RESTARTING: "true"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      pi-dns-net:
+        ipv4_address: 172.20.0.8
+
+networks:
+  pi-dns-net:
+    name: pi-dns-net
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24

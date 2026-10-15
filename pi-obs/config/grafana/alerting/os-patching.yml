@@ -48,7 +48,7 @@ groups:
             datasourceUid: prometheus
             model:
               refId: A
-              expr: node_reboot_required{node!="pi-dns"}
+              expr: node_reboot_required{node!~"pi-dns|pi-dns2"}
               instant: true
           - refId: C
             datasourceUid: __expr__
@@ -86,7 +86,7 @@ groups:
             datasourceUid: prometheus
             model:
               refId: A
-              expr: node_reboot_required{node="pi-dns"}
+              expr: node_reboot_required{node=~"pi-dns|pi-dns2"}
               instant: true
           - refId: C
             datasourceUid: __expr__

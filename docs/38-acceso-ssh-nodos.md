@@ -52,7 +52,7 @@ Ninguna de las dos es bloqueante para seguir operando mientras se aplica la migr
 
 ## 3. Instalación y configuración por sistema operativo
 
-### 3.1 Ubuntu Server (`retaco`, `pinchi`, `pi-dns`/`pi-obs`/`pi-sonar`/`pi-utils`)
+### 3.1 Ubuntu Server (`retaco`, `pinchi`, `pi-dns`/`pi-obs`/`pi-sonar`/`pi-dns2`)
 
 Paquetes necesarios — normalmente ya presentes en una instalación estándar de Ubuntu Server, comprobar antes de asumir:
 
@@ -222,7 +222,7 @@ retaco    ansible_host=192.168.10.7
 pi-dns    ansible_host=192.168.10.2
 pi-obs    ansible_host=192.168.10.4
 pi-sonar  ansible_host=192.168.10.5
-pi-utils  ansible_host=192.168.10.3
+pi-dns2  ansible_host=192.168.10.3
 pinchi    ansible_host=192.168.10.8
 ryzen     ansible_host=192.168.10.10
 ```
@@ -263,7 +263,7 @@ Rotar una clave: generar un par nuevo, añadir la pública nueva a `authorized_k
 
 ## 7. Estado de la aplicación (mejora 52, 2026-10-08)
 
-Aplicado en los 8 nodos (`retaco`, `pinchi`, `miugarita`, `pi-dns`, `pi-obs`, `pi-sonar`, `pi-utils`, `ryzen`): usuario `admin` (grupos `sudo` y `docker`, `sudo` sin contraseña), clave `ed25519` propia por nodo generada fuera del nodo, y `sshd` endurecido con el drop-in `00-homelab.conf` (contraseña y root rechazados, verificado en cada nodo). En `retaco` y `pinchi` la clave se **rotó** (sección 5.8) porque la anterior ya no era recuperable desde Infisical por la interfaz. `shared/scripts/ssh-node.sh` implementa el punto 5.4.
+Aplicado en los 8 nodos (`retaco`, `pinchi`, `miugarita`, `pi-dns`, `pi-obs`, `pi-sonar`, `pi-dns2`, `ryzen`): usuario `admin` (grupos `sudo` y `docker`, `sudo` sin contraseña), clave `ed25519` propia por nodo generada fuera del nodo, y `sshd` endurecido con el drop-in `00-homelab.conf` (contraseña y root rechazados, verificado en cada nodo). En `retaco` y `pinchi` la clave se **rotó** (sección 5.8) porque la anterior ya no era recuperable desde Infisical por la interfaz. `shared/scripts/ssh-node.sh` implementa el punto 5.4.
 
 **Respaldo en Vaultwarden (5.3) hecho:** items `SSH admin@<nodo>.404labo.net` (tipo Clave SSH) para los 8 nodos, importados el 2026-10-08 desde un JSON en formato Bitwarden que se borró (con `shred`) tras la importación.
 

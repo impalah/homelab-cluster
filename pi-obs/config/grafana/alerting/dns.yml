@@ -1,0 +1,129 @@
+apiVersion: 1
+
+# Mejora 55 (docs/22-mejoras-futuras.md, docs/41-dns-pihole-unbound.md):
+# vigilancia de la pila DNS de los DOS Pi-hole (`pi-dns` y `pi-dns2`).
+#
+# Las métricas las escribe shared/scripts/dns-guard.sh en cada nodo (cron cada
+# minuto, textfile collector de node-exporter), así que no hace falta ningún
+# exporter nuevo. Con dos DNS la caída de UNO ya no corta la red, pero deja el
+# clúster otra vez con un único punto de fallo: por eso se avisa igualmente, y
+# con `for` corto.
+#
+# Tres reglas:
+#   - Unbound no responde en un nodo (el guardián no logró recuperarlo).
+#   - Pi-hole no resuelve un nombre de prueba en un nodo.
+#   - El guardián dejó de ejecutarse (cron roto, nodo colgado, métrica vieja):
+#     sin esta regla las dos anteriores se quedarían con el último valor "bueno".
+groups:
+  - orgId: 1
+    name: dns
+    folder: Homelab Alerts
+    interval: 1m
+    rules:
+      - uid: dns-unbound-down
+        title: "Unbound no responde"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: homelab_dns_unbound_up
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
+        noDataState: NoData
+        execErrState: Error
+        for: 3m
+        annotations:
+          summary: "Unbound no responde en {{ $labels.node }}"
+          description: >-
+            dns-guard.sh no ha conseguido que Unbound responda en
+            {{ $labels.node }} desde hace 3 minutos. Pi-hole de ese nodo no
+            resuelve nombres externos. Revisar docs/41-dns-pihole-unbound.md.
+        labels:
+          severity: critical
+          category: dns
+
+      - uid: dns-pihole-not-resolving
+        title: "Pi-hole no resuelve"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: homelab_dns_pihole_resolve_ok
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
+        noDataState: NoData
+        execErrState: Error
+        for: 3m
+        annotations:
+          summary: "Pi-hole no resuelve en {{ $labels.node }}"
+          description: >-
+            Pi-hole de {{ $labels.node }} no contesta a la consulta de prueba
+            desde hace 3 minutos. Quedan sin DNS los clientes que lo usen como
+            primario; el otro Pi-hole sigue dando servicio.
+        labels:
+          severity: critical
+          category: dns
+
+      - uid: dns-guard-stale
+        title: "El guardián de DNS no se ejecuta"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: time() - homelab_dns_guard_last_run_timestamp_seconds
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [600]
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: "dns-guard.sh sin ejecutarse en {{ $labels.node }}"
+          description: >-
+            Hace más de 10 minutos que dns-guard.sh no escribe métricas en
+            {{ $labels.node }} (cron parado o nodo colgado). Las alertas de
+            Unbound/Pi-hole de ese nodo ya no son fiables.
+        labels:
+          severity: warning
+          category: dns

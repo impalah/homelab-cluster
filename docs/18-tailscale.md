@@ -1,5 +1,7 @@
 # 18 — Tailscale: acceso remoto autenticado al clúster
 
+> **Pendiente (mejora 55):** añadir `192.168.10.3` (`pi-dns2`, DNS de respaldo) como segundo nameserver del Split DNS de `404labo.net` en el panel de administración de Tailscale; hasta entonces, el acceso remoto depende solo de `pi-dns`.
+
 ## Qué resuelve
 
 Acceso a todo el clúster desde fuera de la LAN, autenticado (solo dispositivos que hayan iniciado sesión en el tailnet con la cuenta autorizada), sin abrir ningún puerto en el router de casa. Un dispositivo remoto conectado a Tailscale llega a cualquier IP de `192.168.10.0/24` y resuelve `*.404labo.net` exactamente igual que si estuviera en la LAN.

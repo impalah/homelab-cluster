@@ -22,7 +22,7 @@
           node: ryzen
 
   # ... mismo patrón para retaco (192.168.10.7), pi-dns (192.168.10.2),
-  # pi-sonar (192.168.10.5) y pi-utils (192.168.10.3)
+  # pi-sonar (192.168.10.5) y pi-dns2 (192.168.10.3)
 ```
 
 Aplicar sin reiniciar el contenedor (Prometheus se ejecuta con `--web.enable-lifecycle`):
@@ -67,7 +67,7 @@ curl -s http://observability.404labo.net:9090/api/v1/targets | \
 bash /srv/homelab/shared/scripts/check-health.sh ryzen
 bash /srv/homelab/shared/scripts/check-health.sh pi-dns
 bash /srv/homelab/shared/scripts/check-health.sh pi-sonar
-bash /srv/homelab/shared/scripts/check-health.sh pi-utils
+bash /srv/homelab/shared/scripts/check-health.sh pi-dns2
 ```
 
 ### Dashboards en Grafana

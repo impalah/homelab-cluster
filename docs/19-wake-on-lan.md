@@ -7,7 +7,7 @@
 ## Arquitectura
 
 ```
-Otro nodo del clúster (p. ej. pi-utils)
+Otro nodo del clúster (p. ej. pi-dns2)
   │  wakeonlan -i 192.168.10.255 50:eb:f6:97:31:a1   (broadcast UDP puerto 9)
   ▼
 mole (192.168.10.10, apagada/suspendida/hibernada)
@@ -16,7 +16,7 @@ mole (192.168.10.10, apagada/suspendida/hibernada)
      el equipo apagado
 ```
 
-El magic packet es un broadcast de capa 2/UDP normal — no importa desde qué nodo de `192.168.10.0/24` se envíe, mientras esté en el mismo segmento (todo el clúster lo está). `pi-utils` se usa como origen por convención (nodo "de utilidades"), no por necesidad técnica — ver `shared/scripts/wake-mole.sh`.
+El magic packet es un broadcast de capa 2/UDP normal — no importa desde qué nodo de `192.168.10.0/24` se envíe, mientras esté en el mismo segmento (todo el clúster lo está). `pi-dns2` se usa como origen por convención (nodo "de utilidades"), no por necesidad técnica — ver `shared/scripts/wake-mole.sh`.
 
 ## Comprobación previa (ya hecha en `mole`)
 
@@ -61,16 +61,16 @@ Verificación: `nmcli connection show "${CONN}" | grep -i wake` → debe mostrar
 
 ```bash
 # Desde tu equipo, por SSH directo a cualquier nodo siempre encendido:
-ssh admin@192.168.10.3 "bash /srv/homelab/shared/scripts/wake-mole.sh pi-utils"
+ssh admin@192.168.10.3 "bash /srv/homelab/shared/scripts/wake-mole.sh pi-dns2"
 ssh admin@192.168.10.2   "bash /srv/homelab/shared/scripts/wake-mole.sh pi-dns"
 
 # O, si mole está encendida y este checkout disponible, en modo "control"
 # (salta por SSH desde aquí hacia el nodo elegido):
-bash shared/scripts/wake-mole.sh              # hacia pi-utils (por defecto)
+bash shared/scripts/wake-mole.sh              # hacia pi-dns2 (por defecto)
 bash shared/scripts/wake-mole.sh pi-dns       # hacia otro nodo
 ```
 
-`wakeonlan` ya está instalado en `pi-utils` (`admin@192.168.10.3`) — preparado para usarse en cualquier momento.
+`wakeonlan` ya está instalado en `pi-dns2` (`admin@192.168.10.3`) — preparado para usarse en cualquier momento.
 
 ⚠️ Si en el futuro se edita `wake-mole.sh` (o cualquier otro script de `shared/scripts/`), hay que repetir el `rsync -av shared/ <nodo>:/srv/homelab/shared/` en los 5 nodos — no es un recurso compartido en red, cada uno tiene su propia copia (mismo aviso que ya existía para el resto de `shared/`).
 

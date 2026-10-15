@@ -49,6 +49,8 @@ crontab -e   # * * * * * /usr/bin/bash /srv/homelab/shared/scripts/dns-guard.sh 
 
 ## Checklist para `pi-dns2` (mejora 55)
 
+> **Aplicado el 2026-10-15** en `pi-dns2` (`pi-dns2/docker-compose.yml`): todos los puntos salvo la prueba de conmutación completa. Detalles propios: Unbound y red con las mismas IP (`pi-dns-net`, 172.20.0.0/24, red local a cada host), el `.env` es de `admin` con modo 600, y `/etc/resolv.conf` del nodo usa `127.0.0.1` y `192.168.10.2` (respaldo para el arranque).
+
 Aplicar **desde el principio**, no como parche posterior:
 
 1. **Variables `FTLCONF_*`, nunca `PIHOLE_DNS_` ni `DNSSEC`/`WEBPASSWORD`** (v5). Upstream = el Unbound del propio nodo (`172.20.0.2#5335` si se copia la misma red), **no** un DNS público. Si más adelante se quisiera un respaldo público, sabiendo que Pi-hole consulta a *todos* los upstreams y que eso mandaría parte de las consultas fuera.

@@ -148,6 +148,8 @@ services:
       - /srv/homelab/observability/config/grafana/alerting/disk-space.yml:/etc/grafana/provisioning/alerting/disk-space.yml:ro
       # Mejora 36 (docs/22-mejoras-futuras.md): alerta de parcheo del SO.
       - /srv/homelab/observability/config/grafana/alerting/os-patching.yml:/etc/grafana/provisioning/alerting/os-patching.yml:ro
+      # Mejora 55: vigilancia de los dos Pi-hole/Unbound (métricas de dns-guard.sh).
+      - /srv/homelab/observability/config/grafana/alerting/dns.yml:/etc/grafana/provisioning/alerting/dns.yml:ro
       # Mejora 4 (docs/22-mejoras-futuras.md): contact point + política de
       # notificación que enruta undervoltage/SAI (category=power|hardware)
       # hacia ntfy -- ver docker-swarm/stacks/ntfy/ y

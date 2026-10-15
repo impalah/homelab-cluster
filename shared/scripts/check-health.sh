@@ -3,7 +3,7 @@
 # check-health.sh
 # Verifica el estado de los servicios de un nodo del clúster.
 # Uso: bash check-health.sh <nodo>
-# Nodos válidos: ryzen | retaco | pi-dns | pi-obs | pi-sonar | pi-utils | pinchi | miugarita
+# Nodos válidos: ryzen | retaco | pi-dns | pi-obs | pi-sonar | pi-dns2 | pinchi | miugarita
 # Si se omite el nodo, verifica todos los nodos (requiere SSH).
 # =============================================================================
 set -euo pipefail
@@ -145,7 +145,20 @@ check_pi_sin_servicios() {
 }
 check_pi_obs()   { check_pi_sin_servicios pi-obs   192.168.10.4; }
 check_pi_sonar() { check_pi_sin_servicios pi-sonar 192.168.10.5; }
-check_pi_utils() { check_pi_sin_servicios pi-utils 192.168.10.3; }
+# pi-dns2 (mejora 55): DNS de respaldo, no es "sin servicios".
+check_pi_dns2() {
+  echo "=== pi-dns2 (192.168.10.3) -- DNS de respaldo ==="
+  check_docker_service pihole
+  check_docker_service unbound
+  check_docker_service nut-upsmon
+  check_docker_service node-exporter
+  check_http "pihole admin (LAN)" "http://192.168.10.3:8053/admin"
+  if command -v dig &>/dev/null; then
+    local result
+    result=$(dig +short grafana.404labo.net @192.168.10.3 2>/dev/null | head -1)
+    if [ -n "${result}" ]; then ok "DNS 404labo.net (pi-dns2) → ${result}"; else fail "pi-dns2 no resuelve 404labo.net"; fi
+  fi
+}
 
 # miugarita (2026-10-08): aloja la observabilidad (stack `pi-obs`, nombre
 # conservado a propósito), SonarQube y valkey. Los contenedores de Swarm se
@@ -192,7 +205,7 @@ case "${NODE}" in
   pi-dns)   check_pi_dns ;;
   pi-obs)   check_pi_obs ;;
   pi-sonar) check_pi_sonar ;;
-  pi-utils) check_pi_utils ;;
+  pi-dns2|pi-utils) check_pi_dns2 ;;
   pinchi)   check_pinchi ;;
   miugarita) check_miugarita ;;
   all)
@@ -207,7 +220,7 @@ case "${NODE}" in
     ;;
   *)
     echo "[ERROR] Nodo desconocido: '${NODE}'"
-    echo "        Nodos válidos: ryzen | retaco | pi-dns | pi-obs | pi-sonar | pi-utils | pinchi | miugarita | all"
+    echo "        Nodos válidos: ryzen | retaco | pi-dns | pi-obs | pi-sonar | pi-dns2 | pinchi | miugarita | all"
     exit 1
     ;;
 esac

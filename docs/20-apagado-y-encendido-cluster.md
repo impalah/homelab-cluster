@@ -1,10 +1,10 @@
 # 20 — Apagado y encendido ordenado del clúster (mantenimiento físico)
 
-> ⚠️ **Actualización 2026-10-08**: el Swarm son 3 minipcs (`retaco`, `pinchi`, `miugarita`) y las Raspberry Pi `pi-obs`/`pi-sonar`/`pi-utils` ya no son miembros ni alojan servicios (solo `nut-upsmon`). Donde este procedimiento diga "los 5 nodos" o describa servicios en esas Pi, es el estado anterior. Orden de encendido vigente: `retaco` primero (postgres-main + authentik), luego `pinchi`/`miugarita` en cualquier orden. `miugarita` no tiene gotchas propios salvo el cliente NUT (`cd /srv/homelab/miugarita && docker compose up -d`).
+> ⚠️ **Actualización 2026-10-08**: el Swarm son 3 minipcs (`retaco`, `pinchi`, `miugarita`) y las Raspberry Pi `pi-obs`/`pi-sonar`/`pi-dns2` ya no son miembros ni alojan servicios (solo `nut-upsmon`). Donde este procedimiento diga "los 5 nodos" o describa servicios en esas Pi, es el estado anterior. Orden de encendido vigente: `retaco` primero (postgres-main + authentik), luego `pinchi`/`miugarita` en cualquier orden. `miugarita` no tiene gotchas propios salvo el cliente NUT (`cd /srv/homelab/miugarita && docker compose up -d`).
 
 ## Qué resuelve
 
-Procedimiento para apagar de forma segura la mayor parte del clúster (por ejemplo, para una intervención física: mover hardware, limpiar, cambiar cableado) y volver a encenderlo sin corromper datos ni dejar servicios en un estado a medias. Cubre los seis nodos apagables: `pi-dns`, `pi-obs`, `pi-sonar`, `pi-utils`, `retaco` y `pinchi`.
+Procedimiento para apagar de forma segura la mayor parte del clúster (por ejemplo, para una intervención física: mover hardware, limpiar, cambiar cableado) y volver a encenderlo sin corromper datos ni dejar servicios en un estado a medias. Cubre los seis nodos apagables: `pi-dns`, `pi-obs`, `pi-sonar`, `pi-dns2`, `retaco` y `pinchi`.
 
 **Este es el procedimiento de apagado MANUAL.** Desde la mejora 5 (`docs/33-nut-sai.md`) existe además un apagado AUTOMÁTICO real ante batería crítica del SAI — `upsmon` en los 6 nodos + `ryzen` ejecuta `poweroff` limpio por su cuenta, sin seguir ningún orden entre nodos (ver esa sección más abajo, sigue aplicando igual). Ninguno de los 6 nodos tiene Wake-on-LAN configurado (solo `ryzen` lo tiene, `docs/19-wake-on-lan.md`), así que tras un apagado automático real hace falta el mismo paso 1 de "Encendido" de más abajo (alimentación física/botón) antes de continuar con el orden de arranque habitual.
 
@@ -14,7 +14,7 @@ Procedimiento para apagar de forma segura la mayor parte del clúster (por ejemp
 
 ## Qué ha cambiado con Docker Swarm — léelo antes de improvisar
 
-- **`retaco`, `pi-obs`, `pi-sonar`, `pi-utils` y `pinchi` son los 5 nodos del swarm** (todos manager, quórum Raft). `pi-dns` y `ryzen` se quedan fuera del swarm por completo (mejoras 37/39) — siguen siendo Docker Compose puro, sin cambios de fondo respecto al procedimiento anterior.
+- **`retaco`, `pi-obs`, `pi-sonar`, `pi-dns2` y `pinchi` son los 5 nodos del swarm** (todos manager, quórum Raft). `pi-dns` y `ryzen` se quedan fuera del swarm por completo (mejoras 37/39) — siguen siendo Docker Compose puro, sin cambios de fondo respecto al procedimiento anterior.
 - **Docker Swarm se auto-repara solo** al reiniciar los 5 nodos — no hace falta ningún comando especial de swarm para "reformar el quórum": cada manager persiste su estado Raft en disco (`/var/lib/docker/swarm/`) y, en cuanto `dockerd` arranca y los 5 nodos vuelven a verse entre sí por la red (puertos 2377/7946/4789, ya abiertos de forma persistente, `docker-swarm/init/setup-swarm-firewall.sh`), el clúster Swarm se recompone y **reprograma solo** todos los servicios (`traefik`, `apikey-service` copia swarm, `markitdown-service`, `node-exporter`/`cadvisor` globales, `portainer-agent`) sin que tengas que hacer `docker compose up -d` ni `docker stack deploy` en ninguno de los 5 — eso solo hace falta si cambias algo, no para un simple reinicio.
 - **Ahora mismo (2026-08-26), la mayoría del tráfico HTTP real del clúster (28 hostnames, incluido `*.404labo.net`) entra por Traefik en `pinchi` (192.168.10.8)**, no por `nginx` en `pi-dns` — el cutover de DNS de la mejora 33 ya está hecho (`docs/31-docker-swarm.md`). `nginx` en `pi-dns` sigue desplegado y funcional como vía de rollback, pero **nada apunta ahí por DNS salvo** `apikey.404labo.net`, `old.index.404labo.net`, `pihole.404labo.net` (excepciones deliberadas, fuera de Traefik todavía). Esto significa que, aunque Swarm se auto-repare, **si `pinchi` en concreto tarda en volver, todo lo que resuelve a esa IP da timeout** aunque las réplicas de Traefik en los otros 4 nodos estén perfectamente sanas — nadie más escucha en esa IP. Prioriza que `pinchi` vuelva pronto al encender.
 - **`retaco` sigue siendo el nodo crítico a arrancar primero**, y ahora por más motivos que antes: aloja `postgres-main` (BD de `apikey-service`, `authentik`, `n8n-main`, `sonarqube`...) Y `authentik-server` (el forward-auth que protege `prometheus.404labo.net` en Traefik). Ninguno de los dos está migrado al swarm todavía (Fase 4 de la mejora 33, pendiente) — siguen siendo Compose clásico en `retaco`, con el mismo `docker compose up -d` de siempre.
@@ -25,7 +25,7 @@ Procedimiento para apagar de forma segura la mayor parte del clúster (por ejemp
 ## Por qué importa el orden
 
 - **Al apagar**: no hace falta un orden estricto entre nodos — cada `docker compose down`/parada de Swarm es local. Lo que sí es crítico, igual que antes de Swarm, es **no cortar la alimentación en frío**: siempre `sudo poweroff` limpio antes de desconectar. Las Raspberry Pi arrancan desde tarjeta SD, sensibles a corrupción si se corta la alimentación a medio escribir; `retaco`/`pinchi` tienen SSD, más tolerantes pero con el mismo riesgo — ahora además para el estado Raft de Swarm, no solo para `postgres-main`.
-- **Al encender**: `retaco` primero sigue siendo obligatorio (postgres-main + authentik). El resto de nodos del swarm (`pi-obs`, `pi-sonar`, `pi-utils`, `pinchi`) pueden encenderse en cualquier orden entre ellos — Swarm no exige un orden concreto entre managers, solo que todos puedan verse entre sí eventualmente. `pi-dns` sigue sin depender de nada del swarm para arrancar su propio Compose clásico, pero su `apikey-service` local sí necesita `retaco` arriba para pasar su healthcheck, igual que antes.
+- **Al encender**: `retaco` primero sigue siendo obligatorio (postgres-main + authentik). El resto de nodos del swarm (`pi-obs`, `pi-sonar`, `pi-dns2`, `pinchi`) pueden encenderse en cualquier orden entre ellos — Swarm no exige un orden concreto entre managers, solo que todos puedan verse entre sí eventualmente. `pi-dns` sigue sin depender de nada del swarm para arrancar su propio Compose clásico, pero su `apikey-service` local sí necesita `retaco` arriba para pasar su healthcheck, igual que antes.
 
 ## Apagado
 
@@ -41,7 +41,7 @@ docker compose -f docker-compose.observability.yml down
 
 ### 2. Parar el Compose clásico y apagar el sistema operativo de cada nodo
 
-En los nodos que son también miembros del swarm (`pi-obs`, `pi-sonar`, `pi-utils`, `retaco`, `pinchi`) **no hace falta** `docker stack rm` de nada ni sacar el nodo del swarm — simplemente `sudo poweroff` para el `Compose` clásico que exista en ese nodo, el swarm se para solo con `dockerd`. `pinchi` no tiene Compose clásico propio, solo se apaga.
+En los nodos que son también miembros del swarm (`pi-obs`, `pi-sonar`, `pi-dns2`, `retaco`, `pinchi`) **no hace falta** `docker stack rm` de nada ni sacar el nodo del swarm — simplemente `sudo poweroff` para el `Compose` clásico que exista en ese nodo, el swarm se para solo con `dockerd`. `pinchi` no tiene Compose clásico propio, solo se apaga.
 
 Orden sugerido — el inverso al de instalación, por costumbre y simetría con `docs/01-topologia.md`, aunque para el apagado en sí no es obligatorio (sí lo es no saltarse el `sudo poweroff` limpio en cada uno):
 
@@ -49,7 +49,7 @@ Orden sugerido — el inverso al de instalación, por costumbre y simetría con 
 for target in \
   "admin@192.168.10.9:miugarita" \
   "admin@192.168.10.8:pinchi:no-compose" \
-  "admin@192.168.10.3:pi-utils" \
+  "admin@192.168.10.3:pi-dns2" \
   "admin@192.168.10.5:pi-sonar" \
   "admin@192.168.10.4:pi-obs" \
   "admin@192.168.10.2:pi-dns" \
@@ -86,7 +86,7 @@ Con los seis nodos sin respuesta, ya es seguro hacer la intervención física.
 
 ### 1. Alimentación física
 
-Reconecta la alimentación de los seis nodos. Las Raspberry Pi 5 (`pi-dns`, `pi-obs`, `pi-sonar`, `pi-utils`) arrancan solas en cuanto reciben alimentación por USB-C, sin necesidad de pulsar nada. `retaco` y `pinchi` (PCs mini) pueden o no arrancar solos según su propio ajuste de BIOS "Restore AC Power Loss"/similar — si alguno no arranca solo a los 30-60 segundos de reconectar la alimentación, pulsa su botón de encendido físico.
+Reconecta la alimentación de los seis nodos. Las Raspberry Pi 5 (`pi-dns`, `pi-obs`, `pi-sonar`, `pi-dns2`) arrancan solas en cuanto reciben alimentación por USB-C, sin necesidad de pulsar nada. `retaco` y `pinchi` (PCs mini) pueden o no arrancar solos según su propio ajuste de BIOS "Restore AC Power Loss"/similar — si alguno no arranca solo a los 30-60 segundos de reconectar la alimentación, pulsa su botón de encendido físico.
 
 ### 2. `retaco` primero — obligatorio
 
@@ -117,12 +117,12 @@ ssh admin@192.168.10.2 "docker exec tailscale tailscale status"
 
 ### 4. `pinchi` y el resto de nodos del swarm — cualquier orden, incluso en paralelo
 
-`pinchi` no tiene `docker-compose.yml` propio — basta con que arranque y su Docker se una de nuevo al swarm solo (persiste su identidad, no hace falta re-hacer `docker swarm join`). Los otros tres (`pi-obs`, `pi-sonar`, `pi-utils`) sí necesitan su Compose clásico a mano, **además** de reincorporarse solos al swarm:
+`pinchi` no tiene `docker-compose.yml` propio — basta con que arranque y su Docker se una de nuevo al swarm solo (persiste su identidad, no hace falta re-hacer `docker swarm join`). Los otros tres (`pi-obs`, `pi-sonar`, `pi-dns2`) sí necesitan su Compose clásico a mano, **además** de reincorporarse solos al swarm:
 
 ```bash
 ssh admin@192.168.10.4   "cd /srv/homelab/pi-obs   && docker compose up -d"
 ssh admin@192.168.10.5 "cd /srv/homelab/pi-sonar  && docker compose up -d"
-ssh admin@192.168.10.3 "cd /srv/homelab/pi-utils  && docker compose up -d"
+ssh admin@192.168.10.3 "cd /srv/homelab/pi-dns2  && docker compose up -d"
 ```
 
 ⚠️ `pi-sonar`/SonarQube tarda ~120 segundos en arrancar (calentamiento de la JVM) — no te alarmes si `docker compose ps` lo muestra `starting` un rato.
@@ -181,7 +181,7 @@ for target in \
   "admin@192.168.10.2:pi-dns" \
   "admin@192.168.10.4:pi-obs" \
   "admin@192.168.10.5:pi-sonar" \
-  "admin@192.168.10.3:pi-utils"
+  "admin@192.168.10.3:pi-dns2"
 do
   ssh_target="${target%%:*}"
   node="${target##*:}"

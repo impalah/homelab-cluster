@@ -20,7 +20,8 @@ topología del clúster a internet.
 | `pi-dns.404labo.net` | `192.168.10.2` | Raspberry Pi 5 #1 (DNS) — fuera del Swarm a propósito |
 | `pi-obs.404labo.net` | `192.168.10.4` | Raspberry Pi 5 #2 (observabilidad) |
 | `pi-sonar.404labo.net` | `192.168.10.5` | Raspberry Pi 5 #3 (SonarQube) |
-| `pi-utils.404labo.net` | `192.168.10.3` | Raspberry Pi 5 #4 (utilidades) |
+| `pi-dns2.404labo.net` | `192.168.10.3` | Raspberry Pi 5 #4 — **DNS de respaldo** (Pi-hole + Unbound, mejora 55; antes `pi-utils`) |
+| `pi-utils.404labo.net` | `192.168.10.3` | Alias transitorio de `pi-dns2` (nombre antiguo); retirar cuando nada lo use |
 | `pinchi.404labo.net` | `192.168.10.8` | PC GMKtec NucBox G10 Pro |
 | `miugarita.404labo.net` | `192.168.10.9` | MiniPC (mismo hardware que pinchi) — observabilidad y SonarQube desde 2026-10-08 |
 

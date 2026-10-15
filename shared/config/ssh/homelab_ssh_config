@@ -21,10 +21,10 @@ Host pi-dns 192.168.10.2
   IdentityFile ~/.ssh/id_ed25519
   IdentitiesOnly yes
 
-Host pi-utils 192.168.10.3
+Host pi-dns2 pi-utils 192.168.10.3
   HostName 192.168.10.3
   User admin
-  IdentityFile ~/claves-temporales/pi-utils-id_ed25519
+  IdentityFile ~/claves-temporales/pi-dns2-id_ed25519
   IdentityFile ~/.ssh/id_ed25519
   IdentitiesOnly yes
 
