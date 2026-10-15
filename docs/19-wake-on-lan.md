@@ -2,21 +2,21 @@
 
 ## Qué resuelve
 
-`mole` (nombre de host del nodo `ryzen`, 192.168.1.150) es un PC de sobremesa con GPU que no interesa tener encendido todo el día — a diferencia del resto del clúster (Raspberry Pi + mini PC), que sí está siempre arriba. Wake-on-LAN (WoL) permite encenderla enviando un "magic packet" desde cualquier otro nodo de la LAN, sin acceso físico.
+`mole` (nombre de host del nodo `ryzen`, 192.168.10.10) es un PC de sobremesa con GPU que no interesa tener encendido todo el día — a diferencia del resto del clúster (Raspberry Pi + mini PC), que sí está siempre arriba. Wake-on-LAN (WoL) permite encenderla enviando un "magic packet" desde cualquier otro nodo de la LAN, sin acceso físico.
 
 ## Arquitectura
 
 ```
 Otro nodo del clúster (p. ej. pi-utils)
-  │  wakeonlan -i 192.168.1.255 50:eb:f6:97:31:a1   (broadcast UDP puerto 9)
+  │  wakeonlan -i 192.168.10.255 50:eb:f6:97:31:a1   (broadcast UDP puerto 9)
   ▼
-mole (192.168.1.150, apagada/suspendida/hibernada)
+mole (192.168.10.10, apagada/suspendida/hibernada)
   └─ NIC enp6s0 (Intel I225, driver igc) — sigue recibiendo alimentación en
      espera y "escucha" ese broadcast a nivel de firmware/NIC, incluso con
      el equipo apagado
 ```
 
-El magic packet es un broadcast de capa 2/UDP normal — no importa desde qué nodo de `192.168.1.0/24` se envíe, mientras esté en el mismo segmento (todo el clúster lo está). `pi-utils` se usa como origen por convención (nodo "de utilidades"), no por necesidad técnica — ver `shared/scripts/wake-mole.sh`.
+El magic packet es un broadcast de capa 2/UDP normal — no importa desde qué nodo de `192.168.10.0/24` se envíe, mientras esté en el mismo segmento (todo el clúster lo está). `pi-utils` se usa como origen por convención (nodo "de utilidades"), no por necesidad técnica — ver `shared/scripts/wake-mole.sh`.
 
 ## Comprobación previa (ya hecha en `mole`)
 
@@ -61,8 +61,8 @@ Verificación: `nmcli connection show "${CONN}" | grep -i wake` → debe mostrar
 
 ```bash
 # Desde tu equipo, por SSH directo a cualquier nodo siempre encendido:
-ssh u-utils@192.168.1.173 "bash /srv/homelab/shared/scripts/wake-mole.sh pi-utils"
-ssh u-dns@192.168.1.170   "bash /srv/homelab/shared/scripts/wake-mole.sh pi-dns"
+ssh admin@192.168.10.3 "bash /srv/homelab/shared/scripts/wake-mole.sh pi-utils"
+ssh admin@192.168.10.2   "bash /srv/homelab/shared/scripts/wake-mole.sh pi-dns"
 
 # O, si mole está encendida y este checkout disponible, en modo "control"
 # (salta por SSH desde aquí hacia el nodo elegido):
@@ -70,7 +70,7 @@ bash shared/scripts/wake-mole.sh              # hacia pi-utils (por defecto)
 bash shared/scripts/wake-mole.sh pi-dns       # hacia otro nodo
 ```
 
-`wakeonlan` ya está instalado en `pi-utils` (`u-utils@192.168.1.173`) — preparado para usarse en cualquier momento.
+`wakeonlan` ya está instalado en `pi-utils` (`admin@192.168.10.3`) — preparado para usarse en cualquier momento.
 
 ⚠️ Si en el futuro se edita `wake-mole.sh` (o cualquier otro script de `shared/scripts/`), hay que repetir el `rsync -av shared/ <nodo>:/srv/homelab/shared/` en los 5 nodos — no es un recurso compartido en red, cada uno tiene su propia copia (mismo aviso que ya existía para el resto de `shared/`).
 
@@ -115,11 +115,11 @@ Depende de qué se compara exactamente. Resumen:
 ```bash
 # Desde otro nodo, con mole apagada:
 bash shared/scripts/wake-mole.sh
-ping -c 5 192.168.1.150          # espera unos 20-40s a boot completo (BIOS + POST + Linux)
+ping -c 5 192.168.10.10          # espera unos 20-40s a boot completo (BIOS + POST + Linux)
 
 # Una vez arriba, comprobar que los servicios con GPU están realmente bien
 # (no solo que el host responda a ping):
-curl -s http://192.168.1.150:11434/api/tags   # ollama
+curl -s http://192.168.10.10:11434/api/tags   # ollama
 nvidia-smi                                     # en la propia mole, por SSH
 ```
 

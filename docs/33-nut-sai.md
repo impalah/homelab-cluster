@@ -6,13 +6,13 @@ El clúster tiene un SAI físico (Salicru SPS 2200 SOHO+) protegiendo los 6 nodo
 
 Esta mejora integra [Network UPS Tools (NUT)](https://networkupstools.org/) para que:
 
-1. `pi-obs` (donde está conectado el SAI por USB) sepa el estado real de la batería.
+1. `pi-dns` (donde está conectado el SAI por USB) sepa el estado real de la batería.
 2. El resto de nodos lo consulten por red y se apaguen solos, limpio, si la batería llega a nivel crítico.
 3. Prometheus/Grafana tengan visibilidad y alerten sobre el estado del SAI.
 
 ## Hardware real (confirmado en vivo, 2026-09-01)
 
-El SAI está conectado por USB a **`pi-obs`** (192.168.1.171, no a `mole`/`ryzen` como suponía originalmente `docs/22-mejoras-futuras.md`, mejora 5). Identificado por `lsusb`:
+El SAI está conectado por USB a **`pi-dns`** (192.168.10.2). Identificado por `lsusb`:
 
 ```
 Bus 004 Device XXX: ID 06da:ffff Phoenixtec Power Co., Ltd Offline UPS
@@ -20,12 +20,16 @@ Bus 004 Device XXX: ID 06da:ffff Phoenixtec Power Co., Ltd Offline UPS
 
 El número de bus/dispositivo (`XXX`) **cambia** cada vez que el SAI se desconecta y reconecta — por eso el contenedor del servidor monta `/dev/bus/usb` entero, no un `/dev/hidrawN`/`/dev/bus/usb/BBB/DDD` concreto (ver más abajo).
 
+⚠️ **El servidor vivía en `pi-obs` hasta el 2026-10-08.** Ese día, revisando el homelab, se encontró el SAI sin ninguna protección real desde la migración de red del 2026-09-28, por tres causas encadenadas: el cable USB estaba enchufado en `pi-dns` y no en `pi-obs` (no se pudo determinar cuándo se movió); no existía ningún contenedor `nut-server` en marcha; y `shared/config/nut/upsmon-client.conf.template` seguía apuntando a la IP antigua `192.168.1.171`, tanto en el repo como desplegada en todos los nodos — los clientes que figuraban "Up" solo registraban `No route to host`. Se decidió dejar el servidor en `pi-dns`, donde ya estaba el cable: es el único nodo que queda fuera de la retirada de las Raspberry Pi del Swarm. `pi-obs` pasó a ser un cliente más y `pi-dns` dejó de necesitar el suyo (el `upsmon` *primary* del propio servidor ya apaga ese host). Las menciones a `pi-obs` como servidor que quedan más abajo en este documento son narrativa histórica de la instalación original.
+
+Sin ningún driver leyéndolo, este SAI se re-enumera por USB cada ~20 segundos (232 reconexiones acumuladas en `dmesg` de `pi-dns` antes de arrancar el servidor) — no es un cable flojo: paró en cuanto `usbhid-ups` tomó el dispositivo. Si vuelve a verse ese patrón en `dmesg`, lo primero que hay que mirar es si `nut-server` está caído.
+
 Driver NUT correcto: **`usbhid-ups`**, subdriver detectado automáticamente **"Phoenixtec/Liebert HID 0.41"** — es un dispositivo HID Power Device estándar, no hace falta `nutdrv_qx`/`blazer_usb` (protocolo Megatec/Q1) ni el flag `-x pollonly` que a veces necesitan otros SAIs con este mismo vendor ID.
 
 ## Arquitectura
 
-- **Servidor** (`pi-obs/nut-server/`, desplegado en `pi-obs/docker-compose.yml` — Compose **clásico**, no Swarm): un único contenedor con el driver `usbhid-ups`, `upsd` y un `upsmon` local en modo `primary`, todos gestionados por `pi-obs/nut-server/entrypoint.sh`. `upsd` se publica en el puerto `3493` de la LAN (mismo criterio que `postgres-main` en 5432 — hay consumidores remotos).
-- **Clientes** (`shared/docker/nut-client/` + `shared/config/nut/`, un servicio `nut-upsmon` añadido al `docker-compose.yml` clásico de **los 6 nodos**: `ryzen`, `retaco`, `pi-dns`, `pi-sonar`, `pi-utils` y `pinchi`): cada uno corre `upsmon` en modo `secondary`, apuntando a `sai@192.168.1.171` por IP real (nunca alias Docker — cruza la frontera Swarm/Compose clásico, ver `CLAUDE.md`).
+- **Servidor** (`pi-dns/nut-server/` + `pi-dns/config/nut/`, desplegado en `pi-dns/docker-compose.yml` — Compose **clásico**, no Swarm): un único contenedor con el driver `usbhid-ups`, `upsd` y un `upsmon` local en modo `primary`, todos gestionados por `pi-obs/nut-server/entrypoint.sh`. `upsd` se publica en el puerto `3493` de la LAN (mismo criterio que `postgres-main` en 5432 — hay consumidores remotos).
+- **Clientes** (`shared/docker/nut-client/` + `shared/config/nut/`, un servicio `nut-upsmon` añadido al `docker-compose.yml` clásico de **7 nodos**: `ryzen`, `retaco`, `pi-obs`, `pi-sonar`, `pi-utils`, `pinchi` y `miugarita` — este último desde 2026-10-08, `miugarita/docker-compose.yml`; el servidor, `pi-dns`, no necesita cliente): cada uno corre `upsmon` en modo `secondary`, apuntando a `sai@192.168.10.2` por IP real (nunca alias Docker — cruza la frontera Swarm/Compose clásico, ver `CLAUDE.md`).
 - **`pinchi` estrena aquí su primer `docker-compose.yml` propio** — hasta esta mejora era Swarm-only (`docs/30-instalacion-pinchi.md`). No migra nada más a Compose clásico, es únicamente para `nut-upsmon`.
 - **`nut-exporter`** (`druggeri/nut_exporter:3.3.0`) vive en el stack Swarm `docker-swarm/stacks/pi-obs/`, junto a Prometheus/Grafana — mismo patrón que `postgres-exporter` (scrapea un servicio remoto por IP real aunque esté en el mismo nodo físico, porque las dos redes Docker —overlay del swarm y bridge clásica— no se comparten).
 - **Alerta de Grafana**: `pi-obs/config/grafana/alerting/sai-bateria.yml`, 3 reglas (SAI en batería, batería baja, `nut-exporter` sin respuesta), mismo patrón que `undervoltage.yml`.
@@ -38,7 +42,7 @@ Hallazgo crítico de esta mejora: **`docker stack deploy` ignora en silencio `pr
 Failed to open connection to "system" message bus: An AppArmor policy prevents this sender from sending this message to this recipient
 ```
 
-Confirmado en vivo en `pinchi`: mismo comando, sin `--privileged` falla, con `--privileged` funciona. Por eso `nut-upsmon` tiene que vivir en Compose clásico en **los 5 nodos que también son managers de Swarm** (`retaco`, `pi-obs`, `pi-sonar`, `pi-utils`, `pinchi`), no como un servicio Swarm — perdería `privileged` sin ningún error visible en el despliegue, y el apagado automático fallaría en silencio justo cuando más falta hace.
+Confirmado en vivo en `pinchi`: mismo comando, sin `--privileged` falla, con `--privileged` funciona. Por eso `nut-upsmon` tiene que vivir en Compose clásico en **los nodos que también son managers de Swarm** (`retaco`, `pi-obs`, `pi-sonar`, `pi-utils`, `pinchi`), no como un servicio Swarm — perdería `privileged` sin ningún error visible en el despliegue, y el apagado automático fallaría en silencio justo cuando más falta hace.
 
 ## Apagado automático real
 
@@ -67,12 +71,13 @@ docker exec nut-upsmon sh -c \
 ## Verificación rápida
 
 ```bash
-# Estado del SAI, desde el propio pi-obs o cualquier cliente
-docker exec nut-server upsc sai@localhost      # en pi-obs
-docker exec nut-upsmon upsc sai@192.168.1.171  # en cualquier otro nodo
+# Estado del SAI, desde el propio pi-dns o cualquier cliente
+docker exec nut-server upsc sai@localhost      # en pi-dns
+docker exec nut-upsmon upsc sai@192.168.10.2  # en cualquier otro nodo
+docker exec nut-server upsc -c sai@localhost   # en pi-dns: qué clientes están conectados de verdad
 
 # Metricas en Prometheus (desde cualquier nodo -- ver nota de hairpin NAT abajo)
-curl -s 'http://192.168.1.171:9090/api/v1/query?query=network_ups_tools_ups_status'
+curl -s 'http://observability.404labo.net:9090/api/v1/query?query=network_ups_tools_ups_status'
 ```
 
 ⚠️ **Limitación de Swarm (hairpin NAT), no un fallo real**: un nodo no puede alcanzar su propio puerto publicado por la routing mesh vía `localhost`/su propia IP — probar `curl http://localhost:9090/...` **desde el propio `pi-obs`** se queda colgado indefinidamente aunque Prometheus esté perfectamente sano (confirmado en vivo: el mismo `curl` desde `retaco` responde `200` al instante, y `docker exec` dentro del propio contenedor de Prometheus también responde bien). Si algo publicado por Swarm en `pi-obs` parece "colgado", prueba primero desde otro nodo antes de asumir que está roto.

@@ -1,4 +1,4 @@
-# 30 — Instalación: pinchi (192.168.1.175)
+# 30 — Instalación: pinchi (192.168.10.8)
 
 Fecha: 2026-08-22
 
@@ -11,7 +11,9 @@ Este documento cubre únicamente la preparación del sistema base (siguiendo el 
 ## Requisitos previos
 
 - Ubuntu Server 26.04 LTS, x86_64
-- IP estática: `192.168.1.175`
+- IP: `192.168.10.8` — sin configuración estática en el nodo, ver nota siguiente.
+
+⚠️ **Ningún nodo del clúster tiene IP fija configurada localmente** (Netplan/NetworkManager) — la sección 1.1 de abajo describe cómo se fijó `192.168.10.8` (`192.168.10.8` en su momento) **por Netplan directamente en el nodo**, que fue el procedimiento real seguido el 2026-08-22. Desde la migración de red al router Cudy R700 (2026-09-28, `docs/02-plan-ip-y-dns.md`) ese ya **no** es el procedimiento vigente para ningún nodo del clúster, `pinchi` incluido: la predictibilidad de la IP viene hoy de una reserva DHCP por MAC en el propio router, no de un bloque `addresses:` estático como el de abajo. Sección 1.1 conservada tal cual se ejecutó entonces (narrativa histórica, `pinchi` sigue teniendo hoy ese Netplan estático de antes de la migración, no se ha revertido retroactivamente) — para un nodo nuevo, seguir en su lugar `docs/39-instalacion-miugarita.md`, que sí refleja el procedimiento actual.
 
 ---
 
@@ -24,7 +26,7 @@ sudo apt update && sudo apt upgrade -y
 sudo apt install -y curl git htop iotop lsof net-tools unzip jq
 ```
 
-### 1.1 IP estática (Netplan)
+### 1.1 IP estática (Netplan) — procedimiento histórico, ya no vigente (ver aviso arriba)
 
 La interfaz de red es `eno1` (no `eth0` como en `retaco`/`pi-*`) — confirmar con `ip -4 addr show` antes de asumir el nombre. El fichero generado por el instalador (`/etc/netplan/00-installer-config.yaml`) ya fija la interfaz por MAC (`match: macaddress:`); se conserva ese bloque al pasar a IP estática:
 
@@ -39,16 +41,16 @@ network:
       set-name: eno1
       dhcp4: false
       addresses:
-        - 192.168.1.175/24
+        - 192.168.10.8/24
       routes:
         - to: default
-          via: 192.168.1.1
+          via: 192.168.10.1
       nameservers:
         addresses:
-          - 192.168.1.170
+          - 192.168.10.2
           - 1.1.1.1
         search:
-          - home.arpa
+          - 404labo.net
 ```
 
 ```bash
@@ -84,7 +86,7 @@ sudo chmod 0440 /etc/sudoers.d/u-forge
 sudo visudo -c
 ```
 
-Verificado: `ssh u-forge@192.168.1.175 sudo whoami` → `root`, sin pedir contraseña.
+Verificado: `ssh admin@192.168.10.8 sudo whoami` → `root`, sin pedir contraseña.
 
 #### ⚠️ Deshabilitar login por contraseña — el drop-in de cloud-init manda, no el `sshd_config` principal
 
@@ -126,18 +128,18 @@ También se sincronizó el árbol `shared/` completo (`scripts/`, `env/`, `dns/`
 
 ## 4. DNS
 
-`pinchi.home.arpa` → `192.168.1.175`, añadido a `shared/dns/dns-records.md` y `shared/scripts/load-dns-records.sh`, aplicado en Pi-hole. Resuelve correctamente tanto desde la LAN como desde el propio nodo (`getent hosts pinchi.home.arpa`).
+`pinchi.404labo.net` → `192.168.10.8`, añadido a `shared/dns/dns-records.md` y `shared/scripts/load-dns-records.sh`, aplicado en Pi-hole. Resuelve correctamente tanto desde la LAN como desde el propio nodo (`getent hosts pinchi.404labo.net`).
 
 ## Estado final de este pase
 
 | Elemento | Estado |
 |---|---|
-| IP estática | ✅ `192.168.1.175/24`, vía Netplan |
+| IP estática | ✅ `192.168.10.8/24`, vía Netplan |
 | Paquetes base | ✅ |
 | Usuario `u-forge` | ✅ sudo sin contraseña, clave SSH, login por contraseña deshabilitado |
 | Docker Engine + Compose | ✅ instalado, `u-forge` en el grupo `docker` |
 | Docker Swarm | ⏳ soportado por el motor, sin inicializar/unir (pendiente mejora 33) |
-| DNS (`pinchi.home.arpa`) | ✅ |
+| DNS (`pinchi.404labo.net`) | ✅ |
 | Servicios de aplicación | ❌ ninguno todavía — pendiente de decidir qué aloja este nodo |
 | `pinchi/docker-compose.yml` | ❌ no existe todavía, ver `pinchi/README.md` |
 

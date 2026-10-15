@@ -1,4 +1,4 @@
-# 07 — Instalación y configuración: ryzen (192.168.1.150)
+# 07 — Instalación y configuración: ryzen (192.168.10.10)
 
 > **`open-webui` se instaló originalmente aquí (sección de más abajo, histórica), pero se migró después a `retaco`** para que siguiera accesible con este nodo apagado — ver `docs/23-bifrost-gateway-llm.md`. Las instrucciones de instalación de `open-webui` que aparecen en este documento ya no reflejan el despliegue real; se conservan como referencia histórica de cómo se montó la primera vez.
 
@@ -8,10 +8,10 @@
 
 - **ollama** — Servidor de inferencia LLM flexible: carga/descarga modelos bajo demanda, cualquier tamaño que quepa en VRAM. Consumido por Open WebUI (en `retaco`) a través de Bifrost (`pi-sonar`), no directo — ver `docs/23-bifrost-gateway-llm.md`.
 - **vllm** — Servidor de inferencia de alto rendimiento (API compatible OpenAI), para un único modelo fijo pero con mucho más rendimiento bajo carga concurrente que Ollama (PagedAttention + batching continuo). **Alterna con Ollama, nunca a la vez** — ver sección vLLM más abajo.
-- **whisper-service** — Transcripción de audio a texto (FastAPI + faster-whisper). Código en `services/whisper-service/` (raíz del repo); imagen publicada en `registry.home.arpa` — este nodo solo hace `docker compose pull`, no build.
+- **whisper-service** — Transcripción de audio a texto (FastAPI + faster-whisper). Código en `services/whisper-service/` (raíz del repo); imagen publicada en `registry.404labo.net` — este nodo solo hace `docker compose pull`, no build.
 - **comfyui** — Generación de imágenes (Stable Diffusion y derivados). Coexiste con Ollama/vLLM (GPU distinta), pero **alterna con whisper-service**, con quien sí comparte GPU.
 
-No hay ningún servicio de datos ni de automatización en este nodo — `postgres-main`, `qdrant` y `n8n-main` se migraron a `retaco` (192.168.1.174), para que las automatizaciones (cron, webhooks) sigan funcionando aunque `ryzen` esté apagado — `retaco` está siempre encendido, `ryzen` no.
+No hay ningún servicio de datos ni de automatización en este nodo — `postgres-main`, `qdrant` y `n8n-main` se migraron a `retaco` (192.168.10.7), para que las automatizaciones (cron, webhooks) sigan funcionando aunque `ryzen` esté apagado — `retaco` está siempre encendido, `ryzen` no.
 
 ## Hardware de GPU y por qué importa
 
@@ -26,7 +26,7 @@ GPU 0 es también la que tiene el **monitor conectado** (es el puesto de trabajo
 
 ```mermaid
 flowchart TB
-    subgraph ryzen["ryzen — 192.168.1.150"]
+    subgraph ryzen["ryzen — 192.168.10.10"]
         subgraph gpu0["GPU 0 · RTX 5070 12GB (comparte con el escritorio)"]
             direction LR
             OLLAMA["ollama\n:11434"]
@@ -64,7 +64,7 @@ ryzen/
 └── switch-gpu1-backend.sh             ← alterna whisper-service/comfyui (GPU 1)
 ```
 
-`whisper-service` ya **no** tiene código bajo `ryzen/` — vive en `services/whisper-service/` (raíz del repo) y se construye/publica desde ahí (`make build`, `docs/05-instalacion-retaco.md` sección 5.3); este nodo solo consume la imagen de `registry.home.arpa`.
+`whisper-service` ya **no** tiene código bajo `ryzen/` — vive en `services/whisper-service/` (raíz del repo) y se construye/publica desde ahí (`make build`, `docs/05-instalacion-retaco.md` sección 5.3); este nodo solo consume la imagen de `registry.404labo.net`.
 
 Separados a propósito: se puede dejar la observabilidad del host en marcha (monitorización, gestión Docker) aunque todo el stack de GPU esté parado — útil para ahorrar energía cuando no se está usando activamente.
 
@@ -93,13 +93,13 @@ network:
     eth0:
       dhcp4: false
       addresses:
-        - 192.168.1.150/24
+        - 192.168.10.10/24
       routes:
         - to: default
-          via: 192.168.1.1
+          via: 192.168.10.1
       nameservers:
         addresses:
-          - 192.168.1.170   # pi-dns
+          - 192.168.10.2   # pi-dns
           - 1.1.1.1
 ```
 
@@ -163,7 +163,7 @@ docker compose up -d ollama open-webui whisper-service
 
 > ⚠️ `docker compose up -d` **sin indicar servicios** arranca *todo* lo definido en el fichero — incluidos `vllm` y `comfyui`, que compiten por VRAM con `ollama`/`whisper-service` respectivamente. Arrancar siempre servicios explícitos, o usar los scripts de alternancia (siguiente sección) para `vllm`/`comfyui`.
 
-> `docker compose pull` antes de cada arranque, no solo la primera vez — este stack se para/arranca a demanda (ahorro de GPU) y `ollama/ollama:latest` puede llevar semanas cacheada sin refrescar. Para `whisper-service` (`registry.home.arpa/whisper-service:latest`) hace falta además `docker login registry.home.arpa` una vez en este nodo (credenciales en Vaultwarden, "Docker Registry (registry.home.arpa)") — sin iniciar sesión, el pull falla con `unauthorized`.
+> `docker compose pull` antes de cada arranque, no solo la primera vez — este stack se para/arranca a demanda (ahorro de GPU) y `ollama/ollama:latest` puede llevar semanas cacheada sin refrescar. Para `whisper-service` (`registry.404labo.net/whisper-service:latest`) hace falta además `docker login registry.404labo.net` una vez en este nodo (credenciales en Vaultwarden, "Docker Registry (registry.404labo.net)") — sin iniciar sesión, el pull falla con `unauthorized`.
 
 ```bash
 docker compose -f docker-compose.observability.yml up -d
@@ -290,14 +290,14 @@ bash switch-gpu1-backend.sh whisper-service   # activa whisper-service, para com
 
 ## Autenticación — acceso externo con API key
 
-`ollama.home.arpa`, `vllm.home.arpa` y `comfyui.home.arpa` exigen la cabecera `X-Api-Key` (protegidos con `apikey-service`, ver `docs/06-instalacion-pi1-dns.md`) — cualquier cliente en la LAN o workflow de n8n que los llame por el nombre de host público necesita una key emitida ahí.
+`ollama.404labo.net`, `vllm.404labo.net` y `comfyui.404labo.net` exigen la cabecera `X-Api-Key` (protegidos con `apikey-service`, ver `docs/06-instalacion-pi1-dns.md`) — cualquier cliente en la LAN o workflow de n8n que los llame por el nombre de host público necesita una key emitida ahí.
 
 **Open WebUI no se ve afectado**: le llega a los tres por la red Docker interna de este nodo (`http://ollama:11434`, `http://vllm:8000`), sin pasar por nginx.
 
 ```bash
-curl -sk https://ollama.home.arpa/api/tags -H "X-Api-Key: <tu-key>"
-curl -sk https://vllm.home.arpa/v1/models -H "X-Api-Key: <tu-key>"
-curl -sk https://comfyui.home.arpa/system_stats -H "X-Api-Key: <tu-key>"
+curl -sk https://ollama.404labo.net/api/tags -H "X-Api-Key: <tu-key>"
+curl -sk https://vllm.404labo.net/v1/models -H "X-Api-Key: <tu-key>"
+curl -sk https://comfyui.404labo.net/system_stats -H "X-Api-Key: <tu-key>"
 ```
 
 ## Configurar Ollama y vLLM en Open WebUI
@@ -314,7 +314,7 @@ Tras guardar, el modelo de vLLM aparece en el selector con el nombre de `VLLM_SE
 
 ## whisper-service — detalle técnico
 
-FastAPI en `services/whisper-service/` (raíz del repo), `uv`. Imagen publicada en `registry.home.arpa/whisper-service` — build/push amd64-only (`make build`, sin `buildx` multi-plataforma: necesita CUDA, las Raspberry Pi del clúster no tienen GPU, y este servicio solo se ejecuta aquí) desde `services/whisper-service/`, nunca desde `ryzen/docker-compose.yml` (solo `image:` + `pull`). `WhisperModel` cargado una vez al arrancar (nunca por request); si falla en el `device`/`compute_type` configurados (típicamente `cuda`/`float16` sin GPU disponible), cae automáticamente a `cpu`/`int8` para no dejar el servicio sin arrancar del todo. Transcripción en `run_in_executor` (hilo aparte, no bloquea el bucle de eventos asíncrono) — importante: `faster-whisper` devuelve los segmentos como generador perezoso, así que hay que envolver tanto la llamada a `transcribe()` como el consumo del generador, no solo la primera. Decodifica el audio internamente mediante PyAV (FFmpeg estático embebido en el wheel de `av`), no con un subproceso `ffmpeg` explícito — soporta la mayoría de contenedores y códecs habituales sin conversión previa en el código. Puerto `9800` (no `8000`, el puerto por defecto de incontables servicios FastAPI/dev). Tarda ~90s en arrancar (carga del modelo en GPU) — el healthcheck tiene `start_period: 90s`.
+FastAPI en `services/whisper-service/` (raíz del repo), `uv`. Imagen publicada en `registry.404labo.net/whisper-service` — build/push amd64-only (`make build`, sin `buildx` multi-plataforma: necesita CUDA, las Raspberry Pi del clúster no tienen GPU, y este servicio solo se ejecuta aquí) desde `services/whisper-service/`, nunca desde `ryzen/docker-compose.yml` (solo `image:` + `pull`). `WhisperModel` cargado una vez al arrancar (nunca por request); si falla en el `device`/`compute_type` configurados (típicamente `cuda`/`float16` sin GPU disponible), cae automáticamente a `cpu`/`int8` para no dejar el servicio sin arrancar del todo. Transcripción en `run_in_executor` (hilo aparte, no bloquea el bucle de eventos asíncrono) — importante: `faster-whisper` devuelve los segmentos como generador perezoso, así que hay que envolver tanto la llamada a `transcribe()` como el consumo del generador, no solo la primera. Decodifica el audio internamente mediante PyAV (FFmpeg estático embebido en el wheel de `av`), no con un subproceso `ffmpeg` explícito — soporta la mayoría de contenedores y códecs habituales sin conversión previa en el código. Puerto `9800` (no `8000`, el puerto por defecto de incontables servicios FastAPI/dev). Tarda ~90s en arrancar (carga del modelo en GPU) — el healthcheck tiene `start_period: 90s`.
 
 ### Desarrollo local (tests, lint, SonarQube)
 
@@ -330,7 +330,7 @@ make lint         # ruff check
 make format       # ruff format
 make typecheck    # mypy src/
 make sonar-check  # test-cov + análisis SonarQube (docs/09-instalacion-pi3-sonarqube.md, sección 8.1)
-make build        # build (solo amd64) + push a registry.home.arpa — docs/05-instalacion-retaco.md sección 5.3
+make build        # build (solo amd64) + push a registry.404labo.net — docs/05-instalacion-retaco.md sección 5.3
 make bump-version # sube la versión en pyproject.toml (patch por defecto — PART=minor|major)
 ```
 
@@ -340,11 +340,11 @@ make bump-version # sube la versión en pyproject.toml (patch por defecto — PA
 
 | Servicio | URL interna | Comprobación |
 |---|---|---|
-| open-webui | https://openwebui.home.arpa | Interfaz web |
-| ollama | https://ollama.home.arpa (+ API key) | GET /api/tags |
-| vllm | https://vllm.home.arpa (+ API key) | GET /v1/models |
-| whisper-service | https://whisper.home.arpa (+ API key) | GET /health |
-| comfyui | https://comfyui.home.arpa (+ API key) | GET /system_stats |
+| open-webui | https://openwebui.404labo.net | Interfaz web |
+| ollama | https://ollama.404labo.net (+ API key) | GET /api/tags |
+| vllm | https://vllm.404labo.net (+ API key) | GET /v1/models |
+| whisper-service | https://whisper.404labo.net (+ API key) | GET /health |
+| comfyui | https://comfyui.404labo.net (+ API key) | GET /system_stats |
 
 ```bash
 bash /srv/homelab/shared/scripts/check-health.sh ryzen

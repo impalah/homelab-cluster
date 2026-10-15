@@ -11,7 +11,7 @@ Pensada también para usarse como referencia de estilo por un asistente de IA (C
 Un microservicio propio, en `services/<nombre>-service/`, con:
 
 - Su propio `pyproject.toml`, `uv.lock`, entorno virtual y ciclo de vida — **no** comparte dependencias ni tooling con el resto del monorepo.
-- Una imagen Docker propia, publicada en `registry.home.arpa` (nunca construida `on-the-fly` en el nodo donde se despliega — ver sección 9).
+- Una imagen Docker propia, publicada en `registry.404labo.net` (nunca construida `on-the-fly` en el nodo donde se despliega — ver sección 9).
 - Cobertura de tests obligatoria ≥ 80%, verificada tanto en local (`make test`) como en SonarQube (`make sonar-check`).
 - Documentación en un `README.md` con una estructura fija (ver sección 12).
 
@@ -23,7 +23,7 @@ No todos son servicios HTTP: `epub2pdf-service` tiene además un modo CLI. Lo qu
 
 - **Directorio y nombre del proyecto** (`services/<nombre>`, `[project].name` en `pyproject.toml`, `SERVICE_NAME` en el `Makefile`): `kebab-case`, terminado siempre en **`-service`** — `apikey-service`, `markitdown-service`, `whisper-service`, `crawl4ai-scraper-service`, `epub2pdf-service`. La única excepción histórica sería un servicio que ya tuviera un nombre de producto/librería consolidado, pero en este clúster no hay ninguno así todavía.
 - **Paquete Python** (`src/<paquete>/`, imports): `snake_case` con el mismo sufijo, en su forma con guion bajo — `apikey_service`, `markitdown_service`, `epub2pdf_service`. Es decir: `nombre-service` (proyecto) ↔ `nombre_service` (paquete). Nunca se abrevia ni se le quita el sufijo al paquete aunque el nombre del proyecto sea largo.
-- **Imagen Docker**: `homelab/<nombre>-service` en local, `registry.home.arpa/<nombre>-service` en el registry — mismo nombre que el proyecto, sin variación.
+- **Imagen Docker**: `homelab/<nombre>-service` en local, `registry.404labo.net/<nombre>-service` en el registry — mismo nombre que el proyecto, sin variación.
 
 ---
 
@@ -300,7 +300,7 @@ Todo servicio tiene estos targets, con el mismo nombre en todos (aunque el conte
 Detalles que **no** son arbitrarios:
 
 - **`-include .env` sin `export` global.** Un `export` a secas inyectaría las variables del `.env` real (contraseñas, DSN de producción...) en el entorno de `make test`, pisando los valores por defecto que los propios tests dan por hecho (`test_config.py` comprueba `Settings()` sin nada more inyectado). Cada target que sí necesita algo de `.env` (`build`, `sonar`) lo pasa **explícito** en su propio comando (`SONAR_TOKEN=$(SONAR_TOKEN) uv run pysonar`), nunca por `export` global.
-- **`REQUESTS_CA_BUNDLE` en `sonar`/`sonar-check`.** `pysonar` usa la librería `requests`, que valida TLS contra el paquete `certifi`, no contra el almacén de certificados del sistema operativo. Sin fijar esta variable a la CA interna del clúster (`/etc/ssl/certs/ca-certificates.crt` tras instalarla — `docs/15-ca-interna.md`), `https://sonarqube.home.arpa` falla con `CERTIFICATE_VERIFY_FAILED` aunque `curl` lo acepte sin avisar.
+- **`REQUESTS_CA_BUNDLE` en `sonar`/`sonar-check`.** `pysonar` usa la librería `requests`, que valida TLS contra el paquete `certifi`, no contra el almacén de certificados del sistema operativo. Sin fijar esta variable a la CA interna del clúster (`/etc/ssl/certs/ca-certificates.crt` tras instalarla — `docs/15-ca-interna.md`), `https://sonarqube.404labo.net` falla con `CERTIFICATE_VERIFY_FAILED` aunque `curl` lo acepte sin avisar.
 - **Multi-arch por defecto (`PLATFORMS ?= linux/amd64,linux/arm64`)** vía `docker buildx build --platform ... --push` — nunca `docker build` clásico para lo que se sube al registry, porque no genera manifiestos multi-plataforma. Se usa así porque varios nodos destino son Raspberry Pi (arm64) y el build normalmente se hace desde una máquina x86. Requiere, una vez por máquina de build: `docker run --privileged --rm tonistiigi/binfmt --install all` y `docker buildx create --driver docker-container --use`.
 - **Excepción amd64-only**, documentada con un comentario explícito en el propio target `build`: servicios que necesitan GPU/CUDA (`whisper-service`) solo se despliegan en `ryzen` (x86 con GPU NVIDIA) — no tiene sentido, y probablemente ni sería posible, generar una variante arm64.
 - **`uvx --from=toml-cli toml get ...` para leer la versión**, en vez de parsear `pyproject.toml` a mano — evita añadir `toml`/`tomli` como dependencia del propio proyecto solo para esto.
@@ -310,8 +310,8 @@ Detalles que **no** son arbitrarios:
 
 ## 9. Registry Docker privado y publicación de imágenes
 
-- Ningún `docker-compose.yml` de ningún nodo del clúster construye estas imágenes (`build:`) — todos usan `image: registry.home.arpa/<nombre>-service:latest` + `docker compose pull`. El build/push vive **solo** en el `Makefile` del propio servicio, ejecutado desde donde se desarrolla el código.
-- Login previo (`docker login registry.home.arpa`, credenciales en Vaultwarden — "Docker Registry (registry.home.arpa)") requerido tanto para hacer `push` (build local) como `pull` (cada nodo consumidor) — detalle completo, incluida la instalación de la CA interna dentro del propio contenedor del builder de `buildx` (no la hereda del host), en `docs/05-instalacion-retaco.md` sección 5.3.
+- Ningún `docker-compose.yml` de ningún nodo del clúster construye estas imágenes (`build:`) — todos usan `image: registry.404labo.net/<nombre>-service:latest` + `docker compose pull`. El build/push vive **solo** en el `Makefile` del propio servicio, ejecutado desde donde se desarrolla el código.
+- Login previo (`docker login registry.404labo.net`, credenciales en Vaultwarden — "Docker Registry (registry.404labo.net)") requerido tanto para hacer `push` (build local) como `pull` (cada nodo consumidor) — detalle completo, incluida la instalación de la CA interna dentro del propio contenedor del builder de `buildx` (no la hereda del host), en `docs/05-instalacion-retaco.md` sección 5.3.
 - El `Makefile` falla explícitamente (`test -n "$(REGISTRY_USER)" || ...`) si `REGISTRY_USER`/`REGISTRY_PASSWORD` no están en `.env`, en vez de intentar construir sin credenciales y fallar más tarde con un error de Docker menos claro.
 
 ---
@@ -452,4 +452,4 @@ CMD ["python3", "-m", "uvicorn", "<paquete>.main:app", "--host", "0.0.0.0", "--p
 13. `.env.example`, `.gitignore`, `sonar-project.properties` (sección 13) — cópialos de otro servicio y ajusta solo lo específico.
 14. `README.md` con la estructura fija de la sección 12.
 15. Verificación final antes de considerarlo terminado: `uv sync && uv run pytest && uv run ruff check . && uv run ruff format --check . && uv run mypy src/` — los cuatro sin ningún error ni aviso.
-16. Wiring en el clúster (fuera del propio servicio, si aplica): entrada en `docker-compose.yml` del nodo destino con `image: registry.home.arpa/<nombre>-service:latest` (nunca `build:`), registro DNS en `shared/dns/dns-records.md`, protección con `apikey-service` si el servicio no tiene autenticación propia, y actualización del documento de instalación del nodo correspondiente en `docs/`.
+16. Wiring en el clúster (fuera del propio servicio, si aplica): entrada en `docker-compose.yml` del nodo destino con `image: registry.404labo.net/<nombre>-service:latest` (nunca `build:`), registro DNS en `shared/dns/dns-records.md`, protección con `apikey-service` si el servicio no tiene autenticación propia, y actualización del documento de instalación del nodo correspondiente en `docs/`.

@@ -12,7 +12,7 @@ Para que eso funcione, el binario `infisical` tiene que existir dentro del conte
 
 ### A — CLI horneado en la imagen (`Dockerfile` propio o wrapper fino)
 
-Añadir `COPY --from=infisical/cli:latest /usr/local/bin/infisical /usr/local/bin/infisical` al `Dockerfile` de cada servicio propio, y para servicios de terceros crear una imagen derivada fina (`FROM <imagen-original>` + el mismo `COPY` + `ENTRYPOINT` reescrito) publicada en `registry.home.arpa`, construida con el mismo `docker buildx build --platform linux/amd64,linux/arm64 --push` que ya usan los microservicios propios (`docs/05-instalacion-retaco.md` sección 5.3).
+Añadir `COPY --from=infisical/cli:latest /usr/local/bin/infisical /usr/local/bin/infisical` al `Dockerfile` de cada servicio propio, y para servicios de terceros crear una imagen derivada fina (`FROM <imagen-original>` + el mismo `COPY` + `ENTRYPOINT` reescrito) publicada en `registry.404labo.net`, construida con el mismo `docker buildx build --platform linux/amd64,linux/arm64 --push` que ya usan los microservicios propios (`docs/05-instalacion-retaco.md` sección 5.3).
 
 Descartada: subir la versión del CLI de Infisical — sin haber tocado una sola línea de código de la aplicación — habría exigido reconstruir y republicar la imagen de cada servicio migrado. Para servicios de terceros habría supuesto además mantener y sincronizar un `Dockerfile` wrapper propio por cada uno, divergiendo de la imagen oficial upstream (hay que rehacer el wrapper cada vez que el proyecto original cambia su entrypoint). Rompe el flujo de actualización que ya usa el resto del clúster — `docker compose pull` + `watchtower`/`update-stack.sh`, sin reconstrucción — acoplando el ciclo de vida del CLI de Infisical al de cada aplicación.
 

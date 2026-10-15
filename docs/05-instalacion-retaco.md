@@ -1,4 +1,4 @@
-# 05 — Instalación y migración: retaco (192.168.1.174)
+# 05 — Instalación y migración: retaco (192.168.10.7)
 
 ## Rol del nodo
 
@@ -14,7 +14,7 @@ Centralizar los datos aquí deja a `ryzen` dedicado exclusivamente a cómputo co
 
 ```mermaid
 flowchart TB
-    subgraph retaco["retaco — 192.168.1.174"]
+    subgraph retaco["retaco — 192.168.10.7"]
         PG["postgres-main\n:5432\n(multi-tenant)"]
         N8N["n8n-main\n:5678"]
         QD["qdrant\n:6333 (REST) / :6334 (gRPC, loopback)"]
@@ -33,7 +33,7 @@ flowchart TB
     Nginx --> QD
 ```
 
-`postgresql.home.arpa` es un **alias DNS directo** a esta IP (no pasa por nginx — Postgres no es HTTP); `qdrant.home.arpa` y `n8n.home.arpa` sí pasan por el proxy inverso normal.
+`postgresql.404labo.net` es un **alias DNS directo** a esta IP (no pasa por nginx — Postgres no es HTTP); `qdrant.404labo.net` y `n8n.404labo.net` sí pasan por el proxy inverso normal.
 
 Este documento cubre:
 - **Instalación en vacío** (secciones 1–5): si `retaco` arranca sin datos previos.
@@ -47,7 +47,7 @@ Se conservan como referencia — el mismo patrón sirve para migrar cualquier se
 
 - Ubuntu Server 24.04 LTS (o Desktop), 64-bit x86_64
 - Sin requisitos de GPU
-- IP estática: `192.168.1.174`
+- IP estática: `192.168.10.7`
 
 ---
 
@@ -68,16 +68,16 @@ network:
     eth0:
       dhcp4: false
       addresses:
-        - 192.168.1.174/24
+        - 192.168.10.7/24
       routes:
         - to: default
-          via: 192.168.1.1
+          via: 192.168.10.1
       nameservers:
         addresses:
-          - 192.168.1.170
+          - 192.168.10.2
           - 1.1.1.1
         search:
-          - home.arpa
+          - 404labo.net
 ```
 
 ```bash
@@ -149,11 +149,11 @@ docker compose up -d
 docker compose ps
 ```
 
-**Antes** del primer arranque, o en cuanto un workflow de n8n llame a otro `*.home.arpa` (p.ej. `markitdown.home.arpa`, `ollama.home.arpa`) y falle con `unable to verify the first certificate` / `UNABLE_TO_VERIFY_LEAF_SIGNATURE`: n8n (Node.js/axios) no usa el almacén de certificados del sistema para sus propias peticiones HTTP salientes — mismo problema que `pysonar` con `REQUESTS_CA_BUNDLE` (`docs/09-instalacion-pi3-sonarqube.md`, sección 8.1), aquí resuelto con la variable nativa de Node `NODE_EXTRA_CA_CERTS`:
+**Antes** del primer arranque, o en cuanto un workflow de n8n llame a otro `*.404labo.net` (p.ej. `markitdown.404labo.net`, `ollama.404labo.net`) y falle con `unable to verify the first certificate` / `UNABLE_TO_VERIFY_LEAF_SIGNATURE`: n8n (Node.js/axios) no usa el almacén de certificados del sistema para sus propias peticiones HTTP salientes — mismo problema que `pysonar` con `REQUESTS_CA_BUNDLE` (`docs/09-instalacion-pi3-sonarqube.md`, sección 8.1), aquí resuelto con la variable nativa de Node `NODE_EXTRA_CA_CERTS`:
 
 ```bash
 mkdir -p /srv/homelab/retaco/n8n/ca
-curl -s http://192.168.1.170/ca.crt -o /srv/homelab/retaco/n8n/ca/homelab-ca.crt
+curl -s http://192.168.10.2/ca.crt -o /srv/homelab/retaco/n8n/ca/homelab-ca.crt
 docker compose up -d n8n-main   # recrea el contenedor con el volumen/env nuevos
 ```
 
@@ -167,7 +167,7 @@ docker compose up -d n8n-main   # recrea el contenedor con el volumen/env nuevos
 bash /srv/homelab/shared/scripts/create-postgres-db.sh postgres-main dbadmin <nueva-db> <nuevo-usuario>
 ```
 
-Conectar desde otro nodo: `postgresql://<usuario>:<password>@192.168.1.174:5432/<db>` — la conexión entre nodos siempre se hace por IP, no por nombre de contenedor.
+Conectar desde otro nodo: `postgresql://<usuario>:<password>@192.168.10.7:5432/<db>` — la conexión entre nodos siempre se hace por IP, no por nombre de contenedor.
 
 #### Rol de monitorización para postgres-exporter
 
@@ -189,7 +189,7 @@ EOSQL
 
 `GRANT CONNECT` hay que repetirlo por cada base de datos de aplicación que exista en el servidor (nueva base con `create-postgres-db.sh` → añadir aquí también su `GRANT CONNECT`, si no, esa base concreta seguirá dando `permission denied` en las métricas de tamaño, aunque el resto funcione). `pg_monitor` da acceso de solo lectura a estadísticas y funciones de monitorización (WAL, `pg_stat_*`) — no a los datos de las tablas de ninguna aplicación.
 
-`pi-obs/.env` → `POSTGRES_EXPORTER_DSN=postgresql://postgres_exporter:<password>@192.168.1.174:5432/postgres?sslmode=disable`, después `docker compose up -d postgres-exporter` en `pi-obs`.
+`pi-obs/.env` → `POSTGRES_EXPORTER_DSN=postgresql://postgres_exporter:<password>@192.168.10.7:5432/postgres?sslmode=disable`, después `docker compose up -d postgres-exporter` en `pi-obs`.
 
 ### 5.3 registry — registro Docker privado
 
@@ -217,13 +217,13 @@ echo "Password: ${REG_PASS}"   # guardar en Vaultwarden — no queda en ningún 
 docker compose up -d registry
 ```
 
-No va protegido con `apikey-service` en nginx (`registry.home.arpa`) — los clientes Docker (`docker login`/`push`/`pull`) hablan Basic Auth nativo contra el propio registry, no mandan la cabecera `X-Api-Key`; un `auth_request` ahí rompería `docker login`. La autenticación la resuelve el propio registry.
+No va protegido con `apikey-service` en nginx (`registry.404labo.net`) — los clientes Docker (`docker login`/`push`/`pull`) hablan Basic Auth nativo contra el propio registry, no mandan la cabecera `X-Api-Key`; un `auth_request` ahí rompería `docker login`. La autenticación la resuelve el propio registry.
 
-**Build y push van en el Makefile de cada servicio, no a mano** — `services/<nombre>/` (raíz del repo), `make build`. Lee la versión de `pyproject.toml`, hace login con `REGISTRY_USER`/`REGISTRY_PASSWORD` (de `.env`) y sube `:<versión>` + `:latest`. Ningún `docker-compose.yml` de ningún nodo construye estas imágenes — todos usan `image: registry.home.arpa/<nombre>:latest` y hacen `pull`.
+**Build y push van en el Makefile de cada servicio, no a mano** — `services/<nombre>/` (raíz del repo), `make build`. Lee la versión de `pyproject.toml`, hace login con `REGISTRY_USER`/`REGISTRY_PASSWORD` (de `.env`) y sube `:<versión>` + `:latest`. Ningún `docker-compose.yml` de ningún nodo construye estas imágenes — todos usan `image: registry.404labo.net/<nombre>:latest` y hacen `pull`.
 
 ```bash
 cd services/markitdown-service
-cp .env.example .env   # REGISTRY_USER/REGISTRY_PASSWORD desde Vaultwarden ("Docker Registry (registry.home.arpa)")
+cp .env.example .env   # REGISTRY_USER/REGISTRY_PASSWORD desde Vaultwarden ("Docker Registry (registry.404labo.net)")
 make build
 ```
 
@@ -240,10 +240,10 @@ docker run --privileged --rm tonistiigi/binfmt --install all
 docker buildx create --driver docker-container --use
 ```
 
-⚠️ **El builder `docker-container` se ejecuta en un contenedor BuildKit aparte, con su propio almacén de certificados — NO hereda la CA del host** aunque el host ya la tenga instalada (`update-ca-certificates`). El push a `registry.home.arpa` falla con `x509: certificate signed by unknown authority` hasta meter la CA dentro de ese contenedor (es Alpine, sin `update-ca-certificates`, hay que anexar el PEM a mano):
+⚠️ **El builder `docker-container` se ejecuta en un contenedor BuildKit aparte, con su propio almacén de certificados — NO hereda la CA del host** aunque el host ya la tenga instalada (`update-ca-certificates`). El push a `registry.404labo.net` falla con `x509: certificate signed by unknown authority` hasta meter la CA dentro de ese contenedor (es Alpine, sin `update-ca-certificates`, hay que anexar el PEM a mano):
 
 ```bash
-curl -s http://192.168.1.170/ca.crt -o /tmp/homelab-ca.crt
+curl -s http://192.168.10.2/ca.crt -o /tmp/homelab-ca.crt
 docker cp /tmp/homelab-ca.crt buildx_buildkit_<nombre-del-builder>0:/tmp/homelab-ca.crt
 docker exec buildx_buildkit_<nombre-del-builder>0 sh -c "cat /tmp/homelab-ca.crt >> /etc/ssl/certs/ca-certificates.crt"
 docker restart buildx_buildkit_<nombre-del-builder>0   # el almacén de certificados se lee una vez, hace falta reiniciar
@@ -257,13 +257,13 @@ No basta con que `nginx` tenga el certificado — `dockerd` valida TLS contra el
 
 ```bash
 # 1. CA interna a nivel de sistema + reiniciar Docker (dockerd solo lee el almacén al arrancar)
-curl -s http://192.168.1.170/ca.crt -o /tmp/homelab-ca.crt
+curl -s http://192.168.10.2/ca.crt -o /tmp/homelab-ca.crt
 sudo cp /tmp/homelab-ca.crt /usr/local/share/ca-certificates/homelab-cluster-ca.crt
 sudo update-ca-certificates
 sudo systemctl restart docker
 
 # 2. Inicio de sesión (una vez, persiste en ~/.docker/config.json del usuario que ejecute docker compose)
-docker login registry.home.arpa
+docker login registry.404labo.net
 ```
 
 ⚠️ **`pi-dns` y `pi-utils` no tenían la CA instalada a nivel de sistema** pese a ser nodos del clúster (solo la tenían `ryzen`/máquinas de desarrollo) — hubo que instalarla ahí para poder hacer `pull`. Si se añade un nodo nuevo que vaya a consumir imágenes del registry, no dar esto por hecho.
@@ -297,7 +297,7 @@ Ambos servicios necesitan una carpeta de entrada y otra de salida — montadas d
 ```bash
 sudo apt-get install -y nfs-common
 sudo mkdir -p /mnt/nfs-data
-echo "ketekasko.home.arpa:/volume1/nfs-data /mnt/nfs-data nfs vers=3,defaults,_netdev 0 0" | sudo tee -a /etc/fstab
+echo "ketekasko.404labo.net:/volume1/nfs-data /mnt/nfs-data nfs vers=3,defaults,_netdev 0 0" | sudo tee -a /etc/fstab
 sudo mount -a
 
 sudo mkdir -p /mnt/nfs-data/epub2pdf/input /mnt/nfs-data/epub2pdf/output \
@@ -317,7 +317,7 @@ docker run --rm -v /mnt/nfs-data/epub2pdf/input:/data alpine \
 
 ```yaml
 epub2pdf-service:
-  image: registry.home.arpa/epub2pdf-service:latest
+  image: registry.404labo.net/epub2pdf-service:latest
   environment:
     EPUB2PDF_LOG_LEVEL: ${EPUB2PDF_LOG_LEVEL:-INFO}
     EPUB2PDF_CONVERSION_TIMEOUT_SECONDS: ${EPUB2PDF_CONVERSION_TIMEOUT_SECONDS:-300}
@@ -328,7 +328,7 @@ epub2pdf-service:
     - "8003:8003"
 
 pdf2chunks-service:
-  image: registry.home.arpa/pdf2chunks-service:latest
+  image: registry.404labo.net/pdf2chunks-service:latest
   environment:
     PDF2CHUNKS_LOG_LEVEL: ${PDF2CHUNKS_LOG_LEVEL:-INFO}
     # ... resto de PDF2CHUNKS_* opcionales, ver retaco/.env.example
@@ -342,18 +342,18 @@ pdf2chunks-service:
 `/data/input` montado `:ro` — ambos servicios solo leen de ahí, nunca escriben. Puertos publicados a la LAN por el mismo motivo que qdrant/n8n-main/registry: nginx (`pi-dns`) les hace proxy cross-host. Gestionable con `toggle-direct-access.sh` (`docs/17-firewall-acceso-directo.md`).
 
 ```bash
-docker login registry.home.arpa   # una sola vez, ver requisitos en 5.3
+docker login registry.404labo.net   # una sola vez, ver requisitos en 5.3
 docker compose pull epub2pdf-service pdf2chunks-service
 docker compose up -d epub2pdf-service pdf2chunks-service
 ```
 
-#### DNS y proxy — `epub2pdf.home.arpa` / `pdf2chunks.home.arpa`
+#### DNS y proxy — `epub2pdf.404labo.net` / `pdf2chunks.404labo.net`
 
-Ambos protegidos con `apikey-service`, mismo criterio que `markitdown.home.arpa` (`docs/06-instalacion-pi1-dns.md`) — sin API key válida, nginx devuelve 401 antes de llegar al backend real.
+Ambos protegidos con `apikey-service`, mismo criterio que `markitdown.404labo.net` (`docs/06-instalacion-pi1-dns.md`) — sin API key válida, nginx devuelve 401 antes de llegar al backend real.
 
 ```bash
-curl -sk https://epub2pdf.home.arpa/health -H "X-Api-Key: <tu-key>"
-curl -sk https://pdf2chunks.home.arpa/health -H "X-Api-Key: <tu-key>"
+curl -sk https://epub2pdf.404labo.net/health -H "X-Api-Key: <tu-key>"
+curl -sk https://pdf2chunks.404labo.net/health -H "X-Api-Key: <tu-key>"
 ```
 
 ---
@@ -378,7 +378,7 @@ docker exec postgres-main pg_dumpall -U "${POSTGRES_ADMIN_USER}" \
 
 ```bash
 scp /srv/homelab/backups/ryzen/postgres-migracion-retaco.sql.gz \
-  <usuario>@192.168.1.174:/srv/homelab/backups/retaco/
+  <usuario>@192.168.10.7:/srv/homelab/backups/retaco/
 ```
 
 ```bash
@@ -405,12 +405,12 @@ ssh retaco "cd /srv/homelab/retaco && docker compose up -d qdrant"
 
 ```bash
 source /srv/homelab/retaco/.env
-curl -s http://192.168.1.174:6333/collections -H "api-key: ${QDRANT_API_KEY}" | jq .
+curl -s http://192.168.10.7:6333/collections -H "api-key: ${QDRANT_API_KEY}" | jq .
 ```
 
 ### 6.3–6.9 Resto de la migración
 
-Quedan, además, los siguientes pasos: verificar el stack completo; actualizar `ryzen` (`--remove-orphans`, ya sin `postgres-main`/`qdrant`); actualizar `pi-obs` (`POSTGRES_EXPORTER_DSN`); actualizar `pi-dns` (nginx apuntando a `192.168.1.174`); registrar los cambios en el DNS; revisar las credenciales y las URL en los workflows de n8n; y hacer una verificación final con `check-health.sh` en `retaco`, `ryzen` y `pi-obs`.
+Quedan, además, los siguientes pasos: verificar el stack completo; actualizar `ryzen` (`--remove-orphans`, ya sin `postgres-main`/`qdrant`); actualizar `pi-obs` (`POSTGRES_EXPORTER_DSN`); actualizar `pi-dns` (nginx apuntando a `192.168.10.7`); registrar los cambios en el DNS; revisar las credenciales y las URL en los workflows de n8n; y hacer una verificación final con `check-health.sh` en `retaco`, `ryzen` y `pi-obs`.
 
 ### 6.10 Limpieza (solo tras confirmar, con margen de días)
 
@@ -424,20 +424,20 @@ ssh ryzen "rm -rf /srv/homelab/ryzen/postgres /srv/homelab/ryzen/qdrant"
 
 | Servicio | URL interna | Comprobación |
 |---|---|---|
-| qdrant | https://qdrant.home.arpa | GET /collections |
-| postgres-main | `postgresql.home.arpa:5432` (no HTTP) | `pg_isready` vía `check-health.sh` |
-| n8n-main | https://n8n.home.arpa | GET /healthz |
-| registry | https://registry.home.arpa | GET /v2/ (401 sin credenciales = vivo) |
-| epub2pdf-service | https://epub2pdf.home.arpa | GET /health (protegido con apikey-service) |
-| pdf2chunks-service | https://pdf2chunks.home.arpa | GET /health (protegido con apikey-service) |
+| qdrant | https://qdrant.404labo.net | GET /collections |
+| postgres-main | `postgresql.404labo.net:5432` (no HTTP) | `pg_isready` vía `check-health.sh` |
+| n8n-main | https://n8n.404labo.net | GET /healthz |
+| registry | https://registry.404labo.net | GET /v2/ (401 sin credenciales = vivo) |
+| epub2pdf-service | https://epub2pdf.404labo.net | GET /health (protegido con apikey-service) |
+| pdf2chunks-service | https://pdf2chunks.404labo.net | GET /health (protegido con apikey-service) |
 
 ```bash
-curl -s http://192.168.1.174:6333/collections | jq .
-curl -sk https://n8n.home.arpa/healthz
-curl -sk -o /dev/null -w "%{http_code}\n" https://registry.home.arpa/v2/
+curl -s http://192.168.10.7:6333/collections | jq .
+curl -sk https://n8n.404labo.net/healthz
+curl -sk -o /dev/null -w "%{http_code}\n" https://registry.404labo.net/v2/
 ```
 
-`postgresql.home.arpa` es alias DNS directo, sin pasar por `pi-dns`/nginx: `postgresql://n8n:<password>@postgresql.home.arpa:5432/n8n`.
+`postgresql.404labo.net` es alias DNS directo, sin pasar por `pi-dns`/nginx: `postgresql://n8n:<password>@postgresql.404labo.net:5432/n8n`.
 
 ## 8. Actualización del stack
 
@@ -468,11 +468,11 @@ ssh pi-sonar "cd /srv/homelab/pi-sonar && docker compose stop sonarqube"
 ssh pi-sonar "bash /srv/homelab/shared/scripts/backup-postgres.sh pi-sonar sonarqube-db sonarqube"
 ```
 
-Copiar el volcado a `retaco` y restaurar; desplegar `pi-sonar/docker-compose.yml` actualizado (sin `sonarqube-db`, `SONAR_JDBC_URL` a `postgresql.home.arpa`).
+Copiar el volcado a `retaco` y restaurar; desplegar `pi-sonar/docker-compose.yml` actualizado (sin `sonarqube-db`, `SONAR_JDBC_URL` a `postgresql.404labo.net`).
 
 ### ⚠️ Comprobación de DNS antes de dar por buena la migración
 
-SonarQube resuelve `postgresql.home.arpa` **al arrancar** — si `systemd-resolved` de `pi-sonar` está atascado en el DNS secundario, falla con `UnknownHostException` y entra en bucle de reinicio. Ver `docs/13-troubleshooting.md`.
+SonarQube resuelve `postgresql.404labo.net` **al arrancar** — si `systemd-resolved` de `pi-sonar` está atascado en el DNS secundario, falla con `UnknownHostException` y entra en bucle de reinicio. Ver `docs/13-troubleshooting.md`.
 
 ```bash
 ssh pi-sonar "resolvectl status eth0 | grep -i 'current dns'"
@@ -500,7 +500,7 @@ cd /srv/homelab/retaco
 docker compose up -d n8n-main
 ```
 
-Tras esto, hay que revisar cualquier workflow que llamara a Ollama o a whisper-service por nombre de contenedor Docker — ya no comparten red, así que hay que usar el nombre de host público (`https://ollama.home.arpa`, `https://whisper.home.arpa`).
+Tras esto, hay que revisar cualquier workflow que llamara a Ollama o a whisper-service por nombre de contenedor Docker — ya no comparten red, así que hay que usar el nombre de host público (`https://ollama.404labo.net`, `https://whisper.404labo.net`).
 
 ## 12. Migración desde ryzen — open-webui (histórica)
 
@@ -524,6 +524,6 @@ cd /srv/homelab/retaco
 docker compose up -d open-webui
 ```
 
-Después, repuntar `openwebui.home.arpa` en `pi-dns/nginx/conf/nginx.conf` (**ruta real en el host**, no `pi-dns/config/nginx/` — ver aviso en `docs/23-bifrost-gateway-llm.md`) de `192.168.1.150:8080` a `192.168.1.174:8080`, recargar nginx, y solo entonces retirar el servicio de `ryzen/docker-compose.yml` (los datos originales se dejan en `ryzen` como backup, no se borran).
+Después, repuntar `openwebui.404labo.net` en `pi-dns/nginx/conf/nginx.conf` (**ruta real en el host**, no `pi-dns/config/nginx/` — ver aviso en `docs/23-bifrost-gateway-llm.md`) de `192.168.10.10:8080` a `192.168.10.7:8080`, recargar nginx, y solo entonces retirar el servicio de `ryzen/docker-compose.yml` (los datos originales se dejan en `ryzen` como backup, no se borran).
 
 > Este `webui.db`/`vector_db` migrados quedaron sin usarse poco después: se decidió pasar `open-webui` a Postgres (`DATABASE_URL`) y Qdrant (`VECTOR_DB`) centralizados en vez de SQLite/ChromaDB locales — ver `docs/23-bifrost-gateway-llm.md`, sección "Base de datos centralizada". La cuenta migrada aquí no sobrevivió a ese cambio; hubo que registrarse de nuevo.

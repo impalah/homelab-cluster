@@ -1,12 +1,14 @@
-# 10 — Instalación y configuración: pi-utils (192.168.1.173)
+# 10 — Instalación y configuración: pi-utils (192.168.10.3)
+
+> ⚠️ **Retirada 2026-10-08 — documento histórico.** Esta Raspberry Pi ya no es miembro del Swarm ni aloja servicios: los servicios de `pi-utils` corren hoy como stacks Swarm repartidos entre `pinchi`/`retaco`/`miugarita`. Se conserva como registro de cómo se instaló; para el estado actual, `docs/31-docker-swarm.md` y `README.md`.
 
 ## Rol del nodo
 
 `pi-utils` agrupa servicios utilitarios, de productividad y de gestión del propio clúster:
 
 - **rsshub** — Agregador RSS/Atom universal.
-- **markitdown-service** — API REST de conversión de documentos a Markdown (FastAPI + `uv`). Imagen publicada en `registry.home.arpa` (código en `services/markitdown-service/`, raíz del repo — no se construye en este nodo). Protegido con `apikey-service`.
-- **crawl4ai-scraper-service** — API REST de scraping y limpieza de contenido web a Markdown (FastAPI + Crawl4AI + Playwright/Chromium). Imagen publicada en `registry.home.arpa` (código en `services/crawl4ai-scraper-service/`, raíz del repo — no se construye en este nodo). Protegido con `apikey-service`, expuesto como `crawl4ai.scraper.home.arpa` (sub-subdominio a propósito).
+- **markitdown-service** — API REST de conversión de documentos a Markdown (FastAPI + `uv`). Imagen publicada en `registry.404labo.net` (código en `services/markitdown-service/`, raíz del repo — no se construye en este nodo). Protegido con `apikey-service`.
+- **crawl4ai-scraper-service** — API REST de scraping y limpieza de contenido web a Markdown (FastAPI + Crawl4AI + Playwright/Chromium). Imagen publicada en `registry.404labo.net` (código en `services/crawl4ai-scraper-service/`, raíz del repo — no se construye en este nodo). Protegido con `apikey-service`, expuesto como `crawl4ai.scraper.404labo.net` (sub-subdominio a propósito).
 - **n8n-aux** — Instancia secundaria de n8n para flujos de utilidades y notificaciones.
 - **portainer** (servidor) — Panel web para gestionar Docker de **todo** el clúster sin terminal.
 - **vaultwarden** — Gestor de contraseñas (compatible Bitwarden) del propio clúster.
@@ -17,7 +19,7 @@
 
 ```mermaid
 flowchart TB
-    subgraph piutils["pi-utils — 192.168.1.173"]
+    subgraph piutils["pi-utils — 192.168.10.3"]
         RSS["rsshub\n:1200"]
         MD["markitdown-service\n:8001\n(API key)"]
         CRAWL["crawl4ai-scraper-service\n:8002→8000\n(API key)"]
@@ -56,13 +58,13 @@ network:
     eth0:
       dhcp4: false
       addresses:
-        - 192.168.1.173/24
+        - 192.168.10.3/24
       routes:
         - to: default
-          via: 192.168.1.1
+          via: 192.168.10.1
       nameservers:
         addresses:
-          - 192.168.1.170   # pi-dns
+          - 192.168.10.2   # pi-dns
           - 1.1.1.1
 ```
 
@@ -86,19 +88,19 @@ Crea `rsshub/data`, `n8n-aux/data`, `markitdown/cache`, `portainer/data`, `vault
 
 ## 4. Inicio de sesión en el registry privado (markitdown-service, crawl4ai-scraper-service)
 
-Ni `markitdown-service` ni `crawl4ai-scraper-service` se construyen en este nodo — el `docker-compose.yml` solo tiene `image: registry.home.arpa/<nombre>:latest` (`build:` no aparece en ninguno de los dos). El código y el build/push viven en `services/markitdown-service/` y `services/crawl4ai-scraper-service/` (raíz del repo, `make build` en cada uno) — ver `docs/05-instalacion-retaco.md` sección 5.3.
+Ni `markitdown-service` ni `crawl4ai-scraper-service` se construyen en este nodo — el `docker-compose.yml` solo tiene `image: registry.404labo.net/<nombre>:latest` (`build:` no aparece en ninguno de los dos). El código y el build/push viven en `services/markitdown-service/` y `services/crawl4ai-scraper-service/` (raíz del repo, `make build` en cada uno) — ver `docs/05-instalacion-retaco.md` sección 5.3.
 
 Para que `docker compose pull` funcione en este nodo, una sola vez:
 
 ```bash
 # 1. CA interna a nivel de sistema (dockerd valida contra el almacén del SO, no el de nginx)
-curl -s http://192.168.1.170/ca.crt -o /tmp/homelab-ca.crt
+curl -s http://192.168.10.2/ca.crt -o /tmp/homelab-ca.crt
 sudo cp /tmp/homelab-ca.crt /usr/local/share/ca-certificates/homelab-cluster-ca.crt
 sudo update-ca-certificates
 sudo systemctl restart docker   # dockerd solo lee el almacén de certs al arrancar
 
-# 2. Inicio de sesión (credenciales en Vaultwarden: "Docker Registry (registry.home.arpa)")
-docker login registry.home.arpa
+# 2. Inicio de sesión (credenciales en Vaultwarden: "Docker Registry (registry.404labo.net)")
+docker login registry.404labo.net
 ```
 
 Ambos se construyen multi-arch (`linux/amd64,linux/arm64`) porque esta Pi es arm64 — detalle del build en `docs/05-instalacion-retaco.md` sección 5.3.
@@ -140,15 +142,15 @@ openssl rand -base64 48  # VAULTWARDEN_ADMIN_TOKEN
 Endpoints: `GET /health`, `POST /convert` (multipart, campo `file`) — PDF, DOCX, XLSX, PPTX, HTML, CSV, JSON, XML, imágenes, audio, ZIP.
 
 ```bash
-curl -sk https://markitdown.home.arpa/health -H "X-Api-Key: <tu-key>"
-curl -sk -X POST https://markitdown.home.arpa/convert -H "X-Api-Key: <tu-key>" \
+curl -sk https://markitdown.404labo.net/health -H "X-Api-Key: <tu-key>"
+curl -sk -X POST https://markitdown.404labo.net/convert -H "X-Api-Key: <tu-key>" \
   -F "file=@/tmp/test.pdf" -H "Accept: application/json"
 ```
 
 Protegido con `apikey-service` (`docs/06-instalacion-pi1-dns.md`) — cualquier llamada externa, incluidas las de un workflow de n8n, necesita la cabecera `X-Api-Key`. Para llamarlo desde un workflow de n8n:
 
 ```
-POST https://markitdown.home.arpa/convert
+POST https://markitdown.404labo.net/convert
 Headers: X-Api-Key: <key>
 Content-Type: multipart/form-data
 Body: file=<binario>
@@ -168,7 +170,7 @@ make lint         # ruff check
 make format       # ruff format
 make typecheck    # mypy src/
 make sonar-check  # test-cov + análisis SonarQube (docs/09-instalacion-pi3-sonarqube.md, sección 8.1)
-make build        # multi-arch (amd64+arm64) build + push a registry.home.arpa — docs/05-instalacion-retaco.md sección 5.3
+make build        # multi-arch (amd64+arm64) build + push a registry.404labo.net — docs/05-instalacion-retaco.md sección 5.3
 make bump-version # sube la versión en pyproject.toml (patch por defecto — PART=minor|major)
 ```
 
@@ -181,15 +183,15 @@ make bump-version # sube la versión en pyproject.toml (patch por defecto — PA
 Endpoints: `GET /health`, `POST /scrape` (JSON, campo `url`) — renderiza la página con Playwright/Chromium, limpia el boilerplate y devuelve markdown listo para RAG/LLM.
 
 ```bash
-curl -sk https://crawl4ai.scraper.home.arpa/health -H "X-Api-Key: <tu-key>"
-curl -sk -X POST https://crawl4ai.scraper.home.arpa/scrape -H "X-Api-Key: <tu-key>" \
+curl -sk https://crawl4ai.scraper.404labo.net/health -H "X-Api-Key: <tu-key>"
+curl -sk -X POST https://crawl4ai.scraper.404labo.net/scrape -H "X-Api-Key: <tu-key>" \
   -H "Content-Type: application/json" -d '{"url": "https://example.com"}'
 ```
 
 Protegido con `apikey-service` (`docs/06-instalacion-pi1-dns.md`) — mismo mecanismo que `markitdown-service`, cualquier llamada externa (incluidas las de un workflow de n8n) necesita `X-Api-Key`. Para llamarlo desde un workflow de n8n:
 
 ```
-POST https://crawl4ai.scraper.home.arpa/scrape
+POST https://crawl4ai.scraper.404labo.net/scrape
 Headers: X-Api-Key: <key>
 Content-Type: application/json
 Body: {"url": "https://..."}
@@ -200,7 +202,7 @@ Body: {"url": "https://..."}
 Desde la versión `0.1.2`, `/scrape` acepta un campo opcional `params` para sobreescribir la configuración del `.env` **solo para esa petición** (`stealth_mode`, `undetected_browser`, `magic_mode`, `wait_until`, `page_timeout_ms`, `word_count_threshold`, `max_retries`):
 
 ```bash
-curl -sk -X POST https://crawl4ai.scraper.home.arpa/scrape -H "X-Api-Key: <tu-key>" \
+curl -sk -X POST https://crawl4ai.scraper.404labo.net/scrape -H "X-Api-Key: <tu-key>" \
   -H "Content-Type: application/json" \
   -d '{"url": "https://example.com", "params": {"stealth_mode": true, "wait_until": "networkidle"}}'
 ```
@@ -209,7 +211,7 @@ curl -sk -X POST https://crawl4ai.scraper.home.arpa/scrape -H "X-Api-Key: <tu-ke
 
 ### Sub-subdominio a propósito
 
-`crawl4ai.scraper.home.arpa`, no `crawl4ai-scraper.home.arpa` — decisión explícita del propio diseño, no un error de naming. Pi-hole y nginx tratan `server_name`/registros DNS como cadenas de texto, un nivel adicional de subdominio no supone ninguna dificultad técnica.
+`crawl4ai.scraper.404labo.net`, no `crawl4ai-scraper.404labo.net` — decisión explícita del propio diseño, no un error de naming. Pi-hole y nginx tratan `server_name`/registros DNS como cadenas de texto, un nivel adicional de subdominio no supone ninguna dificultad técnica.
 
 ### Anti-bot activado en este nodo
 
@@ -217,7 +219,7 @@ A diferencia del valor por defecto del propio servicio (`false`), este despliegu
 
 ### `/scrape` puede tardar — timeout de nginx ajustado
 
-`SCRAPE_TIMEOUT_SECONDS` (60s por defecto) puede acercarse al timeout por defecto de nginx (`proxy_read_timeout`, también 60s) — el `server{}` de `crawl4ai.scraper.home.arpa` en `nginx.conf` sube este valor a 90s explícitamente, solo para este host.
+`SCRAPE_TIMEOUT_SECONDS` (60s por defecto) puede acercarse al timeout por defecto de nginx (`proxy_read_timeout`, también 60s) — el `server{}` de `crawl4ai.scraper.404labo.net` en `nginx.conf` sube este valor a 90s explícitamente, solo para este host.
 
 ### ⚠️ El `Dockerfile` necesita instalar Chromium dos veces (Playwright *y* patchright)
 
@@ -251,7 +253,7 @@ make lint         # ruff check
 make format       # ruff format
 make typecheck    # mypy src/
 make sonar-check  # test-cov + análisis SonarQube (docs/09-instalacion-pi3-sonarqube.md, sección 8.1)
-make build        # multi-arch (amd64+arm64) build + push a registry.home.arpa — docs/05-instalacion-retaco.md sección 5.3
+make build        # multi-arch (amd64+arm64) build + push a registry.404labo.net — docs/05-instalacion-retaco.md sección 5.3
 make bump-version # sube la versión en pyproject.toml (patch por defecto — PART=minor|major)
 ```
 
@@ -311,14 +313,14 @@ La interfaz pide fijar la contraseña de admin **dentro de los primeros 5 minuto
 O por API:
 
 ```bash
-JWT=$(curl -sk -X POST https://portainer.home.arpa/api/auth \
+JWT=$(curl -sk -X POST https://portainer.404labo.net/api/auth \
   -H "Content-Type: application/json" \
   -d '{"Username":"admin","Password":"<contraseña admin>"}' | jq -r .jwt)
 
-curl -sk -X POST https://portainer.home.arpa/api/endpoints \
+curl -sk -X POST https://portainer.404labo.net/api/endpoints \
   -H "Authorization: Bearer ${JWT}" \
   -F "Name=ryzen" -F "EndpointCreationType=2" \
-  -F "URL=tcp://192.168.1.150:9001" \
+  -F "URL=tcp://192.168.10.10:9001" \
   -F "TLS=true" -F "TLSSkipVerify=true" -F "TLSSkipClientVerify=true"
 ```
 
@@ -334,7 +336,7 @@ curl -sk -X POST https://portainer.home.arpa/api/endpoints \
 ### Notas de seguridad
 
 - Contraseña de admin generada aleatoriamente en el primer arranque — cambiarla desde **Settings → Users** si se va a compartir el acceso.
-- El agente monta `/var/run/docker.sock` — control total sobre Docker en ese host, equivalente a root. Coherente con el resto del clúster (acceso ya requiere estar en la LAN), pero relevante si `portainer.home.arpa` se expusiera fuera de casa algún día.
+- El agente monta `/var/run/docker.sock` — control total sobre Docker en ese host, equivalente a root. Coherente con el resto del clúster (acceso ya requiere estar en la LAN), pero relevante si `portainer.404labo.net` se expusiera fuera de casa algún día.
 
 ---
 
@@ -350,7 +352,7 @@ vaultwarden:
   container_name: vaultwarden
   restart: unless-stopped
   environment:
-    DOMAIN: https://vaultwarden.home.arpa
+    DOMAIN: https://vaultwarden.404labo.net
     SIGNUPS_ALLOWED: ${VAULTWARDEN_SIGNUPS_ALLOWED:-false}
     ADMIN_TOKEN: ${VAULTWARDEN_ADMIN_TOKEN}
     WEBSOCKET_ENABLED: "true"
@@ -367,13 +369,13 @@ vaultwarden:
 
 `SIGNUPS_ALLOWED=true` solo para este paso:
 
-1. `https://vaultwarden.home.arpa` → **Create Account** → email + contraseña maestra. **No se puede recuperar si se pierde** (ni desde `/admin` — Vaultwarden nunca la conoce, solo un hash derivado).
+1. `https://vaultwarden.404labo.net` → **Create Account** → email + contraseña maestra. **No se puede recuperar si se pierde** (ni desde `/admin` — Vaultwarden nunca la conoce, solo un hash derivado).
 2. Activar **2FA** (TOTP) — `Settings → Security → Two-step Login`.
 
 Desactivar registros justo después:
 
 ```bash
-ssh u-utils@192.168.1.173
+ssh admin@192.168.10.3
 nano /srv/homelab/pi-utils/.env    # VAULTWARDEN_SIGNUPS_ALLOWED=false
 cd /srv/homelab/pi-utils && docker compose up -d vaultwarden
 ```
@@ -382,19 +384,19 @@ A partir de aquí, cuentas nuevas solo por invitación desde una Organización, 
 
 ### Panel de administración
 
-`https://vaultwarden.home.arpa/admin`, autenticado con `VAULTWARDEN_ADMIN_TOKEN` (no la contraseña maestra) — gestión de usuarios, diagnóstico del servidor, configuración en caliente.
+`https://vaultwarden.404labo.net/admin`, autenticado con `VAULTWARDEN_ADMIN_TOKEN` (no la contraseña maestra) — gestión de usuarios, diagnóstico del servidor, configuración en caliente.
 
 **(Opcional) Hash Argon2 del token de admin** — más seguro que texto plano, requiere terminal interactiva:
 
 ```bash
-ssh u-utils@192.168.1.173
+ssh admin@192.168.10.3
 docker exec -it vaultwarden /vaultwarden hash --preset owasp
 # → $argon2id$... — pegar como VAULTWARDEN_ADMIN_TOKEN en .env, Vaultwarden detecta el formato solo
 ```
 
 ### Conectar dispositivos
 
-**Settings → Self-hosted environment** en cualquier app oficial de Bitwarden → Server URL `https://vaultwarden.home.arpa` → inicio de sesión normal. CLI: `bw config server https://vaultwarden.home.arpa`.
+**Settings → Self-hosted environment** en cualquier app oficial de Bitwarden → Server URL `https://vaultwarden.404labo.net` → inicio de sesión normal. CLI: `bw config server https://vaultwarden.404labo.net`.
 
 ### Copia de seguridad y restauración
 
@@ -415,25 +417,25 @@ Cron diario recomendado (ver `docs/12-backups-y-restore.md`) y, dado lo crítico
 ## Verificación de servicios
 
 ```bash
-curl -s http://192.168.1.173:8001/health          # markitdown-service (directo, sin key)
-curl -s http://192.168.1.173:8002/health          # crawl4ai-scraper-service (directo, sin key)
-curl -s http://192.168.1.173:1200/                 # rsshub
-curl -s http://192.168.1.173:5679/healthz          # n8n-aux
-curl -sk https://vaultwarden.home.arpa/alive       # timestamp ISO 8601
+curl -s http://192.168.10.3:8001/health          # markitdown-service (directo, sin key)
+curl -s http://192.168.10.3:8002/health          # crawl4ai-scraper-service (directo, sin key)
+curl -s http://192.168.10.3:1200/                 # rsshub
+curl -s http://192.168.10.3:5679/healthz          # n8n-aux
+curl -sk https://vaultwarden.404labo.net/alive       # timestamp ISO 8601
 ```
 
 | Servicio | Puerto host | URL externa |
 |---|---|---|
-| rsshub | 1200 | https://rsshub.home.arpa |
-| markitdown-service | 8001 | https://markitdown.home.arpa (+ API key) |
-| crawl4ai-scraper-service | 8002→8000 | https://crawl4ai.scraper.home.arpa (+ API key) |
-| n8n-aux | 5679 | https://n8n-aux.home.arpa |
-| portainer | 9000 | https://portainer.home.arpa |
-| vaultwarden | 8222 | https://vaultwarden.home.arpa |
+| rsshub | 1200 | https://rsshub.404labo.net |
+| markitdown-service | 8001 | https://markitdown.404labo.net (+ API key) |
+| crawl4ai-scraper-service | 8002→8000 | https://crawl4ai.scraper.404labo.net (+ API key) |
+| n8n-aux | 5679 | https://n8n-aux.404labo.net |
+| portainer | 9000 | https://portainer.404labo.net |
+| vaultwarden | 8222 | https://vaultwarden.404labo.net |
 
 ## Integración con n8n-main (retaco)
 
-`n8n-aux`, `markitdown-service` y `crawl4ai-scraper-service` pueden llamarse desde `n8n-main` (en `retaco`, entre nodos) como nodo HTTP Request, siempre por el nombre de host público (`https://n8n-aux.home.arpa`, `https://markitdown.home.arpa`, `https://crawl4ai.scraper.home.arpa`) — nunca por nombre de contenedor Docker, ya que no comparten red.
+`n8n-aux`, `markitdown-service` y `crawl4ai-scraper-service` pueden llamarse desde `n8n-main` (en `retaco`, entre nodos) como nodo HTTP Request, siempre por el nombre de host público (`https://n8n-aux.404labo.net`, `https://markitdown.404labo.net`, `https://crawl4ai.scraper.404labo.net`) — nunca por nombre de contenedor Docker, ya que no comparten red.
 
 ## Actualización del stack
 

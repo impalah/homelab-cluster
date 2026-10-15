@@ -11,18 +11,18 @@
 ```yaml
   - job_name: node-exporter-ryzen
     static_configs:
-      - targets: ["192.168.1.150:9100"]
+      - targets: ["192.168.10.10:9100"]
         labels:
           node: ryzen
 
   - job_name: cadvisor-ryzen
     static_configs:
-      - targets: ["192.168.1.150:8081"]
+      - targets: ["192.168.10.10:8081"]
         labels:
           node: ryzen
 
-  # ... mismo patrón para retaco (192.168.1.174), pi-dns (192.168.1.170),
-  # pi-sonar (192.168.1.172) y pi-utils (192.168.1.173)
+  # ... mismo patrón para retaco (192.168.10.7), pi-dns (192.168.10.2),
+  # pi-sonar (192.168.10.5) y pi-utils (192.168.10.3)
 ```
 
 Aplicar sin reiniciar el contenedor (Prometheus se ejecuta con `--web.enable-lifecycle`):
@@ -51,13 +51,13 @@ docker compose up -d node-exporter   # ahora coge la siguiente IP libre
 ### Targets en Prometheus
 
 ```
-https://prometheus.home.arpa/targets
+https://prometheus.404labo.net/targets
 ```
 
 Desde un navegador (mejora 25, `docs/27-authentik-sso.md`) esto ya pide login de Authentik primero — normal, es justo lo que protege ahora. Para consultarlo desde script/`curl`, ese login interactivo no vale — usar la IP directa del nodo en la LAN en su lugar (sin pasar por nginx/Authentik, mismo criterio que `check-health.sh`):
 
 ```bash
-curl -s http://192.168.1.171:9090/api/v1/targets | \
+curl -s http://observability.404labo.net:9090/api/v1/targets | \
   jq -r '.data.activeTargets[] | "\(.labels.job) \(.labels.node // "-") \(.health)"'
 ```
 
@@ -93,7 +93,7 @@ Aprovisionada por `pi-obs/config/grafana/alerting/undervoltage.yml`.
 **Limitación conocida:** los picos de baja tensión muy breves pueden no quedar capturados si Prometheus no consultó las métricas justo en ese instante — garantiza detectar el caso sostenido, no necesariamente uno puntual.
 
 ```bash
-curl -s 'http://192.168.1.171:9090/api/v1/query?query=node_hwmon_in_lcrit_alarm_volts' | jq .
+curl -s 'http://observability.404labo.net:9090/api/v1/query?query=node_hwmon_in_lcrit_alarm_volts' | jq .
 ```
 
 ### Espacio en disco bajo
@@ -108,5 +108,5 @@ Mejora 3 (`docs/22-mejoras-futuras.md`), aprovisionada por `pi-obs/config/grafan
 - Notificación proactiva por ntfy igual que undervoltage (`category=disk`).
 
 ```bash
-curl -s 'http://192.168.1.171:9090/api/v1/query?query=(node_filesystem_avail_bytes%7Bfstype%21~%22tmpfs%7Coverlay%22%7D%20%2F%20node_filesystem_size_bytes)%20*%20100' | jq .
+curl -s 'http://observability.404labo.net:9090/api/v1/query?query=(node_filesystem_avail_bytes%7Bfstype%21~%22tmpfs%7Coverlay%22%7D%20%2F%20node_filesystem_size_bytes)%20*%20100' | jq .
 ```

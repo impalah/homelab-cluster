@@ -10,7 +10,7 @@ Grafana es la interfaz web donde se visualiza todo lo que el clúster observa de
 - **Loki** — logs (la salida de consola de todos los contenedores del clúster).
 - **Tempo** — trazas distribuidas (hoy solo las usa `apikey-service`).
 
-Estas tres piezas, junto con Grafana, viven en el stack `pi-obs` (`docker-swarm/stacks/pi-obs/`), desplegado en el nodo `pi-obs` (192.168.1.171). Grafana no recopila nada por sí mismo — solo consulta a Prometheus/Loki/Tempo cuando alguien abre un panel o hace una búsqueda.
+Estas tres piezas, junto con Grafana, viven en el stack `pi-obs` (`docker-swarm/stacks/pi-obs/`), desplegado en el nodo `pi-obs` (192.168.10.4). Grafana no recopila nada por sí mismo — solo consulta a Prometheus/Loki/Tempo cuando alguien abre un panel o hace una búsqueda.
 
 ## Cómo llegar a Grafana
 

@@ -11,8 +11,8 @@ Se graba con Raspberry Pi Imager o con balenaEtcher.
 Al grabar la imagen con Raspberry Pi Imager es posible (y por defecto, en algunas configuraciones, ocurre) que el SSH quede activado **solo con autenticación por clave pública**. Si al conectar aparece:
 
 ```
-ssh ubuntu@192.168.1.120
-ubuntu@192.168.1.120: Permission denied (publickey).
+ssh ubuntu@192.168.10.120
+ubuntu@192.168.10.120: Permission denied (publickey).
 ```
 
 significa que el `sshd` de esa Pi solo ofrece `publickey` (se puede comprobar con `ssh -v ubuntu@<ip>` — la línea `Authentications that can continue:` no incluirá `password`). No es un problema de contraseña incorrecta: el inicio de sesión por contraseña está deshabilitado a nivel de configuración, normalmente porque al personalizar la imagen se eligió "Allow public-key authentication only" en vez de "Use password authentication", o se inyectó una clave pública que no es la del equipo desde el que se conecta.
@@ -100,11 +100,11 @@ sudo usermod -aG sudo miusuario
 sudo usermod -aG docker miusuario
 
 # 4. Copiar la clave pública SSH del PC de gestión al nuevo usuario. Ejecutar desde el PC de gestión
-ssh-copy-id miusuario@192.168.1.170
+ssh-copy-id miusuario@192.168.10.2
 
 # 5. Verificar en OTRA terminal (sin cerrar la sesión actual) que se puede
 #    entrar con el nuevo usuario y hacer sudo correctamente
-ssh miusuario@192.168.1.170
+ssh miusuario@192.168.10.2
 sudo whoami   # debe devolver "root"
 ```
 
@@ -231,7 +231,7 @@ sudo loadkeys es
 ```bash
 # Ejemplo para pi-dns, ajustar según el nodo
 sudo hostnamectl set-hostname pi-dns
-echo "127.0.1.1 pi-dns.home.arpa pi-dns" | sudo tee -a /etc/hosts
+echo "127.0.1.1 pi-dns.404labo.net pi-dns" | sudo tee -a /etc/hosts
 ```
 
 ### 4. Fijar la IP del nodo
@@ -251,7 +251,7 @@ Pasos a seguir:
 ip link show eth0
 ```
 
-Hay que dar de alta esa MAC en la sección de reservas DHCP, "static leases" o "IP estáticas" del router (el nombre exacto depende del fabricante), asignándole la IP deseada (por ejemplo, `192.168.1.170` para pi-dns). La Pi seguirá pidiendo IP por DHCP con normalidad; el router le entregará siempre la misma.
+Hay que dar de alta esa MAC en la sección de reservas DHCP, "static leases" o "IP estáticas" del router (el nombre exacto depende del fabricante), asignándole la IP deseada (por ejemplo, `192.168.10.2` para pi-dns). La Pi seguirá pidiendo IP por DHCP con normalidad; el router le entregará siempre la misma.
 
 No hace falta reiniciar la Pi para que el cambio se aplique: basta con que renueve la concesión de DHCP (`sudo dhclient -r eth0 && sudo dhclient eth0`), o, si se prefiere, con reiniciar la Pi directamente.
 
@@ -272,16 +272,16 @@ network:
     eth0:
       dhcp4: false
       addresses:
-        - 192.168.1.170/24   # Cambiar según el nodo
+        - 192.168.10.2/24   # Cambiar según el nodo
       routes:
         - to: default
-          via: 192.168.1.1
+          via: 192.168.10.1
       nameservers:
         addresses:
-          - 192.168.1.170
-          - 192.168.1.1
+          - 192.168.10.2
+          - 192.168.10.1
         search:
-          - home.arpa
+          - 404labo.net
 ```
 
 ```bash
@@ -303,8 +303,8 @@ El script de instalación de Docker del paso siguiente vive en `shared/scripts/`
 
 ```bash
 # Desde el PC de gestión, con el repositorio clonado localmente
-rsync -av homelab-cluster/shared/ miusuario@192.168.1.170:/srv/homelab/shared/
-rsync -av homelab-cluster/pi-dns/ miusuario@192.168.1.170:/srv/homelab/pi-dns/
+rsync -av homelab-cluster/shared/ miusuario@192.168.10.2:/srv/homelab/shared/
+rsync -av homelab-cluster/pi-dns/ miusuario@192.168.10.2:/srv/homelab/pi-dns/
 ```
 
 (Hay que sustituir `pi-dns/` por la carpeta del nodo correspondiente —igual en origen y en destino— y la IP y el usuario según la Pi de que se trate. La barra final en `homelab-cluster/pi-dns/` es importante: `rsync` copia el *contenido* de esa carpeta dentro del destino, por lo que el destino debe repetir el nombre del nodo — por ejemplo, `/srv/homelab/pi-obs/` para el nodo `pi-obs`.)

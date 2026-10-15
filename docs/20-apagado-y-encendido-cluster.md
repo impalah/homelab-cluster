@@ -1,5 +1,7 @@
 # 20 — Apagado y encendido ordenado del clúster (mantenimiento físico)
 
+> ⚠️ **Actualización 2026-10-08**: el Swarm son 3 minipcs (`retaco`, `pinchi`, `miugarita`) y las Raspberry Pi `pi-obs`/`pi-sonar`/`pi-utils` ya no son miembros ni alojan servicios (solo `nut-upsmon`). Donde este procedimiento diga "los 5 nodos" o describa servicios en esas Pi, es el estado anterior. Orden de encendido vigente: `retaco` primero (postgres-main + authentik), luego `pinchi`/`miugarita` en cualquier orden. `miugarita` no tiene gotchas propios salvo el cliente NUT (`cd /srv/homelab/miugarita && docker compose up -d`).
+
 ## Qué resuelve
 
 Procedimiento para apagar de forma segura la mayor parte del clúster (por ejemplo, para una intervención física: mover hardware, limpiar, cambiar cableado) y volver a encenderlo sin corromper datos ni dejar servicios en un estado a medias. Cubre los seis nodos apagables: `pi-dns`, `pi-obs`, `pi-sonar`, `pi-utils`, `retaco` y `pinchi`.
@@ -14,8 +16,8 @@ Procedimiento para apagar de forma segura la mayor parte del clúster (por ejemp
 
 - **`retaco`, `pi-obs`, `pi-sonar`, `pi-utils` y `pinchi` son los 5 nodos del swarm** (todos manager, quórum Raft). `pi-dns` y `ryzen` se quedan fuera del swarm por completo (mejoras 37/39) — siguen siendo Docker Compose puro, sin cambios de fondo respecto al procedimiento anterior.
 - **Docker Swarm se auto-repara solo** al reiniciar los 5 nodos — no hace falta ningún comando especial de swarm para "reformar el quórum": cada manager persiste su estado Raft en disco (`/var/lib/docker/swarm/`) y, en cuanto `dockerd` arranca y los 5 nodos vuelven a verse entre sí por la red (puertos 2377/7946/4789, ya abiertos de forma persistente, `docker-swarm/init/setup-swarm-firewall.sh`), el clúster Swarm se recompone y **reprograma solo** todos los servicios (`traefik`, `apikey-service` copia swarm, `markitdown-service`, `node-exporter`/`cadvisor` globales, `portainer-agent`) sin que tengas que hacer `docker compose up -d` ni `docker stack deploy` en ninguno de los 5 — eso solo hace falta si cambias algo, no para un simple reinicio.
-- **Ahora mismo (2026-08-26), la mayoría del tráfico HTTP real del clúster (28 hostnames, incluido `*.404labo.net`) entra por Traefik en `pinchi` (192.168.1.175)**, no por `nginx` en `pi-dns` — el cutover de DNS de la mejora 33 ya está hecho (`docs/31-docker-swarm.md`). `nginx` en `pi-dns` sigue desplegado y funcional como vía de rollback, pero **nada apunta ahí por DNS salvo** `apikey.home.arpa`, `old.index.home.arpa`, `pihole.home.arpa` (excepciones deliberadas, fuera de Traefik todavía). Esto significa que, aunque Swarm se auto-repare, **si `pinchi` en concreto tarda en volver, todo lo que resuelve a esa IP da timeout** aunque las réplicas de Traefik en los otros 4 nodos estén perfectamente sanas — nadie más escucha en esa IP. Prioriza que `pinchi` vuelva pronto al encender.
-- **`retaco` sigue siendo el nodo crítico a arrancar primero**, y ahora por más motivos que antes: aloja `postgres-main` (BD de `apikey-service`, `authentik`, `n8n-main`, `sonarqube`...) Y `authentik-server` (el forward-auth que protege `prometheus.home.arpa` en Traefik). Ninguno de los dos está migrado al swarm todavía (Fase 4 de la mejora 33, pendiente) — siguen siendo Compose clásico en `retaco`, con el mismo `docker compose up -d` de siempre.
+- **Ahora mismo (2026-08-26), la mayoría del tráfico HTTP real del clúster (28 hostnames, incluido `*.404labo.net`) entra por Traefik en `pinchi` (192.168.10.8)**, no por `nginx` en `pi-dns` — el cutover de DNS de la mejora 33 ya está hecho (`docs/31-docker-swarm.md`). `nginx` en `pi-dns` sigue desplegado y funcional como vía de rollback, pero **nada apunta ahí por DNS salvo** `apikey.404labo.net`, `old.index.404labo.net`, `pihole.404labo.net` (excepciones deliberadas, fuera de Traefik todavía). Esto significa que, aunque Swarm se auto-repare, **si `pinchi` en concreto tarda en volver, todo lo que resuelve a esa IP da timeout** aunque las réplicas de Traefik en los otros 4 nodos estén perfectamente sanas — nadie más escucha en esa IP. Prioriza que `pinchi` vuelva pronto al encender.
+- **`retaco` sigue siendo el nodo crítico a arrancar primero**, y ahora por más motivos que antes: aloja `postgres-main` (BD de `apikey-service`, `authentik`, `n8n-main`, `sonarqube`...) Y `authentik-server` (el forward-auth que protege `prometheus.404labo.net` en Traefik). Ninguno de los dos está migrado al swarm todavía (Fase 4 de la mejora 33, pendiente) — siguen siendo Compose clásico en `retaco`, con el mismo `docker compose up -d` de siempre.
 - **`pi-obs`, `pi-sonar`, `pi-utils` tienen DOS cosas corriendo a la vez** tras la migración: son nodos del swarm (se reprograman solos, no toques nada) **y además siguen con su propio `docker-compose.yml` clásico** para lo que todavía no se ha migrado (Grafana/Prometheus/Loki/ Tempo en `pi-obs`; SonarQube/Bifrost en `pi-sonar`; Capataz/Vaultwarden/RSSHub/n8n-aux/etc. en `pi-utils`) — ese Compose clásico **sí** hay que levantarlo a mano igual que siempre, el swarm no lo hace por ti. `pinchi` es distinto: no tiene `docker-compose.yml` propio, todo lo que corre ahí es Swarm puro — no necesita ningún `docker compose up -d`.
 - **Gotcha real, encontrado en vivo el mismo día del cutover** (`docs/31-docker-swarm.md`, tercer incidente de la sub-fase 3b): en un arranque en frío, `dockerd` puede reservar un puerto para la routing mesh de Traefik (`mode: global`, publica en LOS 5 NODOS) **antes** de que el contenedor clásico de ese mismo nodo que necesita ese puerto llegue a arrancar — el clásico falla con `address already in use` y no se recupera solo. Ya se corrigió el caso conocido (dashboard de Traefik movido de 8090 a 18090, que chocaba con `capataz-frontend` en `pi-utils`), pero **si mañana algo se queda en `Restarting`/`Exited` tras el encendido, sospecha primero de un choque de puertos** (`sudo ss -tlnp | grep <puerto>` en ese nodo) antes de asumir que es un fallo de la aplicación.
 - **Segundo gotcha real, mismo día**: un contenedor clásico que falló su primer arranque (por el choque de puertos de arriba, o por lo que sea) puede quedarse reintentando sobre sí mismo en un estado inconsistente incluso después de arreglar la causa raíz — `docker compose restart` no basta. Si ves algo en bucle de reinicio sin motivo aparente tras solucionar lo obvio, prueba `docker compose up -d --force-recreate <servicio>` antes de investigar más a fondo.
@@ -45,12 +47,13 @@ Orden sugerido — el inverso al de instalación, por costumbre y simetría con 
 
 ```bash
 for target in \
-  "u-forge@192.168.1.175:pinchi:no-compose" \
-  "u-utils@192.168.1.173:pi-utils" \
-  "u-sonar@192.168.1.172:pi-sonar" \
-  "u-obs@192.168.1.171:pi-obs" \
-  "u-dns@192.168.1.170:pi-dns" \
-  "u-data@192.168.1.174:retaco"
+  "admin@192.168.10.9:miugarita" \
+  "admin@192.168.10.8:pinchi:no-compose" \
+  "admin@192.168.10.3:pi-utils" \
+  "admin@192.168.10.5:pi-sonar" \
+  "admin@192.168.10.4:pi-obs" \
+  "admin@192.168.10.2:pi-dns" \
+  "admin@192.168.10.7:retaco"
 do
   ssh_target="${target%%:*}"
   rest="${target#*:}"
@@ -69,7 +72,7 @@ done
 ### 3. Confirmar que cada nodo ha terminado de apagarse antes de tocar nada físico
 
 ```bash
-for ip in 192.168.1.170 192.168.1.171 192.168.1.172 192.168.1.173 192.168.1.174 192.168.1.175; do
+for ip in 192.168.10.2 192.168.10.4 192.168.10.5 192.168.10.3 192.168.10.7 192.168.10.8; do
   echo -n "${ip}: "
   timeout 2 ping -c 1 "${ip}" >/dev/null 2>&1 && echo "todavía responde" || echo "apagado"
 done
@@ -88,28 +91,28 @@ Reconecta la alimentación de los seis nodos. Las Raspberry Pi 5 (`pi-dns`, `pi-
 ### 2. `retaco` primero — obligatorio
 
 ```bash
-ssh u-data@192.168.1.174 "cd /srv/homelab/retaco && docker compose up -d"
+ssh admin@192.168.10.7 "cd /srv/homelab/retaco && docker compose up -d"
 
 # Esperar a que postgres-main esté "healthy" (healthcheck pg_isready,
 # start_period 30s) antes de continuar:
-ssh u-data@192.168.1.174 "cd /srv/homelab/retaco && docker compose ps"
+ssh admin@192.168.10.7 "cd /srv/homelab/retaco && docker compose ps"
 ```
 
-No sigas al siguiente paso hasta ver `postgres-main` (y, si puedes esperar un poco más, `authentik-server`) como `healthy` en esa salida — ahora alimentan tanto al `apikey-service` de `pi-dns` como al forward-auth de `prometheus.home.arpa` en Traefik.
+No sigas al siguiente paso hasta ver `postgres-main` (y, si puedes esperar un poco más, `authentik-server`) como `healthy` en esa salida — ahora alimentan tanto al `apikey-service` de `pi-dns` como al forward-auth de `prometheus.404labo.net` en Traefik.
 
 ### 3. `pi-dns` — obligatorio antes de dar el clúster por operativo
 
 ```bash
-ssh u-dns@192.168.1.170 "cd /srv/homelab/pi-dns && docker compose up -d"
-ssh u-dns@192.168.1.170 "cd /srv/homelab/pi-dns && docker compose ps"
+ssh admin@192.168.10.2 "cd /srv/homelab/pi-dns && docker compose up -d"
+ssh admin@192.168.10.2 "cd /srv/homelab/pi-dns && docker compose ps"
 ```
 
-`pi-dns` es quien resuelve **todo** `*.home.arpa`/`*.404labo.net` para el resto del clúster (incluidos los propios nodos del swarm entre sí, si usan nombre en vez de IP) — sin él arriba, nada resuelve nombres, aunque Traefik/Swarm estén perfectamente sanos. `nginx` espera solo internamente a `pihole` y `apikey-service` (`depends_on: condition: service_healthy` dentro del propio `docker-compose.yml`) — Compose gestiona ese orden interno solo, lo único que tenías que garantizar tú era `retaco` arriba (paso 2).
+`pi-dns` es quien resuelve **todo** `*.404labo.net`/`*.404labo.net` para el resto del clúster (incluidos los propios nodos del swarm entre sí, si usan nombre en vez de IP) — sin él arriba, nada resuelve nombres, aunque Traefik/Swarm estén perfectamente sanos. `nginx` espera solo internamente a `pihole` y `apikey-service` (`depends_on: condition: service_healthy` dentro del propio `docker-compose.yml`) — Compose gestiona ese orden interno solo, lo único que tenías que garantizar tú era `retaco` arriba (paso 2).
 
 Comprueba también que el subnet router de Tailscale se ha reconectado solo (usa el estado persistido, no hace falta volver a autenticar):
 
 ```bash
-ssh u-dns@192.168.1.170 "docker exec tailscale tailscale status"
+ssh admin@192.168.10.2 "docker exec tailscale tailscale status"
 ```
 
 ### 4. `pinchi` y el resto de nodos del swarm — cualquier orden, incluso en paralelo
@@ -117,26 +120,26 @@ ssh u-dns@192.168.1.170 "docker exec tailscale tailscale status"
 `pinchi` no tiene `docker-compose.yml` propio — basta con que arranque y su Docker se una de nuevo al swarm solo (persiste su identidad, no hace falta re-hacer `docker swarm join`). Los otros tres (`pi-obs`, `pi-sonar`, `pi-utils`) sí necesitan su Compose clásico a mano, **además** de reincorporarse solos al swarm:
 
 ```bash
-ssh u-obs@192.168.1.171   "cd /srv/homelab/pi-obs   && docker compose up -d"
-ssh u-sonar@192.168.1.172 "cd /srv/homelab/pi-sonar  && docker compose up -d"
-ssh u-utils@192.168.1.173 "cd /srv/homelab/pi-utils  && docker compose up -d"
+ssh admin@192.168.10.4   "cd /srv/homelab/pi-obs   && docker compose up -d"
+ssh admin@192.168.10.5 "cd /srv/homelab/pi-sonar  && docker compose up -d"
+ssh admin@192.168.10.3 "cd /srv/homelab/pi-utils  && docker compose up -d"
 ```
 
 ⚠️ `pi-sonar`/SonarQube tarda ~120 segundos en arrancar (calentamiento de la JVM) — no te alarmes si `docker compose ps` lo muestra `starting` un rato.
 
-⚠️ **Visto en vivo tras un apagado/encendido físico completo**: SonarQube puede quedarse en `starting` indefinidamente (no solo los ~120s normales) si `systemd-resolved` en `pi-sonar` arranca atascado en un DNS secundario y no resuelve `postgresql.home.arpa` (alias del `postgres-main` en `retaco`) — síntoma en `docker logs sonarqube`: `java.net.UnknownHostException: postgresql.home.arpa`, con SonarQube reiniciando su proceso interno en bucle. La conexión TCP directa a `192.168.1.174:5432` funciona bien — es puramente un problema de DNS en `pi-sonar`, ya documentado en `docs/13-troubleshooting.md`. Solución:
+⚠️ **Visto en vivo tras un apagado/encendido físico completo**: SonarQube puede quedarse en `starting` indefinidamente (no solo los ~120s normales) si `systemd-resolved` en `pi-sonar` arranca atascado en un DNS secundario y no resuelve `postgresql.404labo.net` (alias del `postgres-main` en `retaco`) — síntoma en `docker logs sonarqube`: `java.net.UnknownHostException: postgresql.404labo.net`, con SonarQube reiniciando su proceso interno en bucle. La conexión TCP directa a `192.168.10.7:5432` funciona bien — es puramente un problema de DNS en `pi-sonar`, ya documentado en `docs/13-troubleshooting.md`. Solución:
 
 ```bash
-ssh u-sonar@192.168.1.172 "resolvectl query postgresql.home.arpa"   # confirma el síntoma
-ssh u-sonar@192.168.1.172 "sudo systemctl restart systemd-resolved"
-ssh u-sonar@192.168.1.172 "cd /srv/homelab/pi-sonar && docker compose restart sonarqube"
+ssh admin@192.168.10.5 "resolvectl query postgresql.404labo.net"   # confirma el síntoma
+ssh admin@192.168.10.5 "sudo systemctl restart systemd-resolved"
+ssh admin@192.168.10.5 "cd /srv/homelab/pi-sonar && docker compose restart sonarqube"
 ```
 
-⚠️ **Vigila específicamente `capataz-frontend` en `pi-utils`** (sirve `index.home.arpa`/ `home.404labo.net`) — es el que se vio afectado en vivo por el choque de puertos con el dashboard de Traefik (ya corregido, puerto movido a 18090) y por el contenedor atascado que necesitó `--force-recreate` (ver "Qué ha cambiado con Docker Swarm" arriba). Si tras este paso `docker compose ps` en `pi-utils` lo muestra `Exited`/reiniciando sin parar:
+⚠️ **Vigila específicamente `capataz-frontend` en `pi-utils`** (sirve `home.404labo.net`/ `home.404labo.net`) — es el que se vio afectado en vivo por el choque de puertos con el dashboard de Traefik (ya corregido, puerto movido a 18090) y por el contenedor atascado que necesitó `--force-recreate` (ver "Qué ha cambiado con Docker Swarm" arriba). Si tras este paso `docker compose ps` en `pi-utils` lo muestra `Exited`/reiniciando sin parar:
 
 ```bash
-ssh u-utils@192.168.1.173 "sudo ss -tlnp | grep ':8090'"   # ¿algo más ya tiene el puerto?
-ssh u-utils@192.168.1.173 "cd /srv/homelab/pi-utils && docker compose up -d --force-recreate capataz-frontend"
+ssh admin@192.168.10.3 "sudo ss -tlnp | grep ':8090'"   # ¿algo más ya tiene el puerto?
+ssh admin@192.168.10.3 "cd /srv/homelab/pi-utils && docker compose up -d --force-recreate capataz-frontend"
 ```
 
 ### 5. `mole` — si se paró su Docker en el apagado
@@ -155,13 +158,13 @@ docker compose up -d
 ### Swarm — primero, antes que nada de aplicación
 
 ```bash
-ssh u-forge@192.168.1.175 "docker node ls"
+ssh admin@192.168.10.8 "docker node ls"
 ```
 
-Espera ver los 5 nodos (`pi-obs`, `pi-sonar`, `pi-utils`, `pinchi`, `retaco`) en `Ready`/`Active`, y **exactamente uno** con `MANAGER STATUS` = `Leader` (da igual cuál — Raft elige uno solo, no tiene por qué ser `pinchi` aunque fue el nodo de bootstrap original). Si alguno aparece `Down` o `Unreachable` más de un minuto después de que respondiera al ping, revisa el firewall de control de Swarm en ese nodo (`docker-swarm/init/setup-swarm-firewall.sh`, puertos 2377/7946/4789) antes de asumir que es un problema de aplicación.
+Espera ver los 3 nodos (`miugarita`, `pinchi`, `retaco`) en `Ready`/`Active`, y **exactamente uno** con `MANAGER STATUS` = `Leader` (da igual cuál — Raft elige uno solo, no tiene por qué ser `pinchi` aunque fue el nodo de bootstrap original). Si alguno aparece `Down` o `Unreachable` más de un minuto después de que respondiera al ping, revisa el firewall de control de Swarm en ese nodo (`docker-swarm/init/setup-swarm-firewall.sh`, puertos 2377/7946/4789) antes de asumir que es un problema de aplicación.
 
 ```bash
-ssh u-forge@192.168.1.175 "docker service ls"
+ssh admin@192.168.10.8 "docker service ls"
 ```
 
 Espera réplicas al completo en todos: `traefik_traefik` `5/5`, `common_node-exporter` `5/5`, `common_cadvisor` `5/5`, `portainer-agent_agent` `5/5`, `apikey-service_apikey-service` `1/1`, `markitdown_markitdown-service` `1/1`. Si alguno tarda en converger, dale un par de minutos — Swarm reprograma solo, no hace falta intervenir salvo que se quede atascado bastante más tiempo.
@@ -174,11 +177,11 @@ Espera réplicas al completo en todos: `traefik_traefik` `5/5`, `common_node-exp
 bash /srv/homelab/shared/scripts/check-health.sh ryzen   # local, sin ssh
 
 for target in \
-  "u-data@192.168.1.174:retaco" \
-  "u-dns@192.168.1.170:pi-dns" \
-  "u-obs@192.168.1.171:pi-obs" \
-  "u-sonar@192.168.1.172:pi-sonar" \
-  "u-utils@192.168.1.173:pi-utils"
+  "admin@192.168.10.7:retaco" \
+  "admin@192.168.10.2:pi-dns" \
+  "admin@192.168.10.4:pi-obs" \
+  "admin@192.168.10.5:pi-sonar" \
+  "admin@192.168.10.3:pi-utils"
 do
   ssh_target="${target%%:*}"
   node="${target##*:}"
@@ -187,14 +190,14 @@ do
 done
 ```
 
-Comprobaciones puntuales adicionales — el destino real ahora es `pinchi` (192.168.1.175), no `pi-dns`, para la mayoría de hostnames:
+Comprobaciones puntuales adicionales — el destino real ahora es `pinchi` (192.168.10.8), no `pi-dns`, para la mayoría de hostnames:
 
 ```bash
-dig +short grafana.home.arpa @192.168.1.170        # debe resolver a 192.168.1.175
-curl -sk https://index.home.arpa -o /dev/null -w "HTTP %{http_code}\n"           # 200, vía Traefik/pinchi
-curl -sk https://markitdown.home.arpa -o /dev/null -w "HTTP %{http_code}\n"      # 401 (sin API key, esperado)
+dig +short grafana.404labo.net @192.168.10.2        # debe resolver a 192.168.10.8
+curl -sk https://home.404labo.net -o /dev/null -w "HTTP %{http_code}\n"           # 200, vía Traefik/pinchi
+curl -sk https://markitdown.404labo.net -o /dev/null -w "HTTP %{http_code}\n"      # 401 (sin API key, esperado)
 curl -sk https://home.404labo.net -o /dev/null -w "HTTP %{http_code}\n"          # 200, cert real Let's Encrypt
-curl -sk https://apikey.home.arpa/health -o /dev/null -w "HTTP %{http_code}\n"   # 200, vía nginx/pi-dns (excepción)
+curl -sk https://apikey.404labo.net/health -o /dev/null -w "HTTP %{http_code}\n"   # 200, vía nginx/pi-dns (excepción)
 ```
 
 Si algo no sale `healthy`/`200` a la primera:

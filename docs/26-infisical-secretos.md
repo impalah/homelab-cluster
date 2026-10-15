@@ -23,7 +23,7 @@ user infisical on >CONTRASEÑA ~* &* +@all -@admin -@dangerous +info
 
 **Distinto del ejemplo de `docs/25`** (`~infisical:* &infisical:* +@read +@write -@dangerous`) — confirmado en vivo, no asumido: BullMQ (la cola interna de Infisical) usa nombres de clave propios con hash-tags (`{cron}:slot:0`, etc.), no un prefijo `infisical:`, así que restringir por prefijo de clave rompe el arranque (`NOPERM No permissions to access a key`). También necesita el comando `INFO` (categorizado como `@dangerous` en Valkey, no `@read`/`@write`), imprescindible para BullMQ. Sin un segundo consumidor real todavía en `valkey`, no hay ningún otro inquilino al que aislar de estas claves — si en el futuro aparece uno, revisar si conviene volver a restringir por prefijo en ambos usuarios a la vez.
 
-`REDIS_URL` usa `rediss://` (TLS obligatorio, Valkey no acepta puerto en claro) contra el hostname `valkey.home.arpa`, **no** el nombre de contenedor `valkey` — el certificado TLS de Valkey solo lleva `CN=valkey.home.arpa` en el SAN (confirmado que ese hostname resuelve igual desde dentro de un contenedor en `retaco-net`, vía el DNS embebido de Docker reenviando a Pi-hole). Necesita además `NODE_EXTRA_CA_CERTS` (Infisical es Node/NestJS) apuntando a una copia de la CA interna montada en el contenedor — mismo patrón ya usado para `n8n-main` en `retaco/docker-compose.yml`.
+`REDIS_URL` usa `rediss://` (TLS obligatorio, Valkey no acepta puerto en claro) contra el hostname `valkey.404labo.net`, **no** el nombre de contenedor `valkey` — el certificado TLS de Valkey solo lleva `CN=valkey.404labo.net` en el SAN (confirmado que ese hostname resuelve igual desde dentro de un contenedor en `retaco-net`, vía el DNS embebido de Docker reenviando a Pi-hole). Necesita además `NODE_EXTRA_CA_CERTS` (Infisical es Node/NestJS) apuntando a una copia de la CA interna montada en el contenedor — mismo patrón ya usado para `n8n-main` en `retaco/docker-compose.yml`.
 
 ### Servicio Infisical
 
@@ -33,7 +33,7 @@ Publicado en el puerto `8006` de `retaco` (siguiente libre tras `epub2pdf`/`pdf2
 
 ### Acceso: DNS, nginx, CA
 
-`infisical.home.arpa` → `pi-dns` (nginx le hace proxy hacia `192.168.1.174:8006`) → `shared/dns/dns-records.md` y `shared/scripts/load-dns-records.sh`. Añadido al array `DOMAINS` de `pi-dns/config/nginx/generate-cert.sh` (certificado regenerado, firmado por la CA interna). Bloque `server{}` **sin** `apikey-auth.conf` — Infisical gestiona su propio login, mismo criterio que `bifrost.home.arpa`/`registry.home.arpa`.
+`infisical.404labo.net` → `pi-dns` (nginx le hace proxy hacia `192.168.10.7:8006`) → `shared/dns/dns-records.md` y `shared/scripts/load-dns-records.sh`. Añadido al array `DOMAINS` de `pi-dns/config/nginx/generate-cert.sh` (certificado regenerado, firmado por la CA interna). Bloque `server{}` **sin** `apikey-auth.conf` — Infisical gestiona su propio login, mismo criterio que `bifrost.404labo.net`/`registry.404labo.net`.
 
 ### SMTP no configurado
 
@@ -96,15 +96,15 @@ Comandos usados en la importación real (2026-08-10), para repetir el patrón co
 # Autenticar una vez, reutilizar el token para varios comandos
 TOKEN=$(infisical login --method=universal-auth \
   --client-id=<bulk-import-client-id> --client-secret=<bulk-import-secret> \
-  --domain=https://infisical.home.arpa/api --plain --silent)
+  --domain=https://infisical.404labo.net/api --plain --silent)
 
 # Por cada servicio: crear su carpeta, volcar su .env dentro
 infisical secrets folders create --name <servicio> --path=/ \
-  --domain=https://infisical.home.arpa/api --token="$TOKEN" \
+  --domain=https://infisical.404labo.net/api --token="$TOKEN" \
   --projectId=<project-id> --env=prod
 
 infisical secrets set --file=<servicio>.env --path=/<servicio>/ \
-  --domain=https://infisical.home.arpa/api --token="$TOKEN" \
+  --domain=https://infisical.404labo.net/api --token="$TOKEN" \
   --projectId=<project-id> --env=prod
 ```
 
@@ -158,8 +158,8 @@ Migrado y verificado en producción el 2026-08-09. Detalle específico de esta m
 - Secretos migrados: `APIKEY_DATABASE_URL`, `APIKEY_ADMIN_TOKEN` — carpeta `/apikey-service/`, entorno `prod`, proyecto "Homelab Cluster" (quedaron primero en la raíz por un despiste al crearlos a mano; reorganizados el 2026-08-10 junto con la importación masiva del resto de servicios — `secrets set --file` a la carpeta nueva, `secrets delete --type=shared` de los duplicados en la raíz, y `--path=/apikey-service/` añadido al wrapper en `pi-dns/docker-compose.yml`. Verificado de nuevo tras el cambio: `docker logs` confirma "Injecting 2 Infisical secrets", `healthy`, `/health` responde 200).
 - `pi-dns/docker-compose.yml`, bloque `apikey-service` — imagen y `Dockerfile` **sin tocar**, solo `entrypoint:`/`command:`/`volumes:`/`environment:` a nivel de Compose.
 - Wrapper de dos pasos (no el `entrypoint:` de una sola línea que preveía originalmente el ADR 0001) — la versión del CLI desplegada (0.43.121) no soporta Universal Auth vía variables de entorno directamente en `infisical run`; hace falta `infisical login --method=universal-auth` primero. Detalle completo en el ADR 0001 (sección actualizada tras esta migración).
-- `SSL_CERT_FILE` + bind-mount de la CA interna — sin esto, `x509: certificate signed by unknown authority` al llamar a `infisical.home.arpa` desde el CLI (Go no hereda el almacén de certificados de la imagen `python:3.11-slim`, que no la tiene instalada).
-- Verificación end-to-end realizada: `curl` sin credencial → 401 en `ollama.home.arpa`; creación de una API key con `APIKEY_ADMIN_TOKEN` (ya inyectado, no visible en `.env`) → éxito; validación de esa key contra `ollama.home.arpa` → 200; revocación → 204. Reinicio de `apikey-service` con Infisical arriba → recupera solo. Infisical apagado con `apikey-service` ya en marcha → sigue sirviendo sin problema (no reinyecta en caliente). `apikey-service` forzado a reiniciar con Infisical caído → bucle de reintentos (`restart: unless-stopped`) hasta que Infisical vuelve, sin intervención manual — el trade-off exacto que ya anticipaba `docs/22` mejora 16 punto 5, confirmado en vivo.
+- `SSL_CERT_FILE` + bind-mount de la CA interna — sin esto, `x509: certificate signed by unknown authority` al llamar a `infisical.404labo.net` desde el CLI (Go no hereda el almacén de certificados de la imagen `python:3.11-slim`, que no la tiene instalada).
+- Verificación end-to-end realizada: `curl` sin credencial → 401 en `ollama.404labo.net`; creación de una API key con `APIKEY_ADMIN_TOKEN` (ya inyectado, no visible en `.env`) → éxito; validación de esa key contra `ollama.404labo.net` → 200; revocación → 204. Reinicio de `apikey-service` con Infisical arriba → recupera solo. Infisical apagado con `apikey-service` ya en marcha → sigue sirviendo sin problema (no reinyecta en caliente). `apikey-service` forzado a reiniciar con Infisical caído → bucle de reintentos (`restart: unless-stopped`) hasta que Infisical vuelve, sin intervención manual — el trade-off exacto que ya anticipaba `docs/22` mejora 16 punto 5, confirmado en vivo.
 - `pi-dns/.env`: `APIKEY_DATABASE_URL`/`APIKEY_ADMIN_TOKEN` eliminados tras confirmar el funcionamiento — quedan solo `APIKEY_SERVICE_INFISICAL_CLIENT_ID`/`_CLIENT_SECRET`/`_PROJECT_ID`.
 
 ### Servicios conectados en la mejora 28 (2026-08-19)

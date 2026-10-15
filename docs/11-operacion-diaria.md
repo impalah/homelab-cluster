@@ -1,10 +1,12 @@
 # 11 — Operación diaria del clúster
 
+> ⚠️ **Actualización 2026-10-08**: `pi-obs`/`pi-sonar`/`pi-utils` ya no alojan servicios ni son del Swarm (solo `nut-upsmon`); sus secciones de abajo son históricas. La observabilidad y SonarQube están en `miugarita` (`bash check-health.sh miugarita` desde el propio nodo). Para los servicios del Swarm, `docker service ls` en `retaco`. `miugarita` se accede con `ssh -i <clave> admin@192.168.10.9` (`docs/38-acceso-ssh-nodos.md`).
+
 > Para logs, reinicios, consola dentro de un contenedor o ver uso de CPU/RAM sin usar la terminal, **Portainer** (`https://portainer.404labo.net`) cubre gran parte de lo que hay en esta página desde una interfaz, para los seis nodos — ver `docs/10-instalacion-pi4-utils.md`. Los comandos de abajo siguen siendo la referencia para todo lo que no cubre la interfaz (copias de seguridad, cron, rotación de credenciales, etc.).
 
 ## Comandos habituales por nodo
 
-### Ryzen (192.168.1.150)
+### Ryzen (192.168.10.10)
 
 Dos stacks independientes — ver `ryzen/README.md`: `docker-compose.yml` (IA, GPU) y `docker-compose.observability.yml` (host, sin `.env`). Los comandos sin `-f` afectan solo al primero (es el nombre por defecto de Compose).
 
@@ -34,7 +36,7 @@ docker compose -f docker-compose.observability.yml up -d
 
 > `n8n-main` no vive en `ryzen` — está en `retaco` para seguir funcionando (cron, webhooks) aunque este stack esté parado. Ver `docs/05-instalacion-retaco.md`.
 
-### Retaco (192.168.1.174)
+### Retaco (192.168.10.7)
 
 ```bash
 cd /srv/homelab/retaco && docker compose ps
@@ -43,10 +45,10 @@ docker compose logs -f n8n-main
 docker compose logs -f qdrant
 
 source /srv/homelab/retaco/.env
-curl -s http://192.168.1.174:6333/collections -H "api-key: ${QDRANT_API_KEY}" | jq .
+curl -s http://192.168.10.7:6333/collections -H "api-key: ${QDRANT_API_KEY}" | jq .
 ```
 
-### pi-dns (192.168.1.170)
+### pi-dns (192.168.10.2)
 
 ```bash
 cd /srv/homelab/pi-dns && docker compose ps
@@ -60,24 +62,24 @@ docker exec nginx nginx -s reload
 
 > ⚠️ Si el cambio en `nginx.conf` llegó por `rsync`/`scp` (rename atómico), `nginx -s reload` **no** basta — el contenedor sigue viendo el inodo viejo del bind mount. Hace falta `docker compose up -d --force-recreate nginx`. Ver `docs/13-troubleshooting.md`.
 
-### pi-obs (192.168.1.171)
+### pi-obs (192.168.10.4)
 
 ```bash
 cd /srv/homelab/pi-obs && docker compose ps
-curl -X POST http://192.168.1.171:9090/-/reload
-curl -s http://192.168.1.171:9090/api/v1/alerts | jq .
-curl -s http://192.168.1.171:9090/api/v1/targets | jq '.data.activeTargets[] | {job: .labels.job, health: .health}'
+curl -X POST http://observability.404labo.net:9090/-/reload
+curl -s http://observability.404labo.net:9090/api/v1/alerts | jq .
+curl -s http://observability.404labo.net:9090/api/v1/targets | jq '.data.activeTargets[] | {job: .labels.job, health: .health}'
 ```
 
-### pi-sonar (192.168.1.172)
+### pi-sonar (192.168.10.5)
 
 ```bash
 cd /srv/homelab/pi-sonar && docker compose ps
-curl -s http://192.168.1.172:19000/api/system/status | jq .
+curl -s http://192.168.10.9:19000/api/system/status | jq .
 docker compose logs -f sonarqube
 ```
 
-### pi-utils (192.168.1.173)
+### pi-utils (192.168.10.3)
 
 ```bash
 cd /srv/homelab/pi-utils && docker compose ps
@@ -97,11 +99,13 @@ docker compose logs -f n8n-aux
 bash /srv/homelab/shared/scripts/check-health.sh ryzen   # local, sin ssh
 
 for target in \
-  "u-data@192.168.1.174:retaco" \
-  "u-dns@192.168.1.170:pi-dns" \
-  "u-obs@192.168.1.171:pi-obs" \
-  "u-sonar@192.168.1.172:pi-sonar" \
-  "u-utils@192.168.1.173:pi-utils"
+  "admin@192.168.10.7:retaco" \
+  "admin@192.168.10.2:pi-dns" \
+  "admin@192.168.10.4:pi-obs" \
+  "admin@192.168.10.5:pi-sonar" \
+  "admin@192.168.10.3:pi-utils" \
+  "admin@192.168.10.8:pinchi" \
+  "admin@192.168.10.9:miugarita"
 do
   ssh_target="${target%%:*}"
   node="${target##*:}"
@@ -133,13 +137,13 @@ El script: `docker compose pull` → `docker compose up -d` → `docker image pr
 Cada nodo tiene su propio usuario SSH dedicado (`docs/01-topologia.md`, sin usuario genérico compartido) — no hay un único bucle de una línea, ejecutar por nodo:
 
 ```bash
-ssh u-dns@192.168.1.170   "bash /srv/homelab/shared/scripts/update-stack.sh pi-dns"
-ssh u-data@192.168.1.174  "bash /srv/homelab/shared/scripts/update-stack.sh retaco"
-ssh u-obs@192.168.1.171   "bash /srv/homelab/shared/scripts/update-stack.sh pi-obs"
-ssh u-sonar@192.168.1.172 "bash /srv/homelab/shared/scripts/update-stack.sh pi-sonar"
-ssh u-utils@192.168.1.173 "bash /srv/homelab/shared/scripts/update-stack.sh pi-utils"
+ssh admin@192.168.10.2   "bash /srv/homelab/shared/scripts/update-stack.sh pi-dns"
+ssh admin@192.168.10.7  "bash /srv/homelab/shared/scripts/update-stack.sh retaco"
+ssh admin@192.168.10.4   "bash /srv/homelab/shared/scripts/update-stack.sh pi-obs"
+ssh admin@192.168.10.5 "bash /srv/homelab/shared/scripts/update-stack.sh pi-sonar"
+ssh admin@192.168.10.3 "bash /srv/homelab/shared/scripts/update-stack.sh pi-utils"
 # ryzen: ejecutar localmente si esta terminal ya está en ryzen (ver CLAUDE.md), si no:
-ssh linus@192.168.1.150   "bash /srv/homelab/shared/scripts/update-stack.sh ryzen"
+ssh linus@192.168.10.10   "bash /srv/homelab/shared/scripts/update-stack.sh ryzen"
 ```
 
 Servicios en el Swarm (la mayoría) no se actualizan así — ver `docs/16-mantenimiento-actualizaciones.md` y `docker-swarm/README.md`.
@@ -196,32 +200,32 @@ Para que `https://grafana.404labo.net` etc. resuelvan sin depender de que el rou
 
 ```
 Host ryzen
-  HostName 192.168.1.150
+  HostName 192.168.10.10
   User homelab
   IdentityFile ~/.ssh/id_ed25519
 
 Host retaco
-  HostName 192.168.1.174
+  HostName 192.168.10.7
   User homelab
   IdentityFile ~/.ssh/id_ed25519
 
 Host pi-dns
-  HostName 192.168.1.170
+  HostName 192.168.10.2
   User homelab
   IdentityFile ~/.ssh/id_ed25519
 
 Host pi-obs
-  HostName 192.168.1.171
+  HostName 192.168.10.4
   User homelab
   IdentityFile ~/.ssh/id_ed25519
 
 Host pi-sonar
-  HostName 192.168.1.172
+  HostName 192.168.10.5
   User homelab
   IdentityFile ~/.ssh/id_ed25519
 
 Host pi-utils
-  HostName 192.168.1.173
+  HostName 192.168.10.3
   User homelab
   IdentityFile ~/.ssh/id_ed25519
 ```

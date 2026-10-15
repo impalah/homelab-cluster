@@ -35,7 +35,7 @@ valkey:
 - **Nodo**: `retaco` — ya aloja `postgres-main`, Qdrant y el registry.
 - **Sin persistencia a propósito** (`--save ""`, `--appendonly no`): uso previsto hoy es solo caché, sin consumidor real todavía — el contenido se pierde en cada reinicio del contenedor. Si en el futuro un consumidor necesita persistir datos de verdad, activar AOF/RDB entonces (y añadirlo a la estrategia de backups, `shared/scripts/backup-postgres.sh` o un script hermano).
 - **Límite de memoria**: 256 MB con política `allkeys-lru` (evict de las keys menos usadas recientemente al llenarse) — correcta para un caché puro, a diferencia del `noeviction` por defecto de Redis/Valkey (que simplemente empezaría a rechazar escrituras al llenarse). Generoso para el uso actual (cero consumidores), fácil de subir cuando haga falta.
-- **Puerto publicado a la LAN**, como `postgres-main`/Qdrant — expuesto como `valkey.home.arpa` (alias DNS directo, ver más abajo). Protegido por la ACL (usuario `default` desactivado), no por aislamiento de red — mismo criterio que `postgresql.home.arpa`.
+- **Puerto publicado a la LAN**, como `postgres-main`/Qdrant — expuesto como `valkey.404labo.net` (alias DNS directo, ver más abajo). Protegido por la ACL (usuario `default` desactivado), no por aislamiento de red — mismo criterio que `postgresql.404labo.net`.
 
 ### TLS — certificado propio firmado por la CA interna
 
@@ -65,9 +65,9 @@ y guardarlo en `users.acl` (no solo en memoria vía `ACL SETUSER` — se perder�
 
 ⚠️ **El fichero `aclfile` no admite comentarios** (`#`) en esta versión de Valkey (9.1.1) — cualquier línea que no empiece literalmente por `user` rompe el arranque con `should start with user keyword followed by the username`. Confirmado en el despliegue real: la primera versión del fichero, con comentarios explicativos como en el resto de configs de este repo, hizo que el contenedor entrara en crash-loop. `users.acl`/`users.acl.example` se mantienen deliberadamente sin comentarios — la documentación vive aquí, no en el propio fichero.
 
-## Nombre DNS — `valkey.home.arpa`
+## Nombre DNS — `valkey.404labo.net`
 
-Alias directo (sin nginx, RESP no es HTTP) a `192.168.1.174:6379`, mismo patrón que `postgresql.home.arpa` — ver `shared/dns/dns-records.md`. Añadido a `shared/scripts/load-dns-records.sh` y aplicado en Pi-hole.
+Alias directo (sin nginx, RESP no es HTTP) a `192.168.10.7:6379`, mismo patrón que `postgresql.404labo.net` — ver `shared/dns/dns-records.md`. Añadido a `shared/scripts/load-dns-records.sh` y aplicado en Pi-hole.
 
 ## Prueba manual — verificado en el despliegue real
 
@@ -90,11 +90,11 @@ Cross-host, desde `ryzen`/`mole`, vía DNS real (no `--resolve`/IP a mano):
 
 ```bash
 # Sin --tls → rechazado de raíz, ya no hay puerto en claro
-valkey-cli -h valkey.home.arpa -p 6379 PING
+valkey-cli -h valkey.404labo.net -p 6379 PING
 # → Error: Connection reset by peer
 
 # Con --tls, verificando el certificado contra la CA interna
-valkey-cli -h valkey.home.arpa -p 6379 --tls --cacert ca.crt --user valkey-admin --pass <contraseña> PING
+valkey-cli -h valkey.404labo.net -p 6379 --tls --cacert ca.crt --user valkey-admin --pass <contraseña> PING
 # → PONG
 ```
 

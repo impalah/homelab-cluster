@@ -8,22 +8,22 @@ Dispositivo adicional en la LAN, **no forma parte del clúster Docker** — no t
 |---|---|
 | Modelo | UGREEN NASync DH2300 |
 | Nombre de host | `ketekasko` |
-| IP fija | `192.168.1.180` (configurada en el propio NAS, no en `pi-dns`) |
+| IP fija | `192.168.10.6` (configurada en el propio NAS, no en `pi-dns`) |
 | Almacenamiento | 2 discos en RAID 1, volumen de 3.6 TB |
 | SO | UGOS Pro |
 | Acceso | SSH activado en el propio NAS |
 
 ## Alta en la red del clúster
 
-`ketekasko.home.arpa` se añadió como **alias DNS directo** (mismo patrón que `postgresql.home.arpa`, ver `shared/dns/dns-records.md`) — no pasa por `nginx`/`pi-dns`, porque UGOS Pro sirve su propia interfaz con su propio certificado TLS en el puerto `9443` (no el 443 que usa `nginx`), así que un alias directo a la IP es más simple que meterlo detrás del proxy inverso.
+`ketekasko.404labo.net` se añadió como **alias DNS directo** (mismo patrón que `postgresql.404labo.net`, ver `shared/dns/dns-records.md`) — no pasa por `nginx`/`pi-dns`, porque UGOS Pro sirve su propia interfaz con su propio certificado TLS en el puerto `9443` (no el 443 que usa `nginx`), así que un alias directo a la IP es más simple que meterlo detrás del proxy inverso.
 
 ```bash
 # Registro añadido a shared/dns/dns-records.md y shared/scripts/load-dns-records.sh
-# ("192.168.1.180 ketekasko.home.arpa"), aplicado con:
-ssh u-dns@192.168.1.170 'cd /srv/homelab/shared/scripts && set -a; source /srv/homelab/pi-dns/.env; set +a; PIHOLE_URL=https://pihole.home.arpa PIHOLE_PASSWORD="$PIHOLE_PASSWORD" bash load-dns-records.sh'
+# ("192.168.10.6 ketekasko.404labo.net"), aplicado con:
+ssh admin@192.168.10.2 'cd /srv/homelab/shared/scripts && set -a; source /srv/homelab/pi-dns/.env; set +a; PIHOLE_URL=https://pihole.404labo.net PIHOLE_PASSWORD="$PIHOLE_PASSWORD" bash load-dns-records.sh'
 ```
 
-También se añadió una tarjeta en el panel `index.home.arpa` (`pi-dns/config/nginx/html/index.html`), con icono descargado localmente desde [dashboardicons.com](https://dashboardicons.com/icons/ugreen-nas) (proyecto `homarr-labs/dashboard-icons`) — enlaza directamente a `https://ketekasko.home.arpa:9443`.
+También se añadió una tarjeta en el panel `home.404labo.net` (`pi-dns/config/nginx/html/index.html`), con icono descargado localmente desde [dashboardicons.com](https://dashboardicons.com/icons/ugreen-nas) (proyecto `homarr-labs/dashboard-icons`) — enlaza directamente a `https://ketekasko.404labo.net:9443`.
 
 ## Activar SMB (Mac/Windows)
 
@@ -95,11 +95,11 @@ Lectura: `+3` (NFSv3 sigue activo, compatibilidad), `+4` (NFSv4 activo — esto 
 Con el servicio ya en v4 (confirmado arriba), montar por v4 falla igualmente:
 
 ```
-mount.nfs4: mounting ketekasko.home.arpa:/nfs-data failed, reason given by server: No such file or directory
-mount.nfs4: mounting ketekasko.home.arpa:/volume1/nfs-data failed, reason given by server: No such file or directory
+mount.nfs4: mounting ketekasko.404labo.net:/nfs-data failed, reason given by server: No such file or directory
+mount.nfs4: mounting ketekasko.404labo.net:/volume1/nfs-data failed, reason given by server: No such file or directory
 ```
 
-Probado tanto con la ruta "bonita" (`/nfs-data`) como con la ruta real del export (`/volume1/nfs-data`, confirmada con `showmount -e ketekasko.home.arpa`) — ambas fallan igual. **Causa**: NFSv4 usa un "pseudo-filesystem root" (normalmente un export especial con `fsid=0`) al que los clientes montan de forma relativa; sin ese export raíz configurado en el servidor, cualquier ruta v4 da `No such file or directory` aunque el export exista y esté bien permisado — confirmado montando la misma ruta con NFSv3 (que no usa pseudo-root, monta rutas reales directamente): monta sin problema y la escritura como `root` funciona (sin squash, tal como se configuró). Es decir, el export en sí está bien — es un hueco específico de v4 en cómo UGOS Pro genera `/etc/exports` desde la GUI (pensado para v3), no algo que dependa de `nfs.conf`/`nfs.json`.
+Probado tanto con la ruta "bonita" (`/nfs-data`) como con la ruta real del export (`/volume1/nfs-data`, confirmada con `showmount -e ketekasko.404labo.net`) — ambas fallan igual. **Causa**: NFSv4 usa un "pseudo-filesystem root" (normalmente un export especial con `fsid=0`) al que los clientes montan de forma relativa; sin ese export raíz configurado en el servidor, cualquier ruta v4 da `No such file or directory` aunque el export exista y esté bien permisado — confirmado montando la misma ruta con NFSv3 (que no usa pseudo-root, monta rutas reales directamente): monta sin problema y la escritura como `root` funciona (sin squash, tal como se configuró). Es decir, el export en sí está bien — es un hueco específico de v4 en cómo UGOS Pro genera `/etc/exports` desde la GUI (pensado para v3), no algo que dependa de `nfs.conf`/`nfs.json`.
 
 **Decisión tomada**: usar NFSv3 para el uso real (funciona perfectamente para bind mounts de Docker/Forgejo en esta LAN de confianza) y descartar NFSv4 definitivamente en este NAS — ver el intento real y su resultado justo abajo (mejora 10, ya cerrada como no viable).
 
@@ -110,11 +110,11 @@ Retomado como mejora 10 (`docs/22-mejoras-futuras.md`). Pasos realizados por SSH
 1. Backup de `/etc/exports`.
 2. Añadido un export raíz `fsid=0` con `crossmnt`, antepuesto al export real ya existente:
    ```
-   /volume1 192.168.1.0/24(ro,fsid=0,no_subtree_check,crossmnt)
-   /volume1/nfs-data 192.168.1.0/24(rw,async,no_wdelay,insecure_locks,no_root_squash,anonuid=65534,anongid=65534,sec=sys)
+   /volume1 192.168.10.0/24(ro,fsid=0,no_subtree_check,crossmnt)
+   /volume1/nfs-data 192.168.10.0/24(rw,async,no_wdelay,insecure_locks,no_root_squash,anonuid=65534,anongid=65534,sec=sys)
    ```
 3. `sudo exportfs -ra` — aplicado sin error, `exportfs -v` mostró el pseudo-root activo (`fsid=0`, `crossmnt`).
-4. Montaje v4 desde un cliente Linux (`ryzen`), con la ruta relativa al pseudo-root: `sudo mount -t nfs4 ketekasko.home.arpa:/nfs-data /mnt/nfs-data-v4-test` — **funcionó**, `mount` confirmó `type nfs4 (rw,...,vers=4.2,...)`. `ls` inicial también correcto (mismo contenido que por v3).
+4. Montaje v4 desde un cliente Linux (`ryzen`), con la ruta relativa al pseudo-root: `sudo mount -t nfs4 ketekasko.404labo.net:/nfs-data /mnt/nfs-data-v4-test` — **funcionó**, `mount` confirmó `type nfs4 (rw,...,vers=4.2,...)`. `ls` inicial también correcto (mismo contenido que por v3).
 5. Al escribir un fichero de prueba como `root` (para confirmar el mismo comportamiento sin squash que v3): el `echo` de escritura devolvió éxito, pero **cualquier acceso posterior al mismo punto de montaje** (`ls`, `cat`, `rm`, incluso a la raíz del propio montaje) falló con `Stale file handle` / "`handle` de fichero en desuso".
 6. Investigando la causa: `/etc/exports` en el NAS **ya no contenía la línea del export raíz** — había vuelto sola a su estado original (solo `/volume1/nfs-data`, sin `fsid=0`) en el tiempo transcurrido entre el paso 4 y el paso 5 (unos pocos minutos), **sin que se tocara la GUI de UGOS Pro en ningún momento**. `diff` contra el backup del paso 1 confirmó que coincidían exactamente.
 
@@ -128,17 +128,17 @@ Requiere el paquete `nfs-common` (trae el programa auxiliar `mount.nfs`/`mount.n
 sudo apt-get install -y nfs-common
 ```
 
-⚠️ Usar la **ruta real del export**, no el nombre de la carpeta a secas — confírmala con `showmount -e ketekasko.home.arpa` (en este caso, `/volume1/nfs-data`, no `/nfs-data`).
+⚠️ Usar la **ruta real del export**, no el nombre de la carpeta a secas — confírmala con `showmount -e ketekasko.404labo.net` (en este caso, `/volume1/nfs-data`, no `/nfs-data`).
 
 ```bash
 sudo mkdir -p /mnt/nfs-data
-sudo mount -t nfs -o vers=3 ketekasko.home.arpa:/volume1/nfs-data /mnt/nfs-data
+sudo mount -t nfs -o vers=3 ketekasko.404labo.net:/volume1/nfs-data /mnt/nfs-data
 ```
 
 Persistente mediante `/etc/fstab` en el cliente:
 
 ```
-ketekasko.home.arpa:/volume1/nfs-data /mnt/nfs-data nfs vers=3,defaults,_netdev 0 0
+ketekasko.404labo.net:/volume1/nfs-data /mnt/nfs-data nfs vers=3,defaults,_netdev 0 0
 ```
 
 ### Clientes montados hoy
@@ -186,9 +186,9 @@ Volumen total 3.6 TB (RAID 1), repartido en dos carpetas compartidas:
 | `media` | SMB | resto (~2.1 TB) | Acceso desde Mac/Windows |
 
 **`nfs-data`** — `Propiedades → pestaña "Permiso NFS"`:
-- Host/red permitida: `192.168.1.0/24`
+- Host/red permitida: `192.168.10.0/24`
 - Privilegio: Lectura/Escritura
-- Squash de root: **desactivado** — decisión consciente para que procesos dentro de contenedores que escriban como `root` lo hagan también como `root` en el NAS, sin mapear a un usuario sin privilegios (evita fallos de permisos opacos en bind mounts de Docker). Contrapartida asumida: cualquier `root` en la LAN `192.168.1.0/24` tiene control total sobre esta carpeta — aceptable en esta LAN de confianza, no expuesta a Tailscale/internet.
+- Squash de root: **desactivado** — decisión consciente para que procesos dentro de contenedores que escriban como `root` lo hagan también como `root` en el NAS, sin mapear a un usuario sin privilegios (evita fallos de permisos opacos en bind mounts de Docker). Contrapartida asumida: cualquier `root` en la LAN `192.168.10.0/24` tiene control total sobre esta carpeta — aceptable en esta LAN de confianza, no expuesta a Tailscale/internet.
 - ⚠️ **Corregido (2026-08-31)**: esto solo es cierto para el propio *montaje* (`AUTH_SYS` sí autentica por IP/red, no por cuenta, para poder montar). Una vez montada, la carpeta lleva además su propia ACL de UGOS (`ugacl_vfs`) que sí exige cuenta — ver el aviso "Permisos reales" más arriba, sección "Clientes montados hoy".
 
 **`media`** — SMB sí requiere una cuenta de usuario del NAS (`Panel de control → Usuario → Crear`) con permiso de Lectura/Escritura asignado en `Propiedades → pestaña "Permiso"` de la carpeta — sin acceso anónimo/invitado, coherente con el resto del clúster (todo autenticado).
@@ -209,11 +209,11 @@ Probado y funcionando en macOS y Windows.
 
 **macOS:**
 1. Finder → menú `Ir → Conectar al servidor…` (o `⌘K`)
-2. Dirección del servidor: `smb://ketekasko.home.arpa/media`
+2. Dirección del servidor: `smb://ketekasko.404labo.net/media`
 3. Conectar → usuario/contraseña de la cuenta con permiso sobre `media` (`linus`, ya degradado a usuario normal)
 
 **Windows:**
-1. Explorador de archivos → barra de direcciones: `\\ketekasko.home.arpa\media`
+1. Explorador de archivos → barra de direcciones: `\\ketekasko.404labo.net\media`
 2. Si pide credenciales: mismo usuario/contraseña que en macOS
 3. Para que quede como unidad fija: clic derecho en "Este equipo" → `Conectar a unidad de red` → misma ruta, marcar "Conectar de nuevo al iniciar sesión"
 
@@ -231,3 +231,14 @@ En UGOS Pro, una misma carpeta compartida tiene **pestañas de permisos independ
 - [UGREEN NAS Apps & Software | UGOS Pro, Docker & VM Support](https://ai.ugreen.com/pages/solution-software)
 - [Mounting NFS Share From UGREEN NAS to a Linux Machine](https://dzakiy.me/mounting-nfs-share-from-ugreen-nas-to-a-linux-machine)
 - [How to Connect Kodi to Your UGREEN NAS (SMB, NFS, WebDAV Guide)](https://nas.ugreen.com/blogs/how-to/connect-kodi-to-ugreen-nas)
+
+## Tras un apagado no limpio del NAS: ficheros con modo 0
+
+Si el NAS se apaga sin avisar (corte de luz), al volver pueden quedar ficheros de los volúmenes NFS con **modo 0** y los servicios que corren como un UID de usuario (Forgejo, Capataz, Open WebUI, n8n, Authentik) no podrán leerlos al reiniciarse: `open ...: permission denied`. Pasó el 2026-10-13 y el 2026-10-15 (`docs/31-docker-swarm.md`). `stat` y `find -perm` no son fiables en este NAS para detectarlo; usar:
+
+```bash
+# en retaco: audita (no cambia nada) y, con --apply, repara
+bash /srv/homelab/shared/scripts/fix-nfs-permissions.sh
+bash /srv/homelab/shared/scripts/fix-nfs-permissions.sh --apply forgejo
+```
+

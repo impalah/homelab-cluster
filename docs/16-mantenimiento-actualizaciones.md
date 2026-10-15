@@ -94,7 +94,7 @@ docker logs watchtower --tail=20
 
 `shared/scripts/check-image-updates.sh`, cron diario (`03:30`) **en `pi-obs`**, revisa por SSH cada nodo y compara el digest de cada contenedor sin label de Watchtower contra el digest actual del registro para el mismo tag.
 
-Resultado como métrica Prometheus (*textfile collector*) en `/srv/homelab/pi-obs/node-exporter-textfile/image-updates.prom`.
+Resultado como métrica Prometheus (*textfile collector*) en `/srv/homelab/node-exporter-textfile/image-updates.prom` **de cada nodo**: desde 2026-10-08 el script corre localmente por cron en cada nodo sobre sus propios contenedores (`bash check-image-updates.sh [nombre-nodo]`, `ryzen` hay que pasarlo explícito porque su hostname es `mole`), no centralizado en `pi-obs` por SSH como hasta entonces. Cada nodo a un minuto distinto de las 03:xx/04:xx para no lanzar todas las consultas anónimas a Docker Hub a la vez. Requiere `docker login registry.404labo.net` del usuario que lo ejecuta — si falta, las imágenes del registro privado se omiten **sin avisar**. Los logs van a `/var/log/homelab-image-updates.log` y `/var/log/homelab-os-updates.log`, con `logrotate` semanal.
 
 **Panel en Grafana:** `https://grafana.404labo.net/d/homelab-actualizaciones-pendientes/actualizaciones-pendientes`.
 
@@ -131,3 +131,24 @@ Revisar el changelog **antes** de tirar de la imagen nueva, especialmente Postgr
 | node-exporter, cadvisor, portainer-agent, postgres-exporter | Watchtower | Sí, diario 04:00 |
 | Resto (con estado, incl. vllm/comfyui) | Aviso en Grafana (`check-image-updates.sh`) | No, solo notifica (o nada, si es imagen local) |
 | whisper-service (imagen local, único caso hoy) | `git pull` + rebuild manual | No |
+
+## Limpieza de imágenes de Docker antiguas (`prune-docker-images.sh`)
+
+`WATCHTOWER_CLEANUP=true` solo limpia las imágenes que gestiona Watchtower. El resto (imágenes de versiones antiguas de servicios de Swarm, pruebas, compilaciones locales) se acumula: en 2026-10-14 había ~43 GB recuperables en `retaco`, ~34 GB en `pinchi`, ~15 GB en `miugarita` y ~90 GB en `ryzen`. `shared/scripts/prune-docker-images.sh` las limpia en todos los nodos (o en uno).
+
+```bash
+bash shared/scripts/prune-docker-images.sh                  # SIMULACIÓN en los 8 nodos: no borra nada
+bash shared/scripts/prune-docker-images.sh retaco pinchi    # simulación solo en esos
+bash shared/scripts/prune-docker-images.sh --apply          # borra de verdad, en todos
+bash shared/scripts/prune-docker-images.sh --keep-days 14   # margen de antigüedad distinto (7 por defecto)
+bash shared/scripts/prune-docker-images.sh --local --apply  # solo este equipo, sin SSH
+```
+
+**Qué borra**: imágenes que ningún contenedor (en marcha o parado) usa en ese nodo **y** con más de `--keep-days` días (el margen deja volver atrás un despliegue sin redescargar); con `--apply`, además contenedores parados y caché de build con el mismo margen.
+
+**Qué no toca nunca**: volúmenes (los datos), redes, imágenes en uso, y las imágenes **protegidas**: cualquier repositorio que un `docker-compose.yml` de `/srv/homelab/<nodo>/` declare con `image:` aunque ahora no tenga contenedor (la protección que evita borrar vLLM/ComfyUI/ollama en `ryzen`, que se alternan con `switch-llm-backend.sh`/`switch-gpu1-backend.sh` y pesan decenas de GB), las de dev containers de VS Code (`vsc-*`), y las que se añadan a `/srv/homelab/shared/config/prune-keep.txt` (una por línea) o a la variable `PRUNE_KEEP` (separadas por comas).
+
+⚠️ Los stacks de Swarm no dejan ningún compose en el nodo (se despliegan desde `/tmp`), así que sus imágenes no cuentan como protegidas: solo cuenta que un contenedor las use ahora. Un servicio escalado a 0 o un stack retirado pierde su imagen pasado el margen y la vuelve a descargar al desplegarlo; si el registro propio (`registry.404labo.net`, en `retaco`) estuviera caído en ese momento, no habría de dónde. Por eso no conviene un margen muy corto. Para fijar una imagen concreta, añadirla a `prune-keep.txt`.
+
+**Automatización**: pendiente de decidir. El script ya está pensado para ejecutarse en cada nodo por cron con `--local --apply`, por ejemplo semanal (`0 4 * * 0 ... prune-docker-images.sh --local --apply >> /var/log/homelab-docker-prune.log 2>&1`) bajo el crontab de `admin`, igual que `check-os-updates.sh`/`check-image-updates.sh`. Antes conviene revisar una simulación por nodo y decidir el margen.
+

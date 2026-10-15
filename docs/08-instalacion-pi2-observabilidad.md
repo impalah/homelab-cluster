@@ -1,4 +1,6 @@
-# 08 — Instalación y configuración: pi-obs (192.168.1.171)
+# 08 — Instalación y configuración: pi-obs (192.168.10.4)
+
+> ⚠️ **Retirada 2026-10-08 — documento histórico.** Esta Raspberry Pi ya no es miembro del Swarm ni aloja servicios: la observabilidad corre hoy en `miugarita` (stack Swarm `pi-obs`, alias `observability.404labo.net`). Se conserva como registro de cómo se instaló; para el estado actual, `docs/31-docker-swarm.md` y `README.md`.
 
 ## Rol del nodo
 
@@ -17,7 +19,7 @@
 
 ```mermaid
 flowchart TB
-    subgraph piobs["pi-obs — 192.168.1.171"]
+    subgraph piobs["pi-obs — 192.168.10.4"]
         OTEL["otel-collector\n:4317/:4318"]
         PROM["prometheus\n:9090"]
         GRAF["grafana\n:3000"]
@@ -57,13 +59,13 @@ network:
     eth0:
       dhcp4: false
       addresses:
-        - 192.168.1.171/24
+        - 192.168.10.4/24
       routes:
         - to: default
-          via: 192.168.1.1
+          via: 192.168.10.1
       nameservers:
         addresses:
-          - 192.168.1.170   # pi-dns
+          - 192.168.10.2   # pi-dns
           - 1.1.1.1
 ```
 
@@ -117,7 +119,7 @@ Orden de arranque (`depends_on`): `loki`/`tempo`/`prometheus` (paralelo) → `ot
 
 ## 7. Configuración post-arranque de Grafana
 
-Acceder a `https://grafana.home.arpa`, `admin` / valor de `GF_ADMIN_PASSWORD`.
+Acceder a `https://grafana.404labo.net`, `admin` / valor de `GF_ADMIN_PASSWORD`.
 
 Datasources aprovisionadas automáticamente (`config/grafana/datasources.yml`): Prometheus, Loki, Tempo — verificar en **Connections → Data Sources**, botón **Test** en cada una.
 
@@ -140,17 +142,17 @@ Datasources aprovisionadas automáticamente (`config/grafana/datasources.yml`): 
 |---|---|---|---|
 | otel-collector (OTLP) | 4317/4318 | LAN | Telemetría OTLP |
 | prometheus | 9090 | LAN (proxificado en pi-dns) | GET /-/healthy |
-| grafana | 3000 → nginx | LAN vía `https://grafana.home.arpa` | GET /api/health |
+| grafana | 3000 → nginx | LAN vía `https://grafana.404labo.net` | GET /api/health |
 | loki | 3100 | LAN | GET /ready — necesario para que promtail, en los otros 5 nodos, pueda empujar logs (`docs/04-servicios-comunes.md`, sección promtail) |
 | tempo, node-exporter, cadvisor, postgres-exporter, otel-collector metrics | varios | Solo loopback | ver comandos abajo |
 
 ```bash
-curl -s http://192.168.1.171:9090/-/healthy
-curl -s http://192.168.1.171:3100/ready
-curl -sk https://grafana.home.arpa/api/health | jq .
+curl -s http://observability.404labo.net:9090/-/healthy
+curl -s http://observability.404labo.net:3100/ready
+curl -sk https://grafana.404labo.net/api/health | jq .
 ```
 
-Desde dentro de `pi-obs` (`ssh u-obs@192.168.1.171`):
+Desde dentro de `pi-obs` (`ssh admin@192.168.10.4`):
 
 ```bash
 curl -s http://127.0.0.1:3200/ready
@@ -162,7 +164,7 @@ curl -s http://127.0.0.1:8889/metrics | head -5
 ## 9. Enviar telemetría desde otros servicios
 
 ```bash
-OTEL_EXPORTER_OTLP_ENDPOINT=http://192.168.1.171:4317
+OTEL_EXPORTER_OTLP_ENDPOINT=http://observability.404labo.net:4317
 ```
 
 `apikey-service` (pi-dns) es, a día de hoy, el único que hace esto en la práctica — logs de auditoría de accesos fallidos (canal aparte, ver `docs/06-instalacion-pi1-dns.md`), no confundir con la captura general de logs (siguiente sección), que aplica a todos los contenedores sin que el propio servicio tenga que hacer nada.
@@ -171,7 +173,7 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://192.168.1.171:4317
 
 Desde la versión con `promtail` (ver `docs/04-servicios-comunes.md`, sección promtail), **todos** los contenedores de los 6 nodos mandan su stdout/stderr a Loki automáticamente — no hace falta instrumentar nada en el propio servicio, ni siquiera es una imagen propia (n8n, postgres, sonarqube, pihole... también salen).
 
-`https://grafana.home.arpa` → **Explore** → datasource **Loki**. Consultas LogQL típicas:
+`https://grafana.404labo.net` → **Explore** → datasource **Loki**. Consultas LogQL típicas:
 
 ```logql
 {container="crawl4ai-scraper-service"}
@@ -183,7 +185,7 @@ Desde la versión con `promtail` (ver `docs/04-servicios-comunes.md`, sección p
 Verificación rápida desde cualquier nodo con acceso a `pi-obs`:
 
 ```bash
-curl -s http://192.168.1.171:3100/loki/api/v1/label/container/values | jq .
+curl -s http://observability.404labo.net:3100/loki/api/v1/label/container/values | jq .
 ```
 
 ## 11. Healthcheck manual

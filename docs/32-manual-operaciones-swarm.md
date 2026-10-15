@@ -1,5 +1,7 @@
 # 32 — Manual de operaciones de Docker Swarm (para dummies)
 
+> ⚠️ **Actualización 2026-10-08**: el Swarm son ahora **3 nodos (`retaco`, `pinchi`, `miugarita`)**; las Raspberry Pi salieron (`docs/31-docker-swarm.md`). Donde este manual (y sus capturas de Portainer) hable de "5 managers" o de `pi-obs`/`pi-sonar`/`pi-utils` como miembros, es el estado anterior. Los comandos `docker …` siguen valiendo; ejecútalos en `retaco`, el único manager real.
+
 Guía de referencia rápida para las operaciones del día a día sobre el clúster Swarm: desplegar, arrancar, parar, reiniciar, escalar, ver logs, eliminar, y cómo se gestionan los secrets. Cada operación se explica primero por CLI (la vía que usa este repo por convención) y después el equivalente paso a paso en Portainer, con capturas reales de este mismo clúster. Pensado para alguien que nunca ha tocado Docker Swarm — si ya conoces Swarm, la "Chuleta rápida" del final te basta.
 
 No repite el diseño ya explicado en `docs/31-docker-swarm.md` (por qué Swarm, por qué estos nodos sí y estos no, el historial de la migración) — este documento es solo el manual de uso.
@@ -24,13 +26,14 @@ No repite el diseño ya explicado en `docs/31-docker-swarm.md` (por qué Swarm, 
 
 | Nodo | IP | ¿Es manager del Swarm? |
 |---|---|---|
-| `retaco` | 192.168.1.174 | Sí |
-| `pi-obs` | 192.168.1.171 | Sí |
-| `pi-sonar` | 192.168.1.172 | Sí (Leader del consenso Raft ahora mismo — cualquier manager sirve igual para operar, esto solo importa para el propio Swarm internamente) |
-| `pi-utils` | 192.168.1.173 | Sí |
-| `pinchi` | 192.168.1.175 | Sí |
-| `ryzen` | 192.168.1.150 | **No** — Compose clásico, nunca se unió al Swarm |
-| `pi-dns` | 192.168.1.170 | **No** — solo DNS + Tailscale, deliberadamente fuera |
+| `retaco` | 192.168.10.7 | **Sí — el único manager real hoy** (Leader), ver `docs/31-docker-swarm.md` |
+| `miugarita` | 192.168.10.9 | No — worker (observabilidad + SonarQube) |
+| `pi-obs` | 192.168.10.4 | **No — fuera del Swarm desde 2026-10-08** (solo `nut-upsmon`) |
+| `pi-sonar` | 192.168.10.5 | **No — fuera del Swarm desde 2026-10-08** |
+| `pi-utils` | 192.168.10.3 | **No — fuera del Swarm desde 2026-10-08** |
+| `pinchi` | 192.168.10.8 | No — worker |
+| `ryzen` | 192.168.10.10 | **No** — Compose clásico, nunca se unió al Swarm |
+| `pi-dns` | 192.168.10.2 | **No** — solo DNS + Tailscale, deliberadamente fuera |
 
 Si ejecutas `docker service ls` (o cualquier comando de Swarm) en `ryzen` o `pi-dns`, Docker responde `Error response from daemon: This node is not a swarm manager.` — no porque falte software (Docker Engine ya está instalado ahí), sino porque ese nodo nunca se unió al clúster.
 
@@ -40,7 +43,7 @@ Dos formas, ninguna exige instalar nada nuevo en la máquina que no es manager �
 
 **Opción A — SSH directo cada vez (la que usa este repo hoy):**
 ```bash
-ssh u-data@192.168.1.174 "docker service ls"
+ssh admin@192.168.10.7 "docker service ls"
 ```
 Simple, sin preparación previa. Es el patrón usado en todo este repo y en el resto de este manual.
 
@@ -48,7 +51,7 @@ Simple, sin preparación previa. Es el patrón usado en todo este repo y en el r
 
 **Paso 1 — Crear el context (una sola vez por máquina):**
 ```bash
-docker context create swarm-manager --docker "host=ssh://u-data@192.168.1.174"
+docker context create swarm-manager --docker "host=ssh://admin@192.168.10.7"
 ```
 Salida real (probado en vivo desde `ryzen` para este manual):
 ```
@@ -64,7 +67,7 @@ docker context ls
 ```
 NAME            DESCRIPTION                               DOCKER ENDPOINT               ERROR
 default *       Current DOCKER_HOST based configuration   unix:///var/run/docker.sock
-swarm-manager                                             ssh://u-data@192.168.1.174
+swarm-manager                                             ssh://admin@192.168.10.7
 ```
 El asterisco (`*`) marca el context activo — al crear uno nuevo, `default` sigue siendo el activo hasta que cambies explícitamente (paso 4).
 
@@ -102,11 +105,11 @@ A diferencia de los nodos con Compose clásico (que sí tienen su `docker-compos
 
 ```bash
 # 1. Copiar el/los ficheros del stack a un nodo manager
-rsync -av docker-swarm/stacks/<nombre>/docker-compose.yml u-data@192.168.1.174:/tmp/<nombre>-compose.yml
+rsync -av docker-swarm/stacks/<nombre>/docker-compose.yml admin@192.168.10.7:/tmp/<nombre>-compose.yml
 # (Traefik es la excepción: también necesita dynamic/routes.yml, ver docker-swarm/stacks/traefik/)
 
 # 2. Desplegar desde ese nodo
-ssh u-data@192.168.1.174 "docker stack deploy -c /tmp/<nombre>-compose.yml <nombre> --with-registry-auth && rm /tmp/<nombre>-compose.yml"
+ssh admin@192.168.10.7 "docker stack deploy -c /tmp/<nombre>-compose.yml <nombre> --with-registry-auth && rm /tmp/<nombre>-compose.yml"
 ```
 
 `--with-registry-auth` reenvía tus credenciales de `registry.404labo.net` a los nodos que necesiten tirar de una imagen nueva — sin esto, un nodo que todavía no tenga la imagen en caché puede fallar el pull si el registry exige login.
@@ -140,7 +143,7 @@ docker service logs capataz_capataz-api --tail 100  # últimas 100 líneas
 docker service logs capataz_capataz-api -f           # en directo (follow)
 ```
 
-Funciona igual aunque el servicio use el driver de logging `loki` (la mayoría de este clúster, `docker-swarm/stacks/*/docker-compose.yml`) — confirmado en vivo contra `traefik_traefik` y `capataz_capataz-api`, ambos con `logging: driver: loki`. El propio driver de Loki para Docker soporta lectura además de envío, así que `docker service logs` no depende de consultar Loki aparte (aunque también puedes hacerlo, vía `curl` contra `http://192.168.1.171:3100/loki/api/v1/query_range` si quieres buscar por rango de fechas o filtrar por label — más potente para depuración seria, pero `docker service logs` basta para el día a día).
+Funciona igual aunque el servicio use el driver de logging `loki` (la mayoría de este clúster, `docker-swarm/stacks/*/docker-compose.yml`) — confirmado en vivo contra `traefik_traefik` y `capataz_capataz-api`, ambos con `logging: driver: loki`. El propio driver de Loki para Docker soporta lectura además de envío, así que `docker service logs` no depende de consultar Loki aparte (aunque también puedes hacerlo, vía `curl` contra `http://observability.404labo.net:3100/loki/api/v1/query_range` si quieres buscar por rango de fechas o filtrar por label — más potente para depuración seria, pero `docker service logs` basta para el día a día).
 
 ### 4.4. Arrancar / parar un servicio
 
@@ -199,7 +202,7 @@ docker stack rm capataz                 # elimina el stack ENTERO -- los 3 servi
 ### 4.9. Inspeccionar / depurar
 
 ```bash
-docker node ls                                  # los 5 nodos manager, su estado y quién es Leader
+docker node ls                                  # los 3 nodos, su estado y quién es Leader
 docker node ps <nombre-nodo>                     # qué tareas corren en ese nodo concreto
 docker service inspect capataz_capataz-api --pretty          # config completa, legible
 docker service inspect capataz_capataz-api --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}'
@@ -305,7 +308,7 @@ Para que esto funcione, el fichero tiene que viajar junto al `docker-compose.yml
 
 ```bash
 # Ejecutado directamente en el nodo (es manager, no hace falta mover el fichero a ningún sitio)
-ssh u-utils@192.168.1.173 "docker config create capataz-catalog-v1 /srv/homelab/pi-utils/capataz/catalog/services.example.yaml"
+ssh admin@192.168.10.3 "docker config create capataz-catalog-v1 /srv/homelab/pi-utils/capataz/catalog/services.example.yaml"
 ```
 
 Ejemplo real, mejora 43 (2026-08-31): los 4 configs de `docker-swarm/stacks/capataz/docker-compose.yml` con `external: true` (`capataz-catalog-v1`, `capataz-alembic-ini-v1`, `capataz-ca-bundle-v1`, `capataz-homelab-ca-v1`) se crearon así, uno por uno, contra los ficheros reales en `pi-utils` (`docker config create <nombre> <ruta-en-pi-utils>` desde una sesión SSH al propio nodo). Si hace falta recrearlos (nodo reinstalado, config borrado por error), es el mismo comando, con el mismo nombre si el contenido no ha cambiado, o con sufijo `-vN+1` si sí — no hay ningún script que lo automatice, igual que con los secrets (sección 5).
@@ -343,7 +346,7 @@ Nada más entrar, Portainer muestra **3 entornos separados** — esto es importa
 
 - **`pi-dns`** (Standalone) — el Docker de ese nodo, fuera del Swarm.
 - **`ryzen`** (Standalone) — el Docker de ese nodo, fuera del Swarm.
-- **`homelab-swarm`** (Swarm) — el clúster real de 5 nodos. **Este es el que te interesa para todo lo de este manual.**
+- **`homelab-swarm`** (Swarm) — el clúster real (3 nodos desde 2026-10-08). **Este es el que te interesa para todo lo de este manual.**
 
 Haz clic en `homelab-swarm` para entrar. El menú lateral izquierdo pasa a mostrar **Stacks**, **Services**, **Containers**, **Configs**, **Secrets** y **Swarm** — son las secciones que usarás.
 

@@ -123,7 +123,7 @@ positions:
   filename: /data/positions.yaml
 
 clients:
-  - url: http://192.168.1.171:3100/loki/api/v1/push
+  - url: http://observability.404labo.net:3100/loki/api/v1/push
 
 scrape_configs:
   - job_name: docker
@@ -179,7 +179,7 @@ portainer-agent:
     - <red-del-nodo>
 ```
 
-⚠️ Monta `/var/run/docker.sock`, lo que da control total sobre Docker en ese host, equivalente en la práctica a acceso como root. Es aceptable en este clúster porque ya se exige estar dentro de la LAN doméstica; conviene tenerlo presente si `portainer.home.arpa` llegara a exponerse alguna vez fuera de la red de casa.
+⚠️ Monta `/var/run/docker.sock`, lo que da control total sobre Docker en ese host, equivalente en la práctica a acceso como root. Es aceptable en este clúster porque ya se exige estar dentro de la LAN doméstica; conviene tenerlo presente si `portainer.404labo.net` llegara a exponerse alguna vez fuera de la red de casa.
 
 ## watchtower — ¿para qué sirve?
 

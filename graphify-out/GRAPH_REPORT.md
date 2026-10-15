@@ -175,7 +175,7 @@
 - Mejora 2 (completada): repositorio bajo git con remoto en GitHub
 - Mejora 5: NUT (Network UPS Tools) para el SAI existente
 - Mejora 19: Opencode — agente de código open source
-- Mejora 15: Panel de control de servicios en index.home.arpa
+- Mejora 15: Panel de control de servicios en home.404labo.net
 - Mejora 9: Tailscale — política de ACL
 - Checklist para crear un microservicio nuevo desde cero
 - Patrón común de Dockerfile (uv pip install --system, HEALTHCHECK)
@@ -207,7 +207,7 @@
 - Tarjeta SonarQube
 - Tarjeta Vaultwarden
 - tailscale (servicio docker-compose pi-dns)
-- tailscale — subnet router y split DNS de *.home.arpa
+- tailscale — subnet router y split DNS de *.404labo.net
 - cadvisor (servicio docker-compose pi-obs)
 - node-exporter (servicio docker-compose pi-obs)
 - portainer-agent (servicio docker-compose pi-obs)
@@ -231,7 +231,7 @@
 - cadvisor (retaco)
 - node-exporter (retaco)
 - portainer-agent (retaco)
-- retaco (data/automation node, 192.168.1.174)
+- retaco (data/automation node, 192.168.10.7)
 
 ## God Nodes (most connected - your core abstractions)
 1. `Settings` - 48 edges
@@ -266,7 +266,7 @@
 - **GPU alternation pattern (ollama/vllm on GPU0, whisper/comfyui on GPU1)** — docs_07_instalacion_ryzen_ollama, docs_07_instalacion_ryzen_vllm, docs_07_instalacion_ryzen_comfyui, docs_07_instalacion_ryzen_switch_llm_backend_script, docs_07_instalacion_ryzen_switch_gpu1_backend_script [EXTRACTED 1.00]
 - **Patrón repetido de promtail enviando logs Docker a Loki en pi-dns/pi-obs/pi-sonar** — pi_dns_config_promtail_promtail_config_promtail, pi_obs_config_promtail_promtail_config_promtail, pi_sonar_config_promtail_promtail_config_promtail [INFERRED 0.85]
 - **Despliegue completo del gateway Bifrost: backlog, doc de operación, servicio docker-compose y panel de acceso** — pi_sonar_docker_compose_bifrost, docs_23_bifrost_gateway_llm_bifrost, docs_22_mejoras_futuras_bifrost, pi_dns_config_nginx_html_index_html_bifrost [INFERRED 0.85]
-- **Patrón de microservicios publicados en registry.home.arpa (convención + servicios reales que la siguen)** — docs_desarrollo_microservicios_python_registry_docker_privado, pi_utils_readme_markitdown_service, pi_utils_readme_crawl4ai_scraper_service, pi_dns_readme_apikey_service [INFERRED 0.80]
+- **Patrón de microservicios publicados en registry.404labo.net (convención + servicios reales que la siguen)** — docs_desarrollo_microservicios_python_registry_docker_privado, pi_utils_readme_markitdown_service, pi_utils_readme_crawl4ai_scraper_service, pi_dns_readme_apikey_service [INFERRED 0.80]
 - **Shared layered Clean Architecture pattern across Python microservices** — services_crawl4ai_scraper_service_readme_crawl4ai_scraper_service, services_epub2pdf_service_readme_epub2pdf_service, services_markitdown_service_readme_markitdown_service, services_pdf2chunks_service_readme_pdf2chunks_service, services_whisper_service_readme_whisper_service [EXTRACTED 1.00]
 - **Ryzen GPU exclusivity switch pattern (ollama/vllm on GPU0, whisper-service/comfyui on GPU1, never concurrent)** — ryzen_docker_compose_ollama, ryzen_docker_compose_vllm, ryzen_docker_compose_whisper_service, ryzen_docker_compose_comfyui [EXTRACTED 1.00]
 - **Cross-referenced production incident: Crawl4AI shared browser memory leak taking down pi-utils** — pi_utils_docker_compose_crawl4ai_scraper_service, pi_utils_docker_compose_crawl4ai_mem_limit_rationale, services_crawl4ai_scraper_service_readme_max_pages_recycle_rationale [EXTRACTED 1.00]
@@ -375,7 +375,7 @@ Nodes (17): FixedSizeChunkingStrategy, get_chunking_strategy(), Trocea el texto 
 
 ### Community 25 - "retaco — docker-compose"
 Cohesion: 0.12
-Nodes (19): open-webui combines certifi bundle with internal CA to fix SSL verification of *.home.arpa, n8n-main (retaco), N8N_PROXY_HOPS=1 needed because nginx sits as single reverse-proxy hop in front of n8n-main, open-webui (retaco), open-webui talks only to Bifrost, not Ollama directly, for a single unified virtual-key connection, postgres-main (retaco), postgres-main published on LAN so cross-node services (postgres-exporter, sonarqube) can reach it, qdrant (retaco) (+11 more)
+Nodes (19): open-webui combines certifi bundle with internal CA to fix SSL verification of *.404labo.net, n8n-main (retaco), N8N_PROXY_HOPS=1 needed because nginx sits as single reverse-proxy hop in front of n8n-main, open-webui (retaco), open-webui talks only to Bifrost, not Ollama directly, for a single unified virtual-key connection, postgres-main (retaco), postgres-main published on LAN so cross-node services (postgres-exporter, sonarqube) can reach it, qdrant (retaco) (+11 more)
 
 ### Community 26 - "services — test_scrape_service"
 Cohesion: 0.26
@@ -443,7 +443,7 @@ Nodes (11): ApiKeyServiceDep, delete, create_key(), list_keys(), get, post, revo
 
 ### Community 42 - "docs — 06-instalacion-pi1-dns"
 Cohesion: 0.15
-Nodes (13): apikey-service, nginx auth_request pattern, api_keys table schema, nginx auth_request mechanism, Why apikey-service exists (nginx OSS lacks native JWT), ollama.home.arpa (protected service), OTLP audit logging pipeline, postgres-main (retaco, cross-host) (+5 more)
+Nodes (13): apikey-service, nginx auth_request pattern, api_keys table schema, nginx auth_request mechanism, Why apikey-service exists (nginx OSS lacks native JWT), ollama.404labo.net (protected service), OTLP audit logging pipeline, postgres-main (retaco, cross-host) (+5 more)
 
 ### Community 43 - "docs — 01-topologia"
 Cohesion: 0.21
@@ -455,7 +455,7 @@ Nodes (13): postgres_exporter monitoring role, backup-postgres.sh, backup-vaultw
 
 ### Community 45 - "shared — dns-records"
 Cohesion: 0.19
-Nodes (13): Promtail config (pi-utils), promtail (pi-utils), Promtail config (retaco), promtail (retaco), Promtail config (ryzen), promtail (ryzen observability), pi-dns.home.arpa → 192.168.1.170, pi-obs.home.arpa → 192.168.1.171 (+5 more)
+Nodes (13): Promtail config (pi-utils), promtail (pi-utils), Promtail config (retaco), promtail (retaco), Promtail config (ryzen), promtail (ryzen observability), pi-dns.404labo.net → 192.168.10.2, pi-obs.404labo.net → 192.168.10.4 (+5 more)
 
 ### Community 46 - "services — test_logging"
 Cohesion: 0.19
@@ -543,7 +543,7 @@ Nodes (9): N8N_ENCRYPTION_KEY must never change once in use, n8n-main, NODE_EXTR
 
 ### Community 70 - "pi-dns"
 Cohesion: 0.31
-Nodes (9): Arquitectura por capas (controllers/services/infrastructure/repositories/domain), Registro de puertos en uso (evitar colisiones), Registry Docker privado (registry.home.arpa) y publicación de imágenes, apikey-service — emisión/validación de API keys, auth_request de nginx, nginx — proxy inverso HTTPS del clúster, pihole — DNS autoritativo + ad-block, unbound — resolvedor DNS recursivo, crawl4ai-scraper-service — scraping anti-bot, protegido con API key (+1 more)
+Nodes (9): Arquitectura por capas (controllers/services/infrastructure/repositories/domain), Registro de puertos en uso (evitar colisiones), Registry Docker privado (registry.404labo.net) y publicación de imágenes, apikey-service — emisión/validación de API keys, auth_request de nginx, nginx — proxy inverso HTTPS del clúster, pihole — DNS autoritativo + ad-block, unbound — resolvedor DNS recursivo, crawl4ai-scraper-service — scraping anti-bot, protegido con API key (+1 more)
 
 ### Community 71 - "services — schemas"
 Cohesion: 0.36
@@ -563,15 +563,15 @@ Nodes (8): internal CA, nginx, Homelab Cluster Root CA, per-device trust store i
 
 ### Community 75 - "docs — 18-tailscale"
 Cohesion: 0.25
-Nodes (8): TS_AUTHKEY (reusable, non-ephemeral), internal CA trust (remote devices), Why interactive URL login fails in containerboot (60s kill + identity reset), pi-dns, Split DNS (home.arpa), Tailscale subnet router (192.168.1.0/24), tailscale container, Why /dev/net/tun must be a device, not a volume
+Nodes (8): TS_AUTHKEY (reusable, non-ephemeral), internal CA trust (remote devices), Why interactive URL login fails in containerboot (60s kill + identity reset), pi-dns, Split DNS (404labo.net), Tailscale subnet router (192.168.10.0/24), tailscale container, Why /dev/net/tun must be a device, not a volume
 
 ### Community 76 - "pi-utils — docker-compose"
 Cohesion: 0.25
-Nodes (8): cadvisor (pi-utils), node-exporter (pi-utils), portainer (server), portainer-agent (pi-utils), watchtower (pi-utils), Watchtower auto-updates only stateless containers via opt-in label, watchtower (retaco), portainer.home.arpa (portainer, pi-utils)
+Nodes (8): cadvisor (pi-utils), node-exporter (pi-utils), portainer (server), portainer-agent (pi-utils), watchtower (pi-utils), Watchtower auto-updates only stateless containers via opt-in label, watchtower (retaco), portainer.404labo.net (portainer, pi-utils)
 
 ### Community 77 - "ryzen — docker-compose"
 Cohesion: 0.32
-Nodes (8): comfyui (ryzen), Explicit device_ids GPU pinning (0=RTX5070 for ollama/vllm, 1=RTX3070 for whisper/comfyui) to avoid VRAM contention, whisper-service (ryzen), comfyui (documented, ryzen), whisper-service and comfyui never run together — both compete for RTX 3070 VRAM, whisper-service (documented, ryzen), comfyui.home.arpa (comfyui, ryzen), whisper.home.arpa (whisper-service, ryzen)
+Nodes (8): comfyui (ryzen), Explicit device_ids GPU pinning (0=RTX5070 for ollama/vllm, 1=RTX3070 for whisper/comfyui) to avoid VRAM contention, whisper-service (ryzen), comfyui (documented, ryzen), whisper-service and comfyui never run together — both compete for RTX 3070 VRAM, whisper-service (documented, ryzen), comfyui.404labo.net (comfyui, ryzen), whisper.404labo.net (whisper-service, ryzen)
 
 ### Community 78 - "services — test_conversion_service"
 Cohesion: 0.39
@@ -587,7 +587,7 @@ Nodes (7): nginx config path mismatch on pi-dns (bind mount vs repo path), nginx
 
 ### Community 81 - "docs — 05-instalacion-retaco"
 Cohesion: 0.29
-Nodes (7): docker buildx multi-arch build, Why apikey-service/markitdown-service build multi-arch but whisper-service doesn't, registry (private Docker registry), Why registry.home.arpa is not protected by apikey-service, Mejora 1: Automatizar copias de seguridad y copiarlas fuera del nodo, Mejora 7: Forgejo autoalojado — repositorios, CI y artefactos, Mejora 8: Registry — limpieza y garbage collection
+Nodes (7): docker buildx multi-arch build, Why apikey-service/markitdown-service build multi-arch but whisper-service doesn't, registry (private Docker registry), Why registry.404labo.net is not protected by apikey-service, Mejora 1: Automatizar copias de seguridad y copiarlas fuera del nodo, Mejora 7: Forgejo autoalojado — repositorios, CI y artefactos, Mejora 8: Registry — limpieza y garbage collection
 
 ### Community 82 - "pi-dns — docker-compose"
 Cohesion: 0.33
@@ -595,7 +595,7 @@ Nodes (7): Procedimiento de apagado y encendido ordenado del clúster, check-hea
 
 ### Community 83 - "services"
 Cohesion: 0.33
-Nodes (7): mem_limit 2g as safety net for Crawl4AI browser memory leak, crawl4ai-scraper-service (pi-utils), crawl4ai-scraper-service (project), MAX_PAGES_BEFORE_RECYCLE lowered 50→15 after production incident: orphaned Chromium renderer processes, 452MB→5.7GB RAM in ~1h, took down pi-utils node, PruningContentFilter can discard the real article on complex layouts (arstechnica.com, Substack) — unresolved, ENABLE_UNDETECTED_BROWSER requires patchright's own Chromium build, separate from playwright's, crawl4ai.scraper.home.arpa (crawl4ai-scraper-service, pi-utils)
+Nodes (7): mem_limit 2g as safety net for Crawl4AI browser memory leak, crawl4ai-scraper-service (pi-utils), crawl4ai-scraper-service (project), MAX_PAGES_BEFORE_RECYCLE lowered 50→15 after production incident: orphaned Chromium renderer processes, 452MB→5.7GB RAM in ~1h, took down pi-utils node, PruningContentFilter can discard the real article on complex layouts (arstechnica.com, Substack) — unresolved, ENABLE_UNDETECTED_BROWSER requires patchright's own Chromium build, separate from playwright's, crawl4ai.scraper.404labo.net (crawl4ai-scraper-service, pi-utils)
 
 ### Community 84 - "services — conftest"
 Cohesion: 0.33
@@ -607,7 +607,7 @@ Nodes (6): whisper-service, ComfyUI, faster-whisper lazy segment generator, GPU 
 
 ### Community 86 - "docs — 23-bifrost-gateway-llm"
 Cohesion: 0.33
-Nodes (6): Certificado compartido de pi-dns sin bifrost.home.arpa en el SAN, Open WebUI (aiohttp/certifi) no confía en la CA interna por defecto, Migración de Open WebUI de ryzen a retaco, Centralización de Open WebUI en Postgres + Qdrant (en vez de SQLite/ChromaDB), Tarjeta Open WebUI, CA interna propia para el certificado de nginx
+Nodes (6): Certificado compartido de pi-dns sin bifrost.404labo.net en el SAN, Open WebUI (aiohttp/certifi) no confía en la CA interna por defecto, Migración de Open WebUI de ryzen a retaco, Centralización de Open WebUI en Postgres + Qdrant (en vez de SQLite/ChromaDB), Tarjeta Open WebUI, CA interna propia para el certificado de nginx
 
 ### Community 87 - "shared — fix-dns-resolver"
 Cohesion: 0.40
@@ -623,7 +623,7 @@ Nodes (5): toggle-direct-access.sh self-test false negative (local routing short
 
 ### Community 90 - "docs — 19-wake-on-lan"
 Cohesion: 0.40
-Nodes (5): BIOS ErP Ready setting, Why Wake-on-LAN setting pinned explicitly in NetworkManager, NIC Wake-on: magic (802-3-ethernet.wake-on-lan), mole / ryzen (192.168.1.150), wake-mole.sh
+Nodes (5): BIOS ErP Ready setting, Why Wake-on-LAN setting pinned explicitly in NetworkManager, NIC Wake-on: magic (802-3-ethernet.wake-on-lan), mole / ryzen (192.168.10.10), wake-mole.sh
 
 ### Community 91 - "docs — 22-mejoras-futuras"
 Cohesion: 0.50
@@ -695,7 +695,7 @@ Nodes (3): Decisión: usar NFSv3 para el uso real, NFSv4 pendiente, NFSv4 se neg
 
 ### Community 109 - "pi-utils — docker-compose"
 Cohesion: 0.67
-Nodes (3): n8n-aux (pi-utils), n8n-aux Task Broker port set to 5680 to avoid collision with N8N_PORT 5679, n8n-aux.home.arpa (n8n-aux, pi-utils)
+Nodes (3): n8n-aux (pi-utils), n8n-aux Task Broker port set to 5680 to avoid collision with N8N_PORT 5679, n8n-aux.404labo.net (n8n-aux, pi-utils)
 
 ### Community 110 - "ryzen — docker-compose"
 Cohesion: 1.00

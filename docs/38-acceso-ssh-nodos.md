@@ -21,25 +21,30 @@ Esto permite controlar cualquier nodo indistintamente por SSH a pelo, por Ansibl
 
 ---
 
-## 2. Estado actual (auditado 2026-09-15, con honestidad)
+## 2. Estado actual (auditado 2026-09-15, actualizado 2026-09-29 con la alta de `miugarita`)
+
+> ⚠️ **Actualización 2026-10-08 (mejora 52):** la tabla de abajo describe el estado de la auditoría original. Hoy los 8 nodos tienen `admin` y clave propia; ver la sección 7. Los usuarios antiguos siguen existiendo, sin retirar.
 
 Lo que ya existe y funciona, documentado en `docs/01-topologia.md` ("Acceso SSH a los nodos"):
 
-| Nodo | Usuario actual | Grupos |
-|---|---|---|
-| `retaco` | `u-data` | `sudo`, `docker` |
-| `pi-dns` | `u-dns` | `sudo`, `docker` |
-| `pi-obs` | `u-obs` | `sudo`, `docker` |
-| `pi-sonar` | `u-sonar` | `sudo`, `docker` |
-| `pi-utils` | `u-utils` | `sudo`, `docker` |
-| `pinchi` | `u-forge` | `sudo`, `docker` |
+| Nodo | Usuario actual | Grupos | Modelo |
+|---|---|---|---|
+| `retaco` | `u-data` | `sudo`, `docker` | antiguo (usuario arbitrario, clave compartida) |
+| `pi-dns` | `u-dns` | `sudo`, `docker` | antiguo |
+| `pi-obs` | `u-obs` | `sudo`, `docker` | antiguo |
+| `pi-sonar` | `u-sonar` | `sudo`, `docker` | antiguo |
+| `pi-utils` | `u-utils` | `sudo`, `docker` | antiguo |
+| `pinchi` | `u-forge` | `sudo`, `docker` | antiguo |
+| `miugarita` | `admin` | `sudo`, `docker` | ✅ objetivo de este documento (desde 2026-10-08 el resto de nodos también, ver sección 7) (sección 5.6 aplicada el 2026-09-29, `docs/39-instalacion-miugarita.md`) |
 
-Dos cosas que el estado actual **no** cumple frente al modelo objetivo de este documento (sección 1):
+`miugarita` es la prueba de que el procedimiento de este documento funciona de punta a punta tal como está escrito — se siguió literalmente (usuario `admin`, clave propia generada fuera del nodo, proyecto `ssh-access` creado en Infisical porque no existía todavía, respaldo en Vaultwarden) sin necesitar ningún ajuste.
+
+Dos cosas que el resto de nodos (todos salvo `miugarita`) **no** cumplen frente al modelo objetivo de este documento (sección 1):
 
 1. **Usuarios distintos y arbitrarios por nodo** — ninguno se puede deducir del nombre del nodo (`u-data` para `retaco`, `u-forge` para `pinchi`...), hay que consultar esta tabla cada vez. Es justo lo que este documento corrige (usuario único `admin`).
-2. **Una única clave privada compartida** (verificado en el propio `~/.ssh/` de `ryzen`: solo existe `id_ed25519`, autorizada en los 6 nodos) — la misma clave abre los 6 usuarios distintos. Si esa clave se filtrara, comprometería los 6 nodos a la vez, no solo uno. El modelo objetivo (sección 5) usa una clave `ed25519` distinta por nodo.
+2. **Una única clave privada compartida** (verificado en el propio `~/.ssh/` de `ryzen`: solo existe `id_ed25519`, autorizada en esos 6 nodos) — la misma clave abre los 6 usuarios distintos. Si esa clave se filtrara, comprometería los 6 nodos a la vez, no solo uno. El modelo objetivo (sección 5) usa una clave `ed25519` distinta por nodo — `miugarita` ya la tiene.
 
-Ninguna de las dos es bloqueante para seguir operando mientras se aplica la migración — es exactamente el trabajo pendiente descrito en la **mejora 52** (`docs/22-mejoras-futuras.md`).
+Ninguna de las dos es bloqueante para seguir operando mientras se aplica la migración al resto de nodos — era exactamente el trabajo de la **mejora 52**, ya completada el 2026-10-08 (ver sección 7) (`docs/22-mejoras-futuras.md`).
 
 `ryzen` no tiene hoy ningún usuario de administración dedicado (se opera como `linus`, el usuario personal del puesto) ni `sshd` habilitado para acceso entrante — lo que este documento resuelve, punto 3.2.
 
@@ -179,9 +184,9 @@ El estado actual (sección 2) usa una sola clave para los 6 nodos — cómodo, p
 
 El clúster ya tiene un gestor de secretos propio, `infisical.404labo.net` (`docs/26-infisical-secretos.md`), usado hoy para credenciales de servicios — se reutiliza el mismo mecanismo para las claves SSH de administración, en vez de inventar un almacén nuevo:
 
-- Proyecto Infisical dedicado: **`ssh-access`** (nuevo, separado de los proyectos por servicio como `forgejo` — esto es acceso a infraestructura, no un secreto de aplicación).
-- Una carpeta por nodo, entorno `prod`: `/ssh-access/<nodo>/`, con el secreto `PRIVATE_KEY` (el contenido completo de la clave privada, multilínea — Infisical ya almacena secretos así, mismo tipo de dato que un `.pem`). El usuario al que pertenece (`admin`, siempre) no hace falta guardarlo aparte — es constante.
-- Metadatos opcionales en la misma carpeta, útiles para auditoría sin tener que descifrar nada: `PUBLIC_KEY`, `FINGERPRINT` (`ssh-keygen -lf`).
+- Proyecto Infisical dedicado: **`ssh-access`** (creado el 2026-09-29 al dar de alta `miugarita`, separado de los proyectos por servicio como `forgejo` — esto es acceso a infraestructura, no un secreto de aplicación).
+- Una carpeta por nodo, entorno `prod`: `/ssh-access/<nodo>/`, con el secreto `PRIVATE_KEY` (el contenido completo de la clave privada, multilínea — Infisical ya almacena secretos así, mismo tipo de dato que un `.pem`). El usuario al que pertenece (`admin`, siempre) no hace falta guardarlo aparte — es constante. Hoy solo existe `/ssh-access/miugarita/`.
+- Metadatos opcionales en la misma carpeta, útiles para auditoría sin tener que descifrar nada: `PUBLIC_KEY`, `FINGERPRINT` (`ssh-keygen -lf`) — ambos presentes en `/ssh-access/miugarita/`.
 
 La clave privada **no vive en ningún fichero de este repositorio ni en ningún `.env`** — coherente con la norma ya existente del proyecto ("Secrets are always `CHANGE_ME` placeholders...", `CLAUDE.md`).
 
@@ -201,7 +206,7 @@ ssh admin@<ip>
 
 Con la clave ya en el agente, `ssh` la usa automáticamente (sin `-i`) mientras dure la sesión del agente — conectar a varios nodos en la misma sesión de trabajo solo necesita repetir el `ssh-add` una vez por nodo, no en cada `ssh`. Como el usuario es siempre `admin`, lo único que cambia entre nodos al conectar es la IP.
 
-Este flujo requiere estar autenticado contra Infisical (`infisical login`, sesión personal del operador — no una identidad de máquina, es un humano tecleando el comando). Empaquetar esto en un script (`shared/scripts/ssh-node.sh <nodo>` propuesto, no implementado todavía — ver mejora 52) es el paso natural siguiente para que sea un solo comando en vez de tres — ese script puede resolver `<nodo>` → IP internamente (mismo mapa que ya usa `shared/scripts/toggle-direct-access.sh`), de forma que ni siquiera haga falta recordar la IP, solo el nombre corto del nodo.
+Este flujo requiere estar autenticado contra Infisical (`infisical login`, sesión personal del operador — no una identidad de máquina, es un humano tecleando el comando). Empaquetar esto en un script (`shared/scripts/ssh-node.sh <nodo>`, implementado en la mejora 52) es el paso natural siguiente para que sea un solo comando en vez de tres — ese script puede resolver `<nodo>` → IP internamente (mismo mapa que ya usa `shared/scripts/toggle-direct-access.sh`), de forma que ni siquiera haga falta recordar la IP, solo el nombre corto del nodo.
 
 ### 5.5 Aplicable a Ansible, sin cambios en el mecanismo
 
@@ -213,13 +218,13 @@ Ansible usa por defecto el mismo `ssh-agent` del sistema que cualquier `ssh` de 
 ansible_user=admin
 
 [cluster]
-retaco    ansible_host=192.168.1.174
-pi-dns    ansible_host=192.168.1.170
-pi-obs    ansible_host=192.168.1.171
-pi-sonar  ansible_host=192.168.1.172
-pi-utils  ansible_host=192.168.1.173
-pinchi    ansible_host=192.168.1.175
-ryzen     ansible_host=192.168.1.150
+retaco    ansible_host=192.168.10.7
+pi-dns    ansible_host=192.168.10.2
+pi-obs    ansible_host=192.168.10.4
+pi-sonar  ansible_host=192.168.10.5
+pi-utils  ansible_host=192.168.10.3
+pinchi    ansible_host=192.168.10.8
+ryzen     ansible_host=192.168.10.10
 ```
 
 Antes de `ansible-playbook`, cargar en el agente las claves de todos los nodos objetivo (mismo `ssh-add` del punto 5.4, una vez por nodo — o todas de golpe con un bucle sobre las carpetas de `/ssh-access/` en Infisical). Un `ansible-playbook -i inventory.ini site.yml --limit pi-obs` solo necesita tener cargada la clave de `pi-obs` en ese momento, no las siete.
@@ -256,6 +261,20 @@ Rotar una clave: generar un par nuevo, añadir la pública nueva a `authorized_k
 
 ---
 
-## 7. Trabajo pendiente
+## 7. Estado de la aplicación (mejora 52, 2026-10-08)
 
-Este documento fija el procedimiento a seguir de aquí en adelante — no implica que ya esté aplicado en el clúster real. Ver **mejora 52** (`docs/22-mejoras-futuras.md`) para el trabajo concreto que queda: crear el proyecto `ssh-access` en Infisical, dar de alta `admin` en los 7 nodos (incluido `ryzen`, que hoy no tiene ninguna cuenta de administración dedicada), retirar los 6 usuarios antiguos una vez verificado el nuevo acceso, y escribir `shared/scripts/ssh-node.sh` (el envoltorio del punto 5.4, hoy solo descrito como comandos sueltos).
+Aplicado en los 8 nodos (`retaco`, `pinchi`, `miugarita`, `pi-dns`, `pi-obs`, `pi-sonar`, `pi-utils`, `ryzen`): usuario `admin` (grupos `sudo` y `docker`, `sudo` sin contraseña), clave `ed25519` propia por nodo generada fuera del nodo, y `sshd` endurecido con el drop-in `00-homelab.conf` (contraseña y root rechazados, verificado en cada nodo). En `retaco` y `pinchi` la clave se **rotó** (sección 5.8) porque la anterior ya no era recuperable desde Infisical por la interfaz. `shared/scripts/ssh-node.sh` implementa el punto 5.4.
+
+**Respaldo en Vaultwarden (5.3) hecho:** items `SSH admin@<nodo>.404labo.net` (tipo Clave SSH) para los 8 nodos, importados el 2026-10-08 desde un JSON en formato Bitwarden que se borró (con `shred`) tras la importación.
+
+**Scripts y documentación migrados a `admin`** (todos los de `shared/scripts/` y `docker-swarm/init/`, y los ejemplos de `docs/`). La clave que ssh ofrece a cada nodo la decide `shared/config/ssh/homelab_ssh_config` (incluido desde `~/.ssh/config`). `deploy-traefik-cert.sh` entra ahora como `admin@retaco` con su clave dedicada.
+
+**Seguimiento, fuera de la mejora 52:**
+
+- **Crones movidos a `admin`** (2026-10-08): `check-os-updates.sh` y `check-image-updates.sh` en los 7 nodos con Docker (login al registry, ficheros de métricas, logs y `logrotate` pasados a `admin`; crontabs antiguos vaciados, copia en `~admin/crontab-<cuenta>.bak`), y `renew-letsencrypt.sh` en `pi-dns` (propiedad de `acme.sh` a `admin` y clave dedicada propia `~admin/.ssh/id_ed25519_retaco_certs` hacia `admin@retaco`, la de `u-dns` retirada de `authorized_keys`).
+- **Retirar las cuentas antiguas** (`u-data`, `u-dns`, `u-obs`, `u-sonar`, `u-utils`, `u-forge`): ya no las usa nada interactivo, ni scripts ni crones. Pendiente porque siguen siendo dueñas de unos 60-100 ficheros de `/srv/homelab` por nodo y porque su UID (1000/1001) coincide con el de contenedores (Forgejo, Authentik, n8n...): **no hacer `chown -R` de datos montados**; cambiar solo la propiedad de configuración y scripts, y borrar la cuenta con `deluser` sin `--remove-all-files`.
+- **Renovación del certificado de Let's Encrypt arreglada (2026-10-08, independiente de esta mejora):** `renew-letsencrypt.sh` fallaba cada noche con `unable to authenticate with universal auth` porque la identidad de máquina `acme-dns-renewer` y su carpeta `/acme-dns-renewer/` se perdieron en la reconstrucción de Infisical del 2026-09-29 (el proyecto principal ya no la tiene; el id viejo del `.env` da 404). El script prueba ahora Infisical y, si no responde, avisa en el log y usa las credenciales AWS que `acme.sh` guardó en `account.conf` (`SAVED_AWS_*`, modo 600), validadas con una emisión de prueba en staging contra Route53. Hoy el cron llega a `acme.sh` y responde `Skipping` (próxima renovación el 2026-10-26; caduca el 2026-11-24). **Rotación del secreto de Traefik verificada a mano el 2026-10-08:** `deploy-traefik-cert.sh` ejecutado como `admin` en `pi-dns` con el certificado vigente rotó `404labo-net-{crt,key}-v3` → `v4` en unos 20 s (corte breve de HTTPS: Traefik corre con 1 réplica y `stop-first`), el certificado servido no cambió (misma huella) y los 13 hostnames comprobados respondieron; `docker-swarm/stacks/traefik/docker-compose.yml` actualizado a `v4`. Opcional: restaurar la identidad en Infisical para volver al diseño original.
+
+**Subir o rotar una clave:** `shared/scripts/upload-ssh-key.sh <nodo>` (requiere `infisical login --domain https://infisical.404labo.net` en una terminal interactiva); `secrets set` sobrescribe, no hace falta borrar antes.
+
+**Gotchas encontrados al aplicarlo:** la interfaz web de Infisical dejó de aceptar el pegado de la clave a mitad de sesión (la CLI es más fiable); el login de Infisical no es utilizable sin terminal interactiva (por eso `ssh-node.sh` usa `timeout` y cae al respaldo local); y la importación de secretos por "Paste Secrets" de la interfaz de Infisical acepta JSON con la clave multilínea en una sola cadena (`\n`), que es la forma más fiable de subir una clave privada sin pasarla por pantalla.

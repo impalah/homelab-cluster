@@ -2,7 +2,7 @@
 
 ## Qué es y por qué
 
-Mejora 25 del backlog (`docs/22-mejoras-futuras.md`). `apikey-service` ya resuelve autenticación **máquina a máquina** (`X-Api-Key`, `docs/06-instalacion-pi1-dns.md`), pero no había nada equivalente para **personas** con sesión de navegador — cada panel de administración del clúster tenía su propia cuenta suelta, y `prometheus.home.arpa` no tenía ninguna autenticación en absoluto, ni propia ni de `apikey-service`. Authentik cubre ese hueco: identidad centralizada, con OIDC nativo donde la app lo soporte y *forward-auth* (vía nginx) donde no.
+Mejora 25 del backlog (`docs/22-mejoras-futuras.md`). `apikey-service` ya resuelve autenticación **máquina a máquina** (`X-Api-Key`, `docs/06-instalacion-pi1-dns.md`), pero no había nada equivalente para **personas** con sesión de navegador — cada panel de administración del clúster tenía su propia cuenta suelta, y `prometheus.404labo.net` no tenía ninguna autenticación en absoluto, ni propia ni de `apikey-service`. Authentik cubre ese hueco: identidad centralizada, con OIDC nativo donde la app lo soporte y *forward-auth* (vía nginx) donde no.
 
 Alcance de esta implementación: desplegar Authentik en producción + protegerlo con Prometheus como piloto verificado (el hueco de seguridad real, sin ninguna auth hoy) — mismo patrón que Infisical/`apikey-service` en la mejora 16. Grafana/Portainer vía OIDC nativo, y evaluar SonarQube/Pi-hole, quedan como roadmap (ver "Pendiente" más abajo), no bloqueando esto.
 
@@ -32,25 +32,25 @@ En su lugar se usa el **outpost embebido**, el que trae el propio `authentik-ser
 
 **Nota de proceso**: el Proxy Provider creado para Prometheus no se asignó solo al outpost embebido en esta versión — hubo que entrar en Applications → Outposts → editar el "authentik Embedded Outpost" y añadirlo a mano a "Assigned applications". No dar por hecho la asignación automática en migraciones futuras, confirmarlo cada vez.
 
-### `home.arpa` está en la Public Suffix List — nada de modo "domain-level"
+### `404labo.net` está en la Public Suffix List — nada de modo "domain-level"
 
-Primer intento real (no lo que se planteó originalmente en el backlog): Proxy Provider en modo **"Forward auth (domain level)"**, con `Cookie domain=home.arpa`, pensado para compartir una sola sesión entre todos los servicios que se protejan así con Authentik en el futuro (Prometheus hoy, Grafana/Portainer/etc. más adelante).
+Primer intento real (no lo que se planteó originalmente en el backlog): Proxy Provider en modo **"Forward auth (domain level)"**, con `Cookie domain=404labo.net`, pensado para compartir una sola sesión entre todos los servicios que se protejan así con Authentik en el futuro (Prometheus hoy, Grafana/Portainer/etc. más adelante).
 
 **Falló en producción** — login correcto contra Authentik, pero el callback devolvía `HTTP ERROR 400`. Los logs de `authentik-server` lo dejaron claro: `"event":"mismatched session ID"` / `"event":"invalid state"`, con el campo `"should":""` (vacío) — es decir, la cookie de sesión que Authentik puso durante el `/start` nunca llegó de vuelta en la petición del `/callback`.
 
-Motivo real, confirmado contra la [Public Suffix List](https://publicsuffix.org/list/public_suffix_list.dat) pública: `home.arpa` está **explícitamente incluido** en esa lista —
+Motivo real, confirmado contra la [Public Suffix List](https://publicsuffix.org/list/public_suffix_list.dat) pública: `404labo.net` está **explícitamente incluido** en esa lista —
 
 ```
 // arpa : https://www.iana.org/domains/root/db/arpa.html
 arpa
 ...
-home.arpa
+404labo.net
 ...
 ```
 
-— precisamente porque la RFC 8375 lo reserva como dominio de "homenet". La Public Suffix List es lo que usan todos los navegadores modernos para decidir qué "cuenta como un dominio propio" a efectos de cookies — exactamente el mismo mecanismo que impide que una web ponga una cookie con `Domain=com` o `Domain=co.uk`. Con `home.arpa` en esa lista, **ningún navegador acepta una cookie con `Domain=home.arpa`** — la descarta en silencio, sin ningún error visible ni en la consola ni en la respuesta HTTP, así que el síntoma es exactamente el que se vio: todo parece ir bien hasta el callback, que falla porque la sesión que debería estar en la cookie sencillamente no está.
+— precisamente porque la RFC 8375 lo reserva como dominio de "homenet". La Public Suffix List es lo que usan todos los navegadores modernos para decidir qué "cuenta como un dominio propio" a efectos de cookies — exactamente el mismo mecanismo que impide que una web ponga una cookie con `Domain=com` o `Domain=co.uk`. Con `404labo.net` en esa lista, **ningún navegador acepta una cookie con `Domain=404labo.net`** — la descarta en silencio, sin ningún error visible ni en la consola ni en la respuesta HTTP, así que el síntoma es exactamente el que se vio: todo parece ir bien hasta el callback, que falla porque la sesión que debería estar en la cookie sencillamente no está.
 
-**Arreglo real**: cambiar el Proxy Provider a modo **"Forward auth (single application)"**, con `External Host=https://prometheus.home.arpa` — la cookie de sesión queda entonces scoped a `prometheus.home.arpa`, un dominio real (no un sufijo de la PSL), y el navegador la acepta sin problema. Coste aceptado: cada servicio protegido así necesita su propio Provider y su propio login — sin sesión compartida entre servicios bajo `*.home.arpa`. Afecta a la mejora 29 (Grafana/Portainer): el modo "domain level" no es una opción viable para ningún servicio de este clúster mientras se use `*.home.arpa` como dominio interno — cada forward-auth futuro será "single application" también.
+**Arreglo real**: cambiar el Proxy Provider a modo **"Forward auth (single application)"**, con `External Host=https://prometheus.404labo.net` — la cookie de sesión queda entonces scoped a `prometheus.404labo.net`, un dominio real (no un sufijo de la PSL), y el navegador la acepta sin problema. Coste aceptado: cada servicio protegido así necesita su propio Provider y su propio login — sin sesión compartida entre servicios bajo `*.404labo.net`. Afecta a la mejora 29 (Grafana/Portainer): el modo "domain level" no es una opción viable para ningún servicio de este clúster mientras se use `*.404labo.net` como dominio interno — cada forward-auth futuro será "single application" también.
 
 ## Despliegue
 
@@ -69,20 +69,20 @@ authentik-worker:
   # mismas variables, sin puerto publicado (proceso de fondo, no HTTP propio)
 ```
 
-Publicado en `authentik.home.arpa` vía nginx (`pi-dns`), sin `apikey-auth.conf` — Authentik gestiona su propio login, mismo criterio que `infisical.home.arpa`/`bifrost.home.arpa`.
+Publicado en `authentik.404labo.net` vía nginx (`pi-dns`), sin `apikey-auth.conf` — Authentik gestiona su propio login, mismo criterio que `infisical.404labo.net`/`bifrost.404labo.net`.
 
-## Cómo se protegió `prometheus.home.arpa`
+## Cómo se protegió `prometheus.404labo.net`
 
 Procedimiento completo, para repetir con el siguiente servicio (mejora 29) — instrucciones manuales en la UI de Authentik primero, nginx después.
 
-### 1. El Proxy Provider (UI de Authentik, `https://authentik.home.arpa/if/admin/`)
+### 1. El Proxy Provider (UI de Authentik, `https://authentik.404labo.net/if/admin/`)
 
 1. **Applications → Providers → Create**.
 2. Tipo: **Proxy Provider**.
 3. Nombre: `prometheus` (usar el nombre del servicio, en minúsculas, para que sea fácil identificar cuál es cuál cuando haya varios).
 4. **Authorization flow**: dejar el que venga preseleccionado por defecto (normalmente `default-provider-authorization-implicit-consent`).
-5. **Proxy Type**: **"Forward auth (single application)"** — **no** "domain level" (ver el porqué más arriba: `home.arpa` está en la Public Suffix List, ningún navegador acepta una cookie compartida bajo ese dominio).
-6. **External Host**: `https://prometheus.home.arpa` — la URL pública real del servicio a proteger, con esquema incluido.
+5. **Proxy Type**: **"Forward auth (single application)"** — **no** "domain level" (ver el porqué más arriba: `404labo.net` está en la Public Suffix List, ningún navegador acepta una cookie compartida bajo ese dominio).
+6. **External Host**: `https://prometheus.404labo.net` — la URL pública real del servicio a proteger, con esquema incluido.
 7. Dejar el resto de campos (validez del token, etc.) en su valor por defecto.
 8. Guardar.
 
@@ -92,7 +92,7 @@ Procedimiento completo, para repetir con el siguiente servicio (mejora 29) — i
 2. Nombre: `Prometheus`.
 3. Slug: se autogenera (`prometheus`), dejarlo así.
 4. **Provider**: seleccionar el `prometheus` creado en el paso anterior.
-5. **Launch URL** (opcional): `https://prometheus.home.arpa` — para que aparezca como acceso directo en el panel de aplicaciones de Authentik.
+5. **Launch URL** (opcional): `https://prometheus.404labo.net` — para que aparezca como acceso directo en el panel de aplicaciones de Authentik.
 6. Guardar.
 
 ### 3. Dar acceso a un usuario/grupo
@@ -116,12 +116,12 @@ Uso en el `server{}` del servicio a proteger:
 ```nginx
 server {
     listen 443 ssl;
-    server_name prometheus.home.arpa;
+    server_name prometheus.404labo.net;
     include /etc/nginx/authentik-auth.conf;
     location / {
         auth_request /outpost.goauthentik.io/auth/nginx;
         error_page 401 = @goauthentik_proxy_signin;
-        proxy_pass http://192.168.1.171:9090;
+        proxy_pass http://observability.404labo.net:9090;
         include /etc/nginx/proxy-common.conf;
     }
 }
@@ -138,25 +138,25 @@ Despliegue paso a paso (nodo `pi-dns`):
 
 # 2. Desplegar el fichero — patrón estándar del repo (/tmp + sudo cp, NUNCA
 #    rsync/scp directo al destino final, ver docs/01-topologia.md):
-rsync -av pi-dns/config/nginx/authentik-auth.conf u-dns@192.168.1.170:/tmp/authentik-auth.conf
-ssh u-dns@192.168.1.170 "sudo cp /tmp/authentik-auth.conf /srv/homelab/pi-dns/nginx/conf/authentik-auth.conf && rm /tmp/authentik-auth.conf"
+rsync -av pi-dns/config/nginx/authentik-auth.conf admin@192.168.10.2:/tmp/authentik-auth.conf
+ssh admin@192.168.10.2 "sudo cp /tmp/authentik-auth.conf /srv/homelab/pi-dns/nginx/conf/authentik-auth.conf && rm /tmp/authentik-auth.conf"
 
 # 3. Desplegar nginx.conf con el bloque server{} actualizado, mismo patrón.
 
 # 4. Como el bind-mount es NUEVO, "nginx -s reload" no basta — hay que
 #    recrear el contenedor para que recoja el volumen:
-ssh u-dns@192.168.1.170 "cd /srv/homelab/pi-dns && docker compose up -d nginx"
+ssh admin@192.168.10.2 "cd /srv/homelab/pi-dns && docker compose up -d nginx"
 
 # 5. Validar antes de dar por bueno:
-ssh u-dns@192.168.1.170 "docker compose exec nginx nginx -t"
+ssh admin@192.168.10.2 "docker compose exec nginx nginx -t"
 ```
 
 **Gotcha real, encontrado al editar `authentik-auth.conf` una SEGUNDA vez** (para pasar de domain-level a single-application): incluso desplegando con el patrón correcto (`/tmp` + `sudo cp`, que en teoría reescribe el mismo inodo — ver `docs/01-topologia.md`), el contenedor `nginx` siguió sirviendo el contenido viejo tras el `nginx -s reload`. Confirmado con `docker exec nginx stat -c '%i' /etc/nginx/authentik-auth.conf` frente a `stat -c '%i'` del fichero en el host: **inodos distintos** (`128560` en el contenedor, `128592` en el host) — el bind-mount del contenedor ya no apuntaba al inodo que el host estaba reescribiendo, probablemente porque la primerísima vez que se creó este fichero se desplegó con un `rsync` directo al destino final (el error que el propio `docs/01-topologia.md` avisa evitar), dejando el mount de esa recreación del contenedor "enganchado" a un inodo que los `cp` posteriores ya no tocaban. Solución: `docker compose up -d --force-recreate nginx` — fuerza un bind-mount nuevo del fichero tal cual está en ese momento en el host, sin depender de qué inodo tuviera antes. Ante cualquier duda con un fichero bind-montado individual que "no coge" un cambio pese a haber usado `cp`, comparar inodos con `stat -c '%i'` antes de asumir que el problema está en otro sitio.
 
 ## Verificación end-to-end
 
-- Sanity de servicios no tocados (`n8n.home.arpa`) sin cambios, antes y después de cada `nginx -s reload`/recreate.
-- `https://prometheus.home.arpa` sin sesión → `302` a `https://prometheus.home.arpa/outpost.goauthentik.io/start?rd=...` — **mismo host**, no `authentik.home.arpa` (confirmado con `curl -D -`, no un 401 seco; ver la sección de la Public Suffix List sobre por qué es importante que el redirect se quede en el mismo dominio).
+- Sanity de servicios no tocados (`n8n.404labo.net`) sin cambios, antes y después de cada `nginx -s reload`/recreate.
+- `https://prometheus.404labo.net` sin sesión → `302` a `https://prometheus.404labo.net/outpost.goauthentik.io/start?rd=...` — **mismo host**, no `authentik.404labo.net` (confirmado con `curl -D -`, no un 401 seco; ver la sección de la Public Suffix List sobre por qué es importante que el redirect se quede en el mismo dominio).
 - Login real en navegador → llega hasta Prometheus tras el redirect, sesión ya autenticada.
 - Logs de `authentik-server`/`authentik-worker`: migraciones completas sin error, sin errores de conexión a Postgres ni a Infisical.
 - Reinicio de ambos contenedores (`docker compose restart authentik-server authentik-worker`) → recuperan solos, healthy, y el forward-auth de Prometheus sigue funcionando igual después.
@@ -167,7 +167,7 @@ ssh u-dns@192.168.1.170 "docker compose exec nginx nginx -t"
 
 No incluido en esta ronda, a propósito (ver "Alcance" arriba):
 
-1. **Grafana y Portainer vía OIDC nativo** — ambos lo traen de serie (Community Edition incluida), da identidad real dentro de la propia app (usuario, grupos, roles), preferible a forward-auth siempre que exista. Crear un OAuth2/OIDC Provider por app en Authentik, configurar el cliente en cada app. La limitación de la Public Suffix List (ver arriba) no afecta a OIDC nativo — cada app gestiona su propia sesión tras el login, no depende de una cookie compartida bajo `home.arpa`.
+1. **Grafana y Portainer vía OIDC nativo** — ambos lo traen de serie (Community Edition incluida), da identidad real dentro de la propia app (usuario, grupos, roles), preferible a forward-auth siempre que exista. Crear un OAuth2/OIDC Provider por app en Authentik, configurar el cliente en cada app. La limitación de la Public Suffix List (ver arriba) no afecta a OIDC nativo — cada app gestiona su propia sesión tras el login, no depende de una cookie compartida bajo `404labo.net`.
 2. **Evaluar SonarQube y Pi-hole** — login propio ya débil/único en ambos, candidatos a forward-auth si se hace (mismo `authentik-auth.conf`, modo single-application obligatorio — ver la sección de la Public Suffix List), menor prioridad que Prometheus.
 3. **n8n** — Community Edition no trae SSO propio (solo Enterprise), candidato a forward-auth si se hace.
 4. Vaultwarden y `apikey-service` **no** se ponen detrás de Authentik — Vaultwarden tiene su propio modelo E2E (añadir SSO delante lo cambiaría sin necesidad real), `apikey-service` resuelve un problema distinto (máquinas, no personas).
@@ -175,3 +175,43 @@ No incluido en esta ronda, a propósito (ver "Alcance" arriba):
 ## Backup
 
 `authentik` es una base más dentro de `postgres-main`, ya cubierta por el bucle existente de `shared/scripts/backup-postgres.sh` sin cambios adicionales (a diferencia de Infisical, que sí necesitó un caso nuevo por tener instancia propia). `AUTHENTIK_SECRET_KEY` también a Vaultwarden, no solo a Infisical — perderla sin backup deja ilegibles todas las sesiones/datos cifrados existentes.
+
+## Crear un proveedor OIDC por código (en vez de por la interfaz)
+
+Para aplicaciones nuevas (primer caso: Komodo, `docs/40-komodo.md`, 2026-10-15) es más repetible y no expone el secreto del cliente por pantalla crear el proveedor y la aplicación con la shell de Authentik, dentro del contenedor `authentik-server`.
+
+**Obstáculo**: un `docker exec ... ak shell` normal falla con `Secret key missing`, porque el secreto (`AUTHENTIK_SECRET_KEY`...) lo inyecta el wrapper de Infisical en el proceso principal, no está en el entorno de un `exec` nuevo. Solución: un pequeño script de Python que busca en `/proc` un proceso con `AUTHENTIK_SECRET_KEY` en su entorno y hace `execvpe("ak", ["ak","shell"], ese_entorno)`; el script a ejecutar entra por la entrada estándar. Los secretos no salen del contenedor.
+
+```python
+# dentro del contenedor, p. ej. /tmp/ak_run.py; se usa:  docker exec -i <ctr> python /tmp/ak_run.py < script.py
+import os, sys
+env = None
+for pid in sorted((p for p in os.listdir("/proc") if p.isdigit()), key=int):
+    try: raw = open(f"/proc/{pid}/environ", "rb").read().split(b"\0")
+    except Exception: continue
+    e = dict(kv.split(b"=", 1) for kv in raw if b"=" in kv)
+    if b"AUTHENTIK_SECRET_KEY" in e and int(pid) != os.getpid():
+        env = {k.decode(): v.decode() for k, v in e.items()}; break
+os.execvpe("ak", ["ak", "shell"], env)
+```
+
+El script de Django (resumen; ver `docs/40-komodo.md` para los valores reales):
+
+```python
+p = OAuth2Provider(name="App")
+p.authorization_flow = Flow.objects.get(slug="default-provider-authorization-implicit-consent")
+p.invalidation_flow  = Flow.objects.get(slug="default-provider-invalidation-flow")
+p.client_type = "confidential"; p.client_id = ...; p.client_secret = ...   # secrets.token_urlsafe(...)
+p.redirect_uris = [RedirectURI(RedirectURIMatchingMode.STRICT, "https://app.404labo.net/auth/oidc/callback")]
+p.signing_key = CertificateKeyPair.objects.get(name="authentik Self-signed Certificate")
+p.grant_types = ["authorization_code", "refresh_token"]      # ← imprescindible, ver abajo
+p.save()
+p.property_mappings.set(ScopeMapping.objects.filter(name__startswith="authentik default OAuth Mapping: OpenID"))
+app = Application.objects.create(slug="app", name="App", provider=p, meta_launch_url="https://app.404labo.net")
+PolicyBinding.objects.create(target=app, group=Group.objects.get(name="authentik Admins"), order=0)
+```
+
+⚠️ **`p.grant_types` es obligatorio** (Authentik 2026.5): un proveedor creado por código lo tiene vacío y rechaza toda petición con `invalid_request: The request is otherwise malformed`, **antes** de mostrar el login. El log de `authentik-server` lo dice (`Invalid grant_type for provider`). Los proveedores creados desde la interfaz ya traen la lista.
+
+Para que el cliente (Komodo) no necesite ver el secreto en claro: Swarm secret + variable `*_FILE`, y copia en Infisical.
+

@@ -24,11 +24,11 @@ flowchart LR
         N8N["n8n-main\n(retaco)"]
     end
 
-    subgraph pidns["pi-dns — 192.168.1.170"]
-        NGINX["nginx :443\nbifrost.home.arpa"]
+    subgraph pidns["pi-dns — 192.168.10.2"]
+        NGINX["nginx :443\nbifrost.404labo.net"]
     end
 
-    subgraph pisonar["pi-sonar — 192.168.1.172"]
+    subgraph pisonar["pi-sonar — 192.168.10.5"]
         BF["bifrost :8080\nvirtual keys + governance"]
     end
 
@@ -40,7 +40,7 @@ flowchart LR
     BF -->|"IAM: bedrock:InvokeModel*"| AWS
 ```
 
-`bifrost.home.arpa` **no** pasa por `apikey-service` — Bifrost trae su propio sistema de autenticación (virtual keys / "governance"), exigido en origen (`client.enforce_auth_on_inference: true` en `config.json`). Añadir una segunda capa encima sería redundante, mismo criterio ya aplicado a `registry.home.arpa` y `apikey.home.arpa` — ver el comentario en `pi-dns/config/nginx/nginx.conf`.
+`bifrost.404labo.net` **no** pasa por `apikey-service` — Bifrost trae su propio sistema de autenticación (virtual keys / "governance"), exigido en origen (`client.enforce_auth_on_inference: true` en `config.json`). Añadir una segunda capa encima sería redundante, mismo criterio ya aplicado a `registry.404labo.net` y `apikey.404labo.net` — ver el comentario en `pi-dns/config/nginx/nginx.conf`.
 
 ## Permisos AWS — usuario base + rol asumido, permiso mínimo
 
@@ -176,15 +176,15 @@ ssh u-<x>@<manager> "docker stack deploy -c /tmp/bifrost-compose.yml bifrost --w
 tarea nueva para que Bifrost lo relea (no hay `docker config`/hot-reload para este fichero):
 
 ```bash
-rsync -av pi-sonar/config/bifrost/config.json u-sonar@192.168.1.172:/tmp/bifrost-config.json
-ssh u-sonar@192.168.1.172 "sudo cp /tmp/bifrost-config.json /srv/homelab/pi-sonar/bifrost/data/config.json && rm /tmp/bifrost-config.json"
-ssh u-sonar@192.168.1.172 "docker service update --force bifrost_bifrost"
+rsync -av pi-sonar/config/bifrost/config.json admin@192.168.10.5:/tmp/bifrost-config.json
+ssh admin@192.168.10.5 "sudo cp /tmp/bifrost-config.json /srv/homelab/pi-sonar/bifrost/data/config.json && rm /tmp/bifrost-config.json"
+ssh admin@192.168.10.5 "docker service update --force bifrost_bifrost"
 ```
 
 **Logs**: `docker service logs bifrost_bifrost` no devuelve nada (driver `loki`, igual que el resto
 del clúster) — consultar Loki directamente (`{swarm_service="bifrost_bifrost"}` en Grafana Explore,
-o vía la API HTTP de Loki en `pi-obs`, `192.168.1.171:3100`). Ver el incidente real más abajo
-("`config.json` desincronizado tras retirar `home.arpa`") para un ejemplo completo de diagnóstico
+o vía la API HTTP de Loki en `pi-obs`, `observability.404labo.net:3100`). Ver el incidente real más abajo
+("`config.json` desincronizado tras retirar `404labo.net`") para un ejemplo completo de diagnóstico
 por esta vía, incluida la consulta exacta.
 
 `sudo chown 1000:0 bifrost/data && chmod 770 bifrost/data` (motivo explicado abajo) solo hace falta
@@ -193,15 +193,15 @@ una vez, en la primera instalación del nodo — no es parte del ciclo normal de
 ### Cómo se hacía antes de la migración a Swarm (histórico, ya no aplica)
 
 ```bash
-ssh u-sonar@192.168.1.172
+ssh admin@192.168.10.5
 mkdir -p /srv/homelab/pi-sonar/bifrost/data
 ```
 
 Desde la máquina de desarrollo (rsync de lo versionado en el repo):
 
 ```bash
-rsync -av pi-sonar/config/bifrost/config.json u-sonar@192.168.1.172:/srv/homelab/pi-sonar/bifrost/data/config.json
-rsync -av pi-sonar/docker-compose.yml u-sonar@192.168.1.172:/srv/homelab/pi-sonar/docker-compose.yml
+rsync -av --rsync-path="sudo rsync" pi-sonar/config/bifrost/config.json admin@192.168.10.5:/srv/homelab/pi-sonar/bifrost/data/config.json
+rsync -av --rsync-path="sudo rsync" pi-sonar/docker-compose.yml admin@192.168.10.5:/srv/homelab/pi-sonar/docker-compose.yml
 ```
 
 En `pi-sonar`:
@@ -251,12 +251,12 @@ real del panel podría dar una falsa sensación de que rotó. El resto de secret
 
 ⚠️ **Ya no es así** — `nginx` en `pi-dns` está decomisionado del todo (mejora 41, 2026-08-28,
 `CLAUDE.md`) y **Traefik es la puerta de entrada real** hoy. El hostname también cambió de dominio
-(mejora 41, retirada de `home.arpa`): `bifrost.404labo.net` está enrutado por el proveedor `file`
+(mejora 41, retirada de `404labo.net`): `bifrost.404labo.net` está enrutado por el proveedor `file`
 de Traefik (`docker-swarm/stacks/traefik/dynamic/routes.yml`, no por labels de Swarm en el propio
 stack, porque `bifrost` publica su puerto con `mode: host` en vez de vía la malla de enrutado) hacia
-el mismo backend de siempre, `http://192.168.1.172:8080` — ningún cambio en el propio Bifrost. El
-registro DNS apunta ahora a `192.168.1.175` (`pinchi`, uno de los 5 managers del Swarm donde corre
-Traefik en modo `global`), no a `192.168.1.170` (`pi-dns`) — Traefik puede correr en cualquiera de
+el mismo backend de siempre, `http://192.168.10.5:8080` — ningún cambio en el propio Bifrost. El
+registro DNS apunta ahora a `192.168.10.8` (`pinchi`, uno de los 5 managers del Swarm donde corre
+Traefik en modo `global`), no a `192.168.10.2` (`pi-dns`) — Traefik puede correr en cualquiera de
 los managers, así que el registro puede apuntar a cualquiera de los 5. El resto de esta sección
 describe el nginx original tal y como se configuró entonces — sigue siendo la explicación real del
 gotcha de la ruta del fichero (aplica igual a cualquier config que se edite hoy dentro de
@@ -271,9 +271,9 @@ Bloque añadido a `pi-dns/config/nginx/nginx.conf` (sección "pi-sonar"), histó
 ```nginx
 server {
     listen 443 ssl;
-    server_name bifrost.home.arpa;
+    server_name bifrost.404labo.net;
     location / {
-        proxy_pass http://192.168.1.172:8080;
+        proxy_pass http://192.168.10.5:8080;
         include /etc/nginx/proxy-common.conf;
     }
 }
@@ -282,11 +282,11 @@ server {
 Desplegar — **ojo con la ruta real en el host**: el repo versiona el fichero en `pi-dns/config/nginx/nginx.conf`, pero el `docker-compose.yml` de `pi-dns` monta `/srv/homelab/pi-dns/nginx/conf/nginx.conf` (convención distinta a la del checkout, heredada de una instalación anterior — ver `docs/06-instalacion-pi1-dns.md`, que ya documenta el mismo `cp` de `config/nginx/` a `nginx/conf/` para `apikey-auth.conf`). Copiar al sitio del repo y olvidarse de este paso da un `404` silencioso — pasó en el despliegue real:
 
 ```bash
-rsync -av pi-dns/config/nginx/nginx.conf u-dns@192.168.1.170:/srv/homelab/pi-dns/nginx/conf/nginx.conf
-ssh u-dns@192.168.1.170 'cd /srv/homelab/pi-dns && docker compose exec nginx nginx -t && docker compose exec nginx nginx -s reload'
+rsync -av --rsync-path="sudo rsync" pi-dns/config/nginx/nginx.conf admin@192.168.10.2:/srv/homelab/pi-dns/nginx/conf/nginx.conf
+ssh admin@192.168.10.2 'cd /srv/homelab/pi-dns && docker compose exec nginx nginx -t && docker compose exec nginx nginx -s reload'
 ```
 
-Registro DNS: `bifrost.home.arpa → 192.168.1.170` (apunta a `pi-dns`, que hace el proxy — mismo patrón que el resto de servicios). Añadido a `shared/dns/dns-records.md` y a la lista `HOSTS` de `shared/scripts/load-dns-records.sh`:
+Registro DNS: `bifrost.404labo.net → 192.168.10.2` (apunta a `pi-dns`, que hace el proxy — mismo patrón que el resto de servicios). Añadido a `shared/dns/dns-records.md` y a la lista `HOSTS` de `shared/scripts/load-dns-records.sh`:
 
 ```bash
 PIHOLE_PASSWORD=*** bash shared/scripts/load-dns-records.sh
@@ -310,7 +310,7 @@ Rotar la key: generar un valor nuevo (`openssl rand -hex 24`, prefijo `sk-bf-` p
 
 ## Autenticación del panel de administración — `governance.auth_config`
 
-**Hallazgo real de producción**: `enforce_auth_on_inference` protege únicamente `/v1/chat/completions` (y equivalentes) — **no** protege el panel web ni la API de administración (`/api/logs`, `/api/governance/*`, `/metrics`...). Sin nada más, cualquiera en la LAN con la URL `https://bifrost.home.arpa` podía leer el historial completo de prompts, modelos usados y coste por petición, sin ninguna credencial. Corregido con `governance.auth_config`:
+**Hallazgo real de producción**: `enforce_auth_on_inference` protege únicamente `/v1/chat/completions` (y equivalentes) — **no** protege el panel web ni la API de administración (`/api/logs`, `/api/governance/*`, `/metrics`...). Sin nada más, cualquiera en la LAN con la URL `https://bifrost.404labo.net` podía leer el historial completo de prompts, modelos usados y coste por petición, sin ninguna credencial. Corregido con `governance.auth_config`:
 
 ```json
 "governance": {
@@ -325,16 +325,16 @@ Rotar la key: generar un valor nuevo (`openssl rand -hex 24`, prefijo `sk-bf-` p
 
 Variables correspondientes en Infisical (`/bifrost/`, ver "Secrets" más arriba) — usuario `admin`, contraseña generada con `openssl rand -hex 24`, guardada también en Vaultwarden. Verificado: sin credencial, `/api/logs` da `401`; con `-u admin:<password>` (HTTP Basic Auth estándar), `200`. La inferencia con la virtual key normal no se ve afectada — son dos mecanismos de auth independientes, uno para `/v1/*` (virtual key), otro para todo lo demás (usuario/contraseña de admin).
 
-**Al acceder desde el navegador a `https://bifrost.home.arpa` ahora pedirá estas credenciales** (usuario/contraseña de admin), no las de ningún usuario de Open WebUI ni la virtual key.
+**Al acceder desde el navegador a `https://bifrost.404labo.net` ahora pedirá estas credenciales** (usuario/contraseña de admin), no las de ningún usuario de Open WebUI ni la virtual key.
 
 ## Seguimiento de coste y presupuesto con aviso
 
 ### Dashboard y logs — ya funciona sin configurar nada
 
-Bifrost calcula el coste real de cada petición automáticamente (sincroniza precios por proveedor/modelo en segundo plano, `framework.pricing`) y lo guarda en el log de cada request — visible en el propio panel (`https://bifrost.home.arpa`, pestaña de logs) o vía API:
+Bifrost calcula el coste real de cada petición automáticamente (sincroniza precios por proveedor/modelo en segundo plano, `framework.pricing`) y lo guarda en el log de cada request — visible en el propio panel (`https://bifrost.404labo.net`, pestaña de logs) o vía API:
 
 ```bash
-curl -sk -u admin:<BIFROST_ADMIN_PASSWORD> https://bifrost.home.arpa/api/logs
+curl -sk -u admin:<BIFROST_ADMIN_PASSWORD> https://bifrost.404labo.net/api/logs
 ```
 
 Cada entrada incluye `model`, `provider`, `latency` y `cost` (en USD) por petición individual — no hace falta activar nada para tener esto.
@@ -358,7 +358,7 @@ Cada entrada incluye `model`, `provider`, `latency` y `cost` (en USD) por petici
 `max_limit` en USD, `reset_duration` en formato Go duration (`1M` = 1 mes; también válidos `1d`, `1w`, `1h`...). **Verificado que aplica de verdad**, no es solo un contador informativo: según la documentación oficial de Bifrost, al superarlo cualquier petición nueva contra esa virtual key recibe `402 budget_exceeded` hasta el siguiente reinicio del ciclo. Consultar el gasto acumulado en cualquier momento:
 
 ```bash
-curl -sk -u admin:<BIFROST_ADMIN_PASSWORD> https://bifrost.home.arpa/api/governance/budgets
+curl -sk -u admin:<BIFROST_ADMIN_PASSWORD> https://bifrost.404labo.net/api/governance/budgets
 # → {"budgets":[{"id":"budget-test","max_limit":5,"current_usage":0.0234,...}]}
 ```
 
@@ -372,10 +372,10 @@ Bifrost tiene un sistema de alertas declarativo (`alerting.channels` + `alerting
 
 ## Conectar Open WebUI y n8n
 
-**Open WebUI** (en `retaco`, desde la migración) — ya preconfigurado por variables de entorno al desplegar (`OPENAI_API_BASE_URLS`/`OPENAI_API_KEYS` en `retaco/docker-compose.yml`, ver sección de migración más abajo), no hace falta tocar `Admin Settings → Connections` a mano. Si se necesitara rehacerlo manualmente: conexión "OpenAI API", Base URL `https://bifrost.home.arpa/v1`, API Key el valor de `BIFROST_VIRTUAL_KEY`.
+**Open WebUI** (en `retaco`, desde la migración) — ya preconfigurado por variables de entorno al desplegar (`OPENAI_API_BASE_URLS`/`OPENAI_API_KEYS` en `retaco/docker-compose.yml`, ver sección de migración más abajo), no hace falta tocar `Admin Settings → Connections` a mano. Si se necesitara rehacerlo manualmente: conexión "OpenAI API", Base URL `https://bifrost.404labo.net/v1`, API Key el valor de `BIFROST_VIRTUAL_KEY`.
 
 **n8n** — credencial de tipo "OpenAI" (o el nodo HTTP genérico si se prefiere no forzar el tipo):
-- Base URL: `https://bifrost.home.arpa/v1`
+- Base URL: `https://bifrost.404labo.net/v1`
 - API Key: el valor de `BIFROST_VIRTUAL_KEY`
 
 El modelo a seleccionar usa el prefijo del provider: `bedrock/eu.anthropic.claude-sonnet-4-6` (Bedrock, confirmado funcional en esta cuenta/región — ver "Prueba manual" para el porqué del prefijo `eu.`) u `ollama/<modelo>` (Ollama en `ryzen`, p. ej. `ollama/qwen3.5:9b` — ver la sección "Ollama como provider adicional" más abajo).
@@ -385,7 +385,7 @@ El modelo a seleccionar usa el prefijo del provider: `bedrock/eu.anthropic.claud
 Ejecutada desde `ryzen`/`mole` (el puesto de trabajo físico, con acceso directo sin SSH — ver `docs/01-topologia.md`), para confirmar que la ruta completa cliente → nginx (`pi-dns`) → Bifrost (`pi-sonar`) → Bedrock funciona igual que le llegaría a Open WebUI:
 
 ```bash
-curl -sk https://bifrost.home.arpa/v1/chat/completions \
+curl -sk https://bifrost.404labo.net/v1/chat/completions \
   -H "Authorization: Bearer ${BIFROST_VIRTUAL_KEY}" \
   -H "Content-Type: application/json" \
   -d '{
@@ -499,7 +499,7 @@ bash /srv/homelab/shared/scripts/create-postgres-db.sh postgres-main dbadmin bif
   "enabled": true,
   "type": "postgres",
   "config": {
-    "host": "postgresql.home.arpa",
+    "host": "postgresql.404labo.net",
     "port": 5432,
     "user": "bifrost",
     "password": "env.BIFROST_DB_PASSWORD",
@@ -511,7 +511,7 @@ bash /srv/homelab/shared/scripts/create-postgres-db.sh postgres-main dbadmin bif
   "enabled": true,
   "type": "postgres",
   "config": {
-    "host": "postgresql.home.arpa",
+    "host": "postgresql.404labo.net",
     "port": 5432,
     "user": "bifrost",
     "password": "env.BIFROST_DB_PASSWORD",
@@ -521,7 +521,7 @@ bash /srv/homelab/shared/scripts/create-postgres-db.sh postgres-main dbadmin bif
 }
 ```
 
-`host`/`user`/`db_name` van hardcodeados en claro (no son secreto, mismo criterio que `SONAR_JDBC_URL` en `pi-sonar/docker-compose.yml`) — solo la contraseña pasa por `env.BIFROST_DB_PASSWORD`, en Infisical desde la mejora 28 (fuera de `.env`, ver "Secrets" más arriba). `ssl_mode: "disable"` porque `postgres-main` no tiene TLS habilitado — mismo criterio que el resto de conexiones internas del clúster a esa base. `postgresql.home.arpa` (no `postgres-main`, el nombre del contenedor) porque `bifrost` vive en `pi-sonar`, cross-host respecto a `retaco` — mismo patrón que `SONAR_JDBC_URL`. ⚠️ El `host` real pasó de `postgresql.home.arpa` a `postgresql.404labo.net` en la mejora 41 — ver el incidente "`config.json` desincronizado tras retirar `home.arpa`" más abajo, que documenta también por qué este cambio no llegó solo con el commit.
+`host`/`user`/`db_name` van hardcodeados en claro (no son secreto, mismo criterio que `SONAR_JDBC_URL` en `pi-sonar/docker-compose.yml`) — solo la contraseña pasa por `env.BIFROST_DB_PASSWORD`, en Infisical desde la mejora 28 (fuera de `.env`, ver "Secrets" más arriba). `ssl_mode: "disable"` porque `postgres-main` no tiene TLS habilitado — mismo criterio que el resto de conexiones internas del clúster a esa base. `postgresql.404labo.net` (no `postgres-main`, el nombre del contenedor) porque `bifrost` vive en `pi-sonar`, cross-host respecto a `retaco` — mismo patrón que `SONAR_JDBC_URL`. ⚠️ El `host` real pasó de `postgresql.404labo.net` a `postgresql.404labo.net` en la mejora 41 — ver el incidente "`config.json` desincronizado tras retirar `404labo.net`" más abajo, que documenta también por qué este cambio no llegó solo con el commit.
 
 ### Sin migración de datos existentes
 
@@ -536,18 +536,18 @@ Se empezó de cero, sin migrar `config.db`/`logs.db` previos — mismo criterio 
 5. `SELECT count(*) FROM logs` tras esa petición — `1`: el log de la petición quedó escrito en Postgres, no en SQLite.
 6. Ruta `ollama/qwen3.5:9b` (provider Ollama, sección más abajo) probada aparte tras el cambio — sigue funcionando sin diferencias, la migración de storage no afecta al routing de providers.
 
-### Fallo real encontrado y corregido (2026-08-29): `config.json` desincronizado tras retirar `home.arpa`
+### Fallo real encontrado y corregido (2026-08-29): `config.json` desincronizado tras retirar `404labo.net`
 
-Al cerrar la mejora 41 (retirada de `*.home.arpa`, ver `docs/22-mejoras-futuras.md`) se actualizó
+Al cerrar la mejora 41 (retirada de `*.404labo.net`, ver `docs/22-mejoras-futuras.md`) se actualizó
 `pi-sonar/config/bifrost/config.json` en el repo (`config_store.config.host`/`logs_store.config.host`
-de `postgresql.home.arpa` a `postgresql.404labo.net`), pero **no se volvió a hacer el `rsync`** a
+de `postgresql.404labo.net` a `postgresql.404labo.net`), pero **no se volvió a hacer el `rsync`** a
 `/srv/homelab/pi-sonar/bifrost/data/config.json` — el fichero real que Bifrost lee en cada arranque
-(sección "Deploy" más abajo). Como el registro `postgresql.home.arpa` en Pi-hole ya se había
+(sección "Deploy" más abajo). Como el registro `postgresql.404labo.net` en Pi-hole ya se había
 retirado, el contenedor entraba en crash-loop en cada intento de arranque:
 
 ```
 {"level":"error","message":"failed to bootstrap server: failed to load config failed to connect to
-`user=bifrost database=bifrost`: hostname resolving error: lookup postgresql.home.arpa on
+`user=bifrost database=bifrost`: hostname resolving error: lookup postgresql.404labo.net on
 127.0.0.11:53: no such host"}
 ```
 
@@ -569,7 +569,7 @@ service update --force` por sí solos no lo tocan.
 
 ### Vaultwarden
 
-`BIFROST_DB_PASSWORD` es una credencial más — misma limitación que `OPENWEBUI_DB_PASSWORD` (ver sección de Open WebUI más abajo): no automatizable sin la contraseña maestra de un usuario real de Vaultwarden. Añadir a mano una entrada `bifrost — postgres` (usuario `bifrost`, host `postgres-main:5432`/`postgresql.home.arpa:5432`, base `bifrost`).
+`BIFROST_DB_PASSWORD` es una credencial más — misma limitación que `OPENWEBUI_DB_PASSWORD` (ver sección de Open WebUI más abajo): no automatizable sin la contraseña maestra de un usuario real de Vaultwarden. Añadir a mano una entrada `bifrost — postgres` (usuario `bifrost`, host `postgres-main:5432`/`postgresql.404labo.net:5432`, base `bifrost`).
 
 ## Operación
 
@@ -596,11 +596,11 @@ service update --force` por sí solos no lo tocan.
 | Error de credenciales AWS al arrancar (`unable to assume role`, `AccessDenied` en el propio `AssumeRole`) | Revisar `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`/`AWS_ROLE_ARN` en Infisical (`/bifrost/`), y que la trust policy del rol `bifrost-bedrock-invoke` apunte exactamente al ARN del usuario `bifrost-bedrock-base` — un ARN mal escrito en cualquiera de los dos lados rompe el `AssumeRole` en silencio. Verificable fuera de Bifrost con `aws sts assume-role --role-arn <ARN> --role-session-name test` usando las credenciales del usuario base |
 | `403` / `AccessDeniedException` de Bedrock (pero el `AssumeRole` funcionó) | La policy adjunta al **rol** no cubre el modelo pedido — comprobar si es un *inference profile* (necesita el segundo `Statement`) o si el modelo no está habilitado en **Bedrock → Model access** de esa cuenta/región (paso manual en la consola de AWS, aparte de IAM) |
 | `ValidationException: The provided model identifier is invalid` | El `modelId` no existe tal cual en esa región/cuenta — el catálogo de Bedrock cambia con frecuencia (IDs de *foundation model* vs. *inference profile*, con o sin prefijo de región). Confirmar el ID exacto en **Bedrock → Model catalog** de la consola antes de asumir que es un problema de permisos |
-| `404` de nginx (página genérica, no de Bifrost) en `bifrost.home.arpa` (histórico — nginx en `pi-dns` ya no es el front door, ver "Ya no es así" en "nginx (`pi-dns`)" más arriba) | Visto en el despliegue real — `nginx.conf` se copió a la ruta del repo (`config/nginx/`) en vez de a la ruta real montada por Docker en este nodo (`/srv/homelab/pi-dns/nginx/conf/nginx.conf`); sin el bloque `bifrost.home.arpa` cargado, nginx cae al primer `server{}` de la lista (`index.home.arpa`) y da 404 al no encontrar la ruta como fichero estático |
-| `502`/`504` desde Traefik en `bifrost.404labo.net` | Contenedor `bifrost` caído o arrancando — `ssh u-sonar@192.168.1.172 "docker service ps bifrost_bifrost"` (Swarm, vigente; `docker compose ps` ya no aplica), healthcheck tarda hasta `start_period: 15s` |
+| `404` de nginx (página genérica, no de Bifrost) en `bifrost.404labo.net` (histórico — nginx en `pi-dns` ya no es el front door, ver "Ya no es así" en "nginx (`pi-dns`)" más arriba) | Visto en el despliegue real — `nginx.conf` se copió a la ruta del repo (`config/nginx/`) en vez de a la ruta real montada por Docker en este nodo (`/srv/homelab/pi-dns/nginx/conf/nginx.conf`); sin el bloque `bifrost.404labo.net` cargado, nginx cae al primer `server{}` de la lista (`home.404labo.net`) y da 404 al no encontrar la ruta como fichero estático |
+| `502`/`504` desde Traefik en `bifrost.404labo.net` | Contenedor `bifrost` caído o arrancando — `ssh admin@192.168.10.5 "docker service ps bifrost_bifrost"` (Swarm, vigente; `docker compose ps` ya no aplica), healthcheck tarda hasta `start_period: 15s` |
 | Contenedor marcado `unhealthy` (`docker service ps bifrost_bifrost --no-trunc`, o `docker inspect <container_id> --format '{{json .State.Health}}'` sobre el contenedor real en `pi-sonar`) pese a responder bien a las peticiones reales | Visto en el despliegue real — la imagen de Bifrost **no trae `bash`** (`docker inspect bifrost --format '{{json .State.Health}}'` mostraba `"bash: not found"`), así que el truco `bash -c '</dev/tcp/...'` usado para `qdrant` en `retaco` no sirve aquí. Sí trae `wget` — healthcheck corregido a `wget -q -O /dev/null http://localhost:8080/health` |
-| Open WebUI sin ningún modelo en el selector, sin error visible en la UI | Visto en el despliegue real — cliente TLS estricto (Python/aiohttp) fallando en silencio contra `bifrost.home.arpa`: revisar logs (`docker compose logs open-webui \| grep -i ssl`). Dos causas posibles, en este orden: (1) el SAN del certificado de `pi-dns` no incluye ese hostname — `openssl s_client -connect <ip-pi-dns>:443 -servername bifrost.home.arpa \| openssl x509 -noout -text \| grep -A2 "Subject Alternative Name"`; (2) el proceso no confía en la CA interna — ver sección "No hay modelos disponibles" arriba para ambos fixes |
-| Timeout en respuestas largas (histórico, corregido) | **Ocurrió en producción** (agosto 2026): una consulta a `ollama/qwen3.5:27b` desde Open WebUI se quedó colgada sin respuesta. Diagnóstico: Ollama/Bifrost sí completaron la petición (68.3s, confirmado `200` en los logs de ambos), pero nginx cortaba la conexión con el cliente a los 60s (timeout por defecto, sin override) — el `200` de Bifrost llegaba 8s después de que nginx ya hubiera respondido `504` al cliente. Corregido subiendo `proxy_read_timeout`/`proxy_send_timeout` a `300s` en el bloque `bifrost.home.arpa` de `nginx.conf` (comentario con el detalle completo en el propio fichero). Bedrock nunca lo había disparado por responder siempre dentro de los 60s; los modelos locales grandes (`qwen3.5:27b`, `qwen2.5:32b`) sí pueden superarlo, sobre todo si Ollama hace *offload* parcial a CPU (ver fila siguiente) |
+| Open WebUI sin ningún modelo en el selector, sin error visible en la UI | Visto en el despliegue real — cliente TLS estricto (Python/aiohttp) fallando en silencio contra `bifrost.404labo.net`: revisar logs (`docker compose logs open-webui \| grep -i ssl`). Dos causas posibles, en este orden: (1) el SAN del certificado de `pi-dns` no incluye ese hostname — `openssl s_client -connect <ip-pi-dns>:443 -servername bifrost.404labo.net \| openssl x509 -noout -text \| grep -A2 "Subject Alternative Name"`; (2) el proceso no confía en la CA interna — ver sección "No hay modelos disponibles" arriba para ambos fixes |
+| Timeout en respuestas largas (histórico, corregido) | **Ocurrió en producción** (agosto 2026): una consulta a `ollama/qwen3.5:27b` desde Open WebUI se quedó colgada sin respuesta. Diagnóstico: Ollama/Bifrost sí completaron la petición (68.3s, confirmado `200` en los logs de ambos), pero nginx cortaba la conexión con el cliente a los 60s (timeout por defecto, sin override) — el `200` de Bifrost llegaba 8s después de que nginx ya hubiera respondido `504` al cliente. Corregido subiendo `proxy_read_timeout`/`proxy_send_timeout` a `300s` en el bloque `bifrost.404labo.net` de `nginx.conf` (comentario con el detalle completo en el propio fichero). Bedrock nunca lo había disparado por responder siempre dentro de los 60s; los modelos locales grandes (`qwen3.5:27b`, `qwen2.5:32b`) sí pueden superarlo, sobre todo si Ollama hace *offload* parcial a CPU (ver fila siguiente) |
 | `qwen3.5:27b` (o cualquier modelo local grande) responde correcto pero muy despacio (pocos tokens/s) | Visto en producción — `ollama ps` mostraba solo ~10 de los 17.4 GB del modelo en VRAM (`size_vram` en la respuesta), el resto en CPU. En `ryzen`/`mole`, la GPU 1 (RTX 3070, 8 GB) es también la del escritorio físico del usuario (Xorg/gnome-shell/apps abiertas ya reservan varios GB) — el hueco libre combinado con la GPU 0 (RTX 5070, 12 GB) queda muy justo para un modelo de 17-20 GB, y Ollama prefiere dejar capas en CPU antes que agotar el margen. No es un fallo de Bifrost/nginx — es el reparto de VRAM del host. Mitigación práctica: usar `qwen3.5:9b` (6.6 GB, cabe entero en la GPU 0 sin tocar la del escritorio) para uso normal, reservar los modelos de 27b/32b para cuando se sepa que va a tardar varios minutos. A propósito **no** se ha forzado a Ollama a fijar estos modelos a una GPU concreta — se deja que reparta carga libremente, decisión explícita del usuario |
 | `connection to private IP <IP> is not allowed` | Bifrost bloquea por defecto conexiones a IPs RFC 1918 (protección SSRF) — pasa con cualquier provider casero en la LAN, no solo Ollama. Añadir `"network_config": {"allow_private_network": true}` como hermano de `"keys"` dentro del bloque de ese provider en `config.json` (ver sección de Ollama más abajo) |
 | `Model '<nombre>' is not allowed for this virtual key`, con `routing_info` vacío | El *live model listing* del provider falló al arrancar (ver siguiente fila) y Bifrost cae a un catálogo estático que no conoce modelos locales/arbitrarios — no es un problema de la propia virtual key aunque el mensaje lo sugiera |
@@ -608,7 +608,7 @@ service update --force` por sí solos no lo tocan.
 
 ## Ollama como provider adicional — modelos locales de `ryzen` a través del mismo gateway
 
-Motivo: Open WebUI se migró de `ryzen` a `retaco` (ver sección de migración más abajo) y ya no puede llegar a Ollama por red Docker interna. La alternativa nativa de Open WebUI (conexión "Ollama" directa a `https://ollama.home.arpa`) exige la cabecera `X-Api-Key` de `apikey-service`, y no hay confirmación fiable de que ese tipo de conexión sepa mandarla — sí sabemos que la conexión "OpenAI API" manda `Authorization: Bearer` correctamente, porque es como ya hablamos con Bedrock. Se optó por añadir Ollama como provider más dentro de Bifrost: una única conexión desde Open WebUI, un único virtual key, para Bedrock y para Ollama.
+Motivo: Open WebUI se migró de `ryzen` a `retaco` (ver sección de migración más abajo) y ya no puede llegar a Ollama por red Docker interna. La alternativa nativa de Open WebUI (conexión "Ollama" directa a `https://ollama.404labo.net`) exige la cabecera `X-Api-Key` de `apikey-service`, y no hay confirmación fiable de que ese tipo de conexión sepa mandarla — sí sabemos que la conexión "OpenAI API" manda `Authorization: Bearer` correctamente, porque es como ya hablamos con Bedrock. Se optó por añadir Ollama como provider más dentro de Bifrost: una única conexión desde Open WebUI, un único virtual key, para Bedrock y para Ollama.
 
 `config.json` (fragmento relevante, `providers.ollama`):
 
@@ -641,13 +641,13 @@ Y en la virtual key, un segundo `provider_configs` (junto al de `bedrock` ya exi
 }
 ```
 
-`OLLAMA_UPSTREAM_URL` (variable de entorno normal, hoy en `environment:` del propio `docker-swarm/stacks/bifrost/docker-compose.yml` — no es secreto, así que a diferencia del resto de esta sección nunca pasó por Infisical, no en `config.json` directamente): **`http://192.168.1.150:11434`, por IP directa, no `https://ollama.home.arpa`**. Es tráfico servicio-a-servicio dentro de la LAN — mismo patrón que el resto del clúster (`n8n-main`, Qdrant... llegan a sus backends por IP directa; `apikey-service` solo protege las rutas de `nginx` pensadas para clientes humanos/externos, no las llamadas internas entre nodos). Ollama no tiene autenticación propia — igual que antes de la migración, sin cambio real de superficie de riesgo, solo cambia quién hace la llamada.
+`OLLAMA_UPSTREAM_URL` (variable de entorno normal, hoy en `environment:` del propio `docker-swarm/stacks/bifrost/docker-compose.yml` — no es secreto, así que a diferencia del resto de esta sección nunca pasó por Infisical, no en `config.json` directamente): **`http://192.168.10.10:11434`, por IP directa, no `https://ollama.404labo.net`**. Es tráfico servicio-a-servicio dentro de la LAN — mismo patrón que el resto del clúster (`n8n-main`, Qdrant... llegan a sus backends por IP directa; `apikey-service` solo protege las rutas de `nginx` pensadas para clientes humanos/externos, no las llamadas internas entre nodos). Ollama no tiene autenticación propia — igual que antes de la migración, sin cambio real de superficie de riesgo, solo cambia quién hace la llamada.
 
 `ollama_key_config` solo necesita `url` — a diferencia de Bedrock, Ollama no tiene concepto de credenciales, así que no hay nada más que configurar.
 
 ### Dos problemas reales encontrados al desplegar esto, en orden
 
-1. **Bloqueo SSRF de IPs privadas.** Primer intento sin `network_config`: toda petición a `ollama/*` daba `model_blocked` (`"Model '...' is not allowed for this virtual key"`, con `routing_info` vacío) o, mirando el log, `failed to execute HTTP request to provider API: falling back onto the static datasheet` — el *live model listing* de Ollama fallaba silenciosamente en cada arranque/refresco, aunque `docker exec bifrost wget http://192.168.1.150:11434/api/version` funcionaba perfectamente desde dentro del propio contenedor. La causa real, solo visible al probar una petición de inferencia real (no solo el listado): `{"error":"connection to private IP 192.168.1.150 is not allowed"}` — Bifrost bloquea por diseño las IPs RFC 1918 salvo que se le diga explícitamente lo contrario, ver `network_config.allow_private_network` arriba.
+1. **Bloqueo SSRF de IPs privadas.** Primer intento sin `network_config`: toda petición a `ollama/*` daba `model_blocked` (`"Model '...' is not allowed for this virtual key"`, con `routing_info` vacío) o, mirando el log, `failed to execute HTTP request to provider API: falling back onto the static datasheet` — el *live model listing* de Ollama fallaba silenciosamente en cada arranque/refresco, aunque `docker exec bifrost wget http://192.168.10.10:11434/api/version` funcionaba perfectamente desde dentro del propio contenedor. La causa real, solo visible al probar una petición de inferencia real (no solo el listado): `{"error":"connection to private IP 192.168.10.10 is not allowed"}` — Bifrost bloquea por diseño las IPs RFC 1918 salvo que se le diga explícitamente lo contrario, ver `network_config.allow_private_network` arriba.
 2. **Refresco del catálogo en segundo plano.** Tras el fix de arriba hizo falta reiniciar Bifrost para que el *live model listing* de Ollama se resolviera correctamente contra el catálogo real (`qwen3.5:27b`, `qwen3.5:9b`, etc., no los nombres desactualizados de `CLAUDE.md`). Se añadió `framework.pricing.live_models_sync_interval: 60` (mínimo permitido) en `config.json` para que ese refresco ocurra cada 60s en vez de cada hora — útil mientras se prueba, opcional mantenerlo a largo plazo.
 
 Verificado con `qwen3.5:9b` (modelo de razonamiento — la respuesta incluye su propio *reasoning trace* antes del contenido final): `200`, `content: "ok"`, `latency: ~2.8s`, `routing_info.provider: "ollama"`. Modelo a usar desde Open WebUI/n8n: `ollama/qwen3.5:9b` (mismo prefijo `provider/` que `bedrock/...`).
@@ -682,7 +682,7 @@ rsync -av \
 ```yaml
 environment:
   ENABLE_OLLAMA_API: "false"
-  OPENAI_API_BASE_URLS: https://bifrost.home.arpa/v1
+  OPENAI_API_BASE_URLS: https://bifrost.404labo.net/v1
   OPENAI_API_KEYS: ${BIFROST_VIRTUAL_KEY}
 ```
 
@@ -693,9 +693,9 @@ environment:
 ```nginx
 server {
     listen 443 ssl;
-    server_name openwebui.home.arpa;
+    server_name openwebui.404labo.net;
     location / {
-        proxy_pass http://192.168.1.174:8080;   # antes: 192.168.1.150:8080
+        proxy_pass http://192.168.10.7:8080;   # antes: 192.168.10.10:8080
         include /etc/nginx/proxy-common.conf;
     }
 }
@@ -705,23 +705,23 @@ server {
 
 Orden seguido, cada paso verificado antes de pasar al siguiente:
 1. Desplegar `open-webui` en `retaco` con los datos ya migrados.
-2. Verificar en local (`curl http://192.168.1.174:8080/api/config`, `docker exec open-webui` consultando `webui.db` directamente — confirmado 1 usuario existente, la cuenta ya creada en `ryzen`, migrada intacta) **antes** de tocar nginx.
-3. Repuntar nginx, recargar, verificar de nuevo pero esta vez contra `https://openwebui.home.arpa` (la ruta real que van a usar los clientes).
+2. Verificar en local (`curl http://192.168.10.7:8080/api/config`, `docker exec open-webui` consultando `webui.db` directamente — confirmado 1 usuario existente, la cuenta ya creada en `ryzen`, migrada intacta) **antes** de tocar nginx.
+3. Repuntar nginx, recargar, verificar de nuevo pero esta vez contra `https://openwebui.404labo.net` (la ruta real que van a usar los clientes).
 4. Solo entonces, retirar el servicio de `ryzen/docker-compose.yml` — los datos originales (`ryzen/open-webui/data/`) se dejan en el disco como backup, no se borran.
 
 ### Qué cambia para quien ya usaba Open WebUI
 
-- **Usuario/contraseña: hay que crearlos de nuevo** — no es lo que se hizo al principio (ver más abajo, "Base de datos centralizada", el cambio de SQLite a Postgres dejó esto sin efecto a los pocos minutos de migrar, con muy poco todavía configurado). Registrarse de nuevo en `https://openwebui.home.arpa` — el primer usuario que se registra en una base vacía se convierte en administrador automáticamente.
+- **Usuario/contraseña: hay que crearlos de nuevo** — no es lo que se hizo al principio (ver más abajo, "Base de datos centralizada", el cambio de SQLite a Postgres dejó esto sin efecto a los pocos minutos de migrar, con muy poco todavía configurado). Registrarse de nuevo en `https://openwebui.404labo.net` — el primer usuario que se registra en una base vacía se convierte en administrador automáticamente.
 - Mismos modelos disponibles, con nombres nuevos: `bedrock/eu.anthropic.claude-sonnet-4-6` (Bedrock) y `ollama/<modelo>` (Ollama de `ryzen`) — ya no aparece una sección "Ollama" separada en la UI, todo cuelga de la única conexión OpenAI-compatible hacia Bifrost.
-- Si `ryzen` está apagado, Bedrock sigue funcionando con normalidad; los modelos `ollama/*` fallan (Bifrost no puede alcanzar `192.168.1.150:11434`) hasta que se encienda — comportamiento esperado, no un fallo de la migración.
+- Si `ryzen` está apagado, Bedrock sigue funcionando con normalidad; los modelos `ollama/*` fallan (Bifrost no puede alcanzar `192.168.10.10:11434`) hasta que se encienda — comportamiento esperado, no un fallo de la migración.
 
 ## "No hay modelos disponibles" — CA interna y certificado incompleto
 
-Tras la migración a Postgres, con usuario nuevo creado, la UI no mostraba ningún modelo. `Bifrost` respondía perfectamente por su cuenta (`curl -k .../v1/models` daba el catálogo completo) — el problema estaba en cómo Open WebUI, como cliente HTTPS estricto, verifica el certificado de `bifrost.home.arpa`. Dos fallos reales distintos, hallados en este orden:
+Tras la migración a Postgres, con usuario nuevo creado, la UI no mostraba ningún modelo. `Bifrost` respondía perfectamente por su cuenta (`curl -k .../v1/models` daba el catálogo completo) — el problema estaba en cómo Open WebUI, como cliente HTTPS estricto, verifica el certificado de `bifrost.404labo.net`. Dos fallos reales distintos, hallados en este orden:
 
-### 1. El certificado compartido de `pi-dns` no incluía `bifrost.home.arpa`
+### 1. El certificado compartido de `pi-dns` no incluía `bifrost.404labo.net`
 
-`pi-dns/config/nginx/generate-cert.sh` mantiene una lista fija `DOMAINS` con los nombres que entran en el `subjectAltName` (SAN) del certificado único que sirve todo `nginx`. Bifrost (y `apikey.home.arpa`, `epub2pdf.home.arpa`, `pdf2chunks.home.arpa`) se añadieron a nginx **después** de la última vez que se generó ese certificado, así que nunca entraron en el SAN. Los `curl -k` usados durante todo este documento **no lo detectaban** — `-k` se salta la verificación de hostname además de la de CA. Un cliente TLS estricto (Python `ssl`/`aiohttp`, lo que usa Open WebUI) sí la exige, y sin SAN da `Hostname mismatch, certificate is not valid for 'bifrost.home.arpa'`.
+`pi-dns/config/nginx/generate-cert.sh` mantiene una lista fija `DOMAINS` con los nombres que entran en el `subjectAltName` (SAN) del certificado único que sirve todo `nginx`. Bifrost (y `apikey.404labo.net`, `epub2pdf.404labo.net`, `pdf2chunks.404labo.net`) se añadieron a nginx **después** de la última vez que se generó ese certificado, así que nunca entraron en el SAN. Los `curl -k` usados durante todo este documento **no lo detectaban** — `-k` se salta la verificación de hostname además de la de CA. Un cliente TLS estricto (Python `ssl`/`aiohttp`, lo que usa Open WebUI) sí la exige, y sin SAN da `Hostname mismatch, certificate is not valid for 'bifrost.404labo.net'`.
 
 Corregido añadiendo los cuatro dominios que faltaban a `DOMAINS` en `generate-cert.sh` y regenerando:
 
@@ -751,9 +751,9 @@ command:
     exec bash start.sh
 ```
 
-La ruta de `certifi` se resuelve en caliente (`python3 -c "import certifi; print(certifi.where())"`) en vez de hardcodear la versión de Python de la imagen (`python3.11` hoy) — evita que una actualización futura de la imagen rompa esto en silencio. Verificado contra el proceso real, no solo con `docker exec` suelto: `cat /proc/1/environ` dentro del contenedor confirma `SSL_CERT_FILE` puesto en el proceso que de verdad sirve la app, y una llamada real a `https://bifrost.home.arpa/v1/models` desde dentro del contenedor devuelve los 64 modelos del catálogo.
+La ruta de `certifi` se resuelve en caliente (`python3 -c "import certifi; print(certifi.where())"`) en vez de hardcodear la versión de Python de la imagen (`python3.11` hoy) — evita que una actualización futura de la imagen rompa esto en silencio. Verificado contra el proceso real, no solo con `docker exec` suelto: `cat /proc/1/environ` dentro del contenedor confirma `SSL_CERT_FILE` puesto en el proceso que de verdad sirve la app, y una llamada real a `https://bifrost.404labo.net/v1/models` desde dentro del contenedor devuelve los 64 modelos del catálogo.
 
-**Esta corrección de `generate-cert.sh` es de infraestructura compartida, no específica de Open WebUI** — cualquier otro cliente HTTPS estricto (no solo Python) que hable con `bifrost.home.arpa`, `apikey.home.arpa`, `epub2pdf.home.arpa` o `pdf2chunks.home.arpa` se beneficia del SAN corregido sin hacer nada más.
+**Esta corrección de `generate-cert.sh` es de infraestructura compartida, no específica de Open WebUI** — cualquier otro cliente HTTPS estricto (no solo Python) que hable con `bifrost.404labo.net`, `apikey.404labo.net`, `epub2pdf.404labo.net` o `pdf2chunks.404labo.net` se beneficia del SAN corregido sin hacer nada más.
 
 ## Base de datos centralizada: Postgres + Qdrant (en vez de SQLite/ChromaDB locales)
 
@@ -763,7 +763,7 @@ Decisión tomada aparte, después de la migración inicial: con muy poco todaví
 
 Al migrar `webui.db` tal cual desde `ryzen` (antes de decidir pasar a Postgres), la conexión a Bifrost que se había preconfigurado por variables de entorno (`OPENAI_API_BASE_URLS`/`OPENAI_API_KEYS`) **no se aplicó** — Open WebUI guarda su configuración en una tabla `config` (una fila por clave, no un blob único), y esas variables de entorno solo siembran valores en una base **vacía**. Como `webui.db` venía con configuración real ya existente de `ryzen` (`ollama.enable=true`, `ollama.base_urls=["http://ollama:11434"]`, `openai.api_base_urls=["https://api.openai.com/v1"]` por defecto), esa config persistida ganó, y la UI no mostraba ningún modelo hasta corregirlo a mano desde `Admin Settings → Connections`.
 
-Con Postgres (base `openwebui`, vacía desde el primer arranque) esto no vuelve a pasar — confirmado con `SELECT key, value FROM config WHERE key IN ('ollama.enable','openai.enable','openai.api_base_urls','openai.api_keys')` justo después del primer arranque: `ollama.enable=false`, `openai.api_base_urls=["https://bifrost.home.arpa/v1"]`, `openai.api_keys` con la virtual key correcta — las variables de entorno se sembraron bien esta vez.
+Con Postgres (base `openwebui`, vacía desde el primer arranque) esto no vuelve a pasar — confirmado con `SELECT key, value FROM config WHERE key IN ('ollama.enable','openai.enable','openai.api_base_urls','openai.api_keys')` justo después del primer arranque: `ollama.enable=false`, `openai.api_base_urls=["https://bifrost.404labo.net/v1"]`, `openai.api_keys` con la virtual key correcta — las variables de entorno se sembraron bien esta vez.
 
 ### Postgres — base `openwebui`
 
@@ -780,7 +780,7 @@ bash /srv/homelab/shared/scripts/create-postgres-db.sh postgres-main dbadmin ope
 DATABASE_URL: postgresql://openwebui:${OPENWEBUI_DB_PASSWORD}@postgres-main:5432/openwebui
 ```
 
-Por nombre de contenedor (`postgres-main`, no `postgresql.home.arpa`) porque `open-webui` vive en el mismo nodo, en la misma red `retaco-net` — mismo patrón que `n8n-main` (ver `docs/05-instalacion-retaco.md`). Al arrancar, Open WebUI corre sus propias migraciones de Alembic contra la base vacía (esquema completo, ~20 migraciones) — no hace falta ningún paso manual de inicialización, a diferencia de Postgres para n8n (que sí necesita `01-init-n8n.sh` porque usa el entrypoint oficial de la imagen `postgres`, no un ORM con migraciones propias).
+Por nombre de contenedor (`postgres-main`, no `postgresql.404labo.net`) porque `open-webui` vive en el mismo nodo, en la misma red `retaco-net` — mismo patrón que `n8n-main` (ver `docs/05-instalacion-retaco.md`). Al arrancar, Open WebUI corre sus propias migraciones de Alembic contra la base vacía (esquema completo, ~20 migraciones) — no hace falta ningún paso manual de inicialización, a diferencia de Postgres para n8n (que sí necesita `01-init-n8n.sh` porque usa el entrypoint oficial de la imagen `postgres`, no un ORM con migraciones propias).
 
 ### Qdrant — vectores de RAG/Knowledge
 
@@ -795,7 +795,7 @@ Mismo Qdrant que ya usa el pipeline de contenido (`articles`, `transcripts`) —
 ### Vaultwarden — por qué no se pudo automatizar
 
 Se pidió guardar `OPENWEBUI_DB_PASSWORD` y `QDRANT_API_KEY` en Vaultwarden. **No es automatizable sin la contraseña maestra de un usuario real**: Vaultwarden es un servidor Bitwarden-compatible con cifrado de extremo a extremo — el `VAULTWARDEN_ADMIN_TOKEN` (que sí se tiene) solo da acceso al panel `/admin` (gestión de usuarios del servidor, diagnóstico), nunca al contenido cifrado de un vault concreto, que el propio servidor no puede leer ni escribir sin una sesión autenticada de ese usuario (contraseña maestra, interactiva). Añadidas a mano por el usuario tras esta migración — dos entradas nuevas en Vaultwarden:
-- `openwebui — postgres` (usuario `openwebui`, contraseña `OPENWEBUI_DB_PASSWORD`, host `postgres-main:5432`/`postgresql.home.arpa:5432`, base `openwebui`)
+- `openwebui — postgres` (usuario `openwebui`, contraseña `OPENWEBUI_DB_PASSWORD`, host `postgres-main:5432`/`postgresql.404labo.net:5432`, base `openwebui`)
 - Confirmar si `QDRANT_API_KEY` ya estaba guardada de antes (se reutiliza la misma que ya usa el pipeline de contenido, no se generó una nueva)
 
 ### Efecto sobre lo migrado de `ryzen`

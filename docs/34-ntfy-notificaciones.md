@@ -15,8 +15,8 @@ Autoalojado (no `ntfy.sh`, la instancia pública) — mismo criterio que Vaultwa
 - **Datos**: `/srv/homelab/ntfy/data` (ruta compartida, no bajo ningún `<node>/` — igual que `markitdown-cache`/`valkey`/`infisical`, porque el scheduler de Swarm puede colocar la tarea en cualquiera de los dos nodos `role=stateful`). Crear y dar permisos **en los dos candidatos** (`retaco` y `pinchi`) antes del primer despliegue:
 
   ```bash
-  ssh u-data@192.168.1.174 "sudo mkdir -p /srv/homelab/ntfy/data && sudo chown u-data:u-data /srv/homelab/ntfy/data"
-  ssh u-forge@192.168.1.175 "sudo mkdir -p /srv/homelab/ntfy/data && sudo chown u-forge:u-forge /srv/homelab/ntfy/data"
+  ssh admin@192.168.10.7 "sudo mkdir -p /srv/homelab/ntfy/data && sudo chown u-data:u-data /srv/homelab/ntfy/data"
+  ssh admin@192.168.10.8 "sudo mkdir -p /srv/homelab/ntfy/data && sudo chown u-forge:u-forge /srv/homelab/ntfy/data"
   ```
 
 ## Despliegue
@@ -24,8 +24,8 @@ Autoalojado (no `ntfy.sh`, la instancia pública) — mismo criterio que Vaultwa
 Desde un manager del Swarm (patrón habitual, ver la sección "Deploying to a Docker Swarm stack" del `CLAUDE.md` raíz / `docker-swarm/README.md`):
 
 ```bash
-rsync -av docker-swarm/stacks/ntfy/docker-compose.yml u-data@192.168.1.174:/tmp/ntfy-compose.yml
-ssh u-data@192.168.1.174 "docker stack deploy -c /tmp/ntfy-compose.yml ntfy --with-registry-auth"
+rsync -av docker-swarm/stacks/ntfy/docker-compose.yml admin@192.168.10.7:/tmp/ntfy-compose.yml
+ssh admin@192.168.10.7 "docker stack deploy -c /tmp/ntfy-compose.yml ntfy --with-registry-auth"
 docker service ls | grep ntfy
 ```
 

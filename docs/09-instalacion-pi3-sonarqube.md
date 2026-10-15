@@ -1,4 +1,6 @@
-# 09 — Instalación y configuración: pi-sonar (192.168.1.172)
+# 09 — Instalación y configuración: pi-sonar (192.168.10.5)
+
+> ⚠️ **Retirada 2026-10-08 — documento histórico.** Esta Raspberry Pi ya no es miembro del Swarm ni aloja servicios: SonarQube corre hoy en `miugarita` (stack Swarm `sonarqube`). Se conserva como registro de cómo se instaló; para el estado actual, `docs/31-docker-swarm.md` y `README.md`.
 
 ## Rol del nodo
 
@@ -6,7 +8,7 @@
 
 - **sonarqube** — Plataforma de análisis estático (Community Edition). Requiere recursos significativos de memoria — Raspberry Pi 5 con 8 GB recomendado.
 
-La base de datos (antes `sonarqube-db`, local en este nodo) se migró a `postgres-main` en `retaco` — ver `docs/05-instalacion-retaco.md`. SonarQube se conecta entre nodos mediante `postgresql.home.arpa:5432`.
+La base de datos (antes `sonarqube-db`, local en este nodo) se migró a `postgres-main` en `retaco` — ver `docs/05-instalacion-retaco.md`. SonarQube se conecta entre nodos mediante `postgresql.404labo.net:5432`.
 
 `node-exporter`, `cadvisor`, `portainer-agent` y `watchtower` también se ejecutan aquí — ver `docs/04-servicios-comunes.md`.
 
@@ -14,10 +16,10 @@ La base de datos (antes `sonarqube-db`, local en este nodo) se migró a `postgre
 
 ```mermaid
 flowchart LR
-    subgraph pisonar["pi-sonar — 192.168.1.172"]
+    subgraph pisonar["pi-sonar — 192.168.10.5"]
         SQ["sonarqube\n:9000"]
     end
-    SQ -->|"jdbc:postgresql://\npostgresql.home.arpa:5432/sonarqube"| PG["postgres-main (retaco)"]
+    SQ -->|"jdbc:postgresql://\npostgresql.404labo.net:5432/sonarqube"| PG["postgres-main (retaco)"]
     Nginx["nginx (pi-dns)"] --> SQ
     Scanner["sonar-scanner-cli / pysonar\n(desde cualquier nodo, p.ej. ryzen)"] -->|SONAR_TOKEN| SQ
 ```
@@ -39,13 +41,13 @@ network:
     eth0:
       dhcp4: false
       addresses:
-        - 192.168.1.172/24
+        - 192.168.10.5/24
       routes:
         - to: default
-          via: 192.168.1.1
+          via: 192.168.10.1
       nameservers:
         addresses:
-          - 192.168.1.170   # pi-dns
+          - 192.168.10.2   # pi-dns
           - 1.1.1.1
 ```
 
@@ -119,7 +121,7 @@ docker compose logs -f sonarqube
 
 ### 7.1 Acceder
 
-`https://sonarqube.home.arpa`, `admin`/`admin` — SonarQube obliga a cambiar la contraseña en el primer inicio de sesión.
+`https://sonarqube.404labo.net`, `admin`/`admin` — SonarQube obliga a cambiar la contraseña en el primer inicio de sesión.
 
 ### 7.2 Token de análisis
 
@@ -133,7 +135,7 @@ docker compose logs -f sonarqube
 
 ```bash
 docker run --rm \
-  -e SONAR_HOST_URL="https://sonarqube.home.arpa" \
+  -e SONAR_HOST_URL="https://sonarqube.404labo.net" \
   -e SONAR_TOKEN="<tu-token>" \
   -v "$(pwd):/usr/src" \
   sonarsource/sonar-scanner-cli
@@ -158,7 +160,7 @@ make sonar-check
 
 El token de análisis (Global Analysis Token) es reutilizable entre proyectos — no hace falta generar uno nuevo por servicio, basta con copiarlo al `.env` de cada uno.
 
-⚠️ **`SONAR_HOST_URL=https://sonarqube.home.arpa` requiere fijar también `REQUESTS_CA_BUNDLE`.** `pysonar` usa la librería `requests`, que valida TLS contra el bundle de `certifi`, no contra el almacén de certificados del sistema — la CA interna del clúster (`docs/15-ca-interna.md`) está instalada a nivel de sistema y por eso `curl`/navegadores la aceptan sin aviso, pero `requests` la rechaza con `CERTIFICATE_VERIFY_FAILED` si no se le indica explícitamente dónde está esa CA. Por eso el `Makefile` fija `REQUESTS_CA_BUNDLE ?= /etc/ssl/certs/ca-certificates.crt` como valor por defecto (Debian/Ubuntu, incluye la CA interna tras `generate-cert.sh`) y lo pasa al comando `pysonar` igual que `SONAR_HOST_URL`/`SONAR_TOKEN` — no hace falta tocar nada salvo que el bundle esté en otra ruta. Alternativa si se prefiere no depender de la CA interna: usar la IP directa `http://192.168.1.172:9000` (sin TLS, sin necesidad de `REQUESTS_CA_BUNDLE`).
+⚠️ **`SONAR_HOST_URL=https://sonarqube.404labo.net` requiere fijar también `REQUESTS_CA_BUNDLE`.** `pysonar` usa la librería `requests`, que valida TLS contra el bundle de `certifi`, no contra el almacén de certificados del sistema — la CA interna del clúster (`docs/15-ca-interna.md`) está instalada a nivel de sistema y por eso `curl`/navegadores la aceptan sin aviso, pero `requests` la rechaza con `CERTIFICATE_VERIFY_FAILED` si no se le indica explícitamente dónde está esa CA. Por eso el `Makefile` fija `REQUESTS_CA_BUNDLE ?= /etc/ssl/certs/ca-certificates.crt` como valor por defecto (Debian/Ubuntu, incluye la CA interna tras `generate-cert.sh`) y lo pasa al comando `pysonar` igual que `SONAR_HOST_URL`/`SONAR_TOKEN` — no hace falta tocar nada salvo que el bundle esté en otra ruta. Alternativa si se prefiere no depender de la CA interna: usar la IP directa `http://192.168.10.5:9000` (sin TLS, sin necesidad de `REQUESTS_CA_BUNDLE`).
 
 ⚠️ **Sin repo git, el sensor de texto y secretos de `pysonar` no respeta del todo `sonar.exclusions`** — sin la detección de "ficheros sucios" mediante git, cae a escanear más de la cuenta y puede quejarse de la codificación en bytecode compilado (`__pycache__/*.pyc`) o en artefactos de test (bases SQLite temporales). El target `sonar` del `Makefile` limpia esos ficheros justo antes de invocar `pysonar` como mitigación — deja de hacer falta en cuanto el repo esté bajo git (`docs/22-mejoras-futuras.md`, punto 2).
 
@@ -189,10 +191,10 @@ Guardado en `/srv/homelab/backups/retaco/postgres-main_sonarqube_<fecha>.sql.gz`
 | Servicio | Puerto | Comprobación |
 |---|---|---|
 | sonarqube | 9000 | GET /api/system/status |
-| postgres-main (retaco) | `postgresql.home.arpa:5432` | `check-health.sh retaco` |
+| postgres-main (retaco) | `postgresql.404labo.net:5432` | `check-health.sh retaco` |
 
 ```bash
-curl -s http://192.168.1.172:9000/api/system/status | jq .
+curl -s http://192.168.10.5:9000/api/system/status | jq .
 ```
 
 ## 11. Healthcheck manual

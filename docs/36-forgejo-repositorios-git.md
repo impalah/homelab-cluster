@@ -23,7 +23,7 @@ Se abordó deliberadamente "poco a poco", decisión explícita del usuario — c
 - **HTTPS vía Traefik**, `traefik.http.routers.*` como labels del propio stack (`provider.swarm`, no `providers.file`) — mismo patrón que `ntfy`. Certificado real de Let's Encrypt (wildcard `*.404labo.net`).
 - **Secretos vía Infisical**, mismo patrón que el resto del clúster: `docker secret` (`forgejo-infisical-client-id-v1`/`-client-secret-v1`/`-project-id-v1`, `external: true`) + `infisical run` antepuesto al entrypoint nativo de la imagen. La contraseña de Postgres (`FORGEJO__database__PASSWD`) vive **solo** en Infisical, carpeta `/forgejo/` del proyecto único "Homelab Cluster" (no un proyecto Infisical nuevo — todos los servicios comparten proyecto, separados por carpeta) — nunca en este repo.
 - **`INSTALL_LOCK=true`** — evita el asistente web de instalación (todo preconfigurado por variables `FORGEJO__*`), igual que cualquier servicio expuesto vía Traefik.
-- **DNS**: `forgejo.404labo.net → 192.168.1.175` (pinchi, por convención — igual que el resto de servicios enrutados por label, ver `shared/dns/dns-records.md`), cargado directamente en la UI de Pi-hole (**Settings → Local DNS Records**, ruta que cambió respecto a versiones antiguas de Pi-hole documentadas en otros sitios de este repo — ya no es `/admin/dns_records.php`).
+- **DNS**: `forgejo.404labo.net → 192.168.10.8` (pinchi, por convención — igual que el resto de servicios enrutados por label, ver `shared/dns/dns-records.md`), cargado directamente en la UI de Pi-hole (**Settings → Local DNS Records**, ruta que cambió respecto a versiones antiguas de Pi-hole documentadas en otros sitios de este repo — ya no es `/admin/dns_records.php`).
 
 ## Incidente real durante el primer despliegue — healthcheck con patrón de grep incorrecto
 
@@ -55,13 +55,13 @@ test: ["CMD-SHELL", "wget -q --tries=1 -O - http://127.0.0.1:3000/api/healthz | 
 1. **Directorio NFS**, en un manager con `/mnt/nfs-data` montado (retaco) — un `mkdir` simple hereda la ACL de UGOS del directorio padre correctamente (`docs/21-configuracion-nas-ugreen.md`), pero como con cualquier directorio nuevo en el NAS, hace falta `sudo` (root pasa siempre vía `no_root_squash`):
 
    ```bash
-   ssh u-data@192.168.1.174 "sudo mkdir -p /mnt/nfs-data/forgejo/data && sudo chown -R 1000:1000 /mnt/nfs-data/forgejo"
+   ssh admin@192.168.10.7 "sudo mkdir -p /mnt/nfs-data/forgejo/data && sudo chown -R 1000:1000 /mnt/nfs-data/forgejo"
    ```
 
 2. **Rol y base de datos Postgres**, contra el ID/nombre real del contenedor `postgres-main` (no siempre coincide con el nombre corto del servicio en un stack Swarm — `docker ps -f name=postgres-main_postgres-main` para obtenerlo):
 
    ```bash
-   ssh u-data@192.168.1.174 "bash /srv/homelab/shared/scripts/create-postgres-db.sh <id-contenedor-postgres-main> dbadmin forgejo forgejo"
+   ssh admin@192.168.10.7 "bash /srv/homelab/shared/scripts/create-postgres-db.sh <id-contenedor-postgres-main> dbadmin forgejo forgejo"
    ```
 
 3. **Infisical** (UI, `https://infisical.404labo.net`, proyecto "Homelab Cluster" → Secrets Management → Production):
@@ -73,18 +73,18 @@ test: ["CMD-SHELL", "wget -q --tries=1 -O - http://127.0.0.1:3000/api/healthz | 
 4. **`docker secret` externos**, en un manager (los secrets de Swarm son cluster-wide, no hace falta repetir por nodo):
 
    ```bash
-   printf '%s' '<client-id>'     | ssh u-data@192.168.1.174 "docker secret create forgejo-infisical-client-id-v1 -"
-   printf '%s' '<client-secret>' | ssh u-data@192.168.1.174 "docker secret create forgejo-infisical-client-secret-v1 -"
-   printf '%s' '<project-id>'    | ssh u-data@192.168.1.174 "docker secret create forgejo-infisical-project-id-v1 -"
+   printf '%s' '<client-id>'     | ssh admin@192.168.10.7 "docker secret create forgejo-infisical-client-id-v1 -"
+   printf '%s' '<client-secret>' | ssh admin@192.168.10.7 "docker secret create forgejo-infisical-client-secret-v1 -"
+   printf '%s' '<project-id>'    | ssh admin@192.168.10.7 "docker secret create forgejo-infisical-project-id-v1 -"
    ```
 
-5. **DNS**, Pi-hole → Settings → Local DNS Records → añadir `forgejo.404labo.net` → `192.168.1.175`.
+5. **DNS**, Pi-hole → Settings → Local DNS Records → añadir `forgejo.404labo.net` → `192.168.10.8`.
 
 6. **Deploy**, patrón habitual (`CLAUDE.md`, "Deploying to a Docker Swarm stack"):
 
    ```bash
-   rsync -av docker-swarm/stacks/forgejo/docker-compose.yml u-data@192.168.1.174:/tmp/forgejo-docker-compose.yml
-   ssh u-data@192.168.1.174 "docker stack deploy -c /tmp/forgejo-docker-compose.yml forgejo --with-registry-auth"
+   rsync -av docker-swarm/stacks/forgejo/docker-compose.yml admin@192.168.10.7:/tmp/forgejo-docker-compose.yml
+   ssh admin@192.168.10.7 "docker stack deploy -c /tmp/forgejo-docker-compose.yml forgejo --with-registry-auth"
    ```
 
 7. **Verificación**: `docker service ls | grep forgejo` hasta ver `1/1`, y `curl -sk https://forgejo.404labo.net/api/healthz` debe responder `{"status": "pass", ...}`.

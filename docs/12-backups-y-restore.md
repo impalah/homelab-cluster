@@ -122,7 +122,7 @@ crontab -e
 
 ```bash
 # Opción A: rsync a un NAS local
-rsync -avz --delete /srv/homelab/backups/ homelab@nas.home.arpa:/backups/homelab/
+rsync -avz --delete /srv/homelab/backups/ homelab@nas.404labo.net:/backups/homelab/
 
 # Opción B: rclone a la nube
 rclone config

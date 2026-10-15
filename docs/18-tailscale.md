@@ -2,7 +2,7 @@
 
 ## Qué resuelve
 
-Acceso a todo el clúster desde fuera de la LAN, autenticado (solo dispositivos que hayan iniciado sesión en el tailnet con la cuenta autorizada), sin abrir ningún puerto en el router de casa. Un dispositivo remoto conectado a Tailscale llega a cualquier IP de `192.168.1.0/24` y resuelve `*.404labo.net` exactamente igual que si estuviera en la LAN.
+Acceso a todo el clúster desde fuera de la LAN, autenticado (solo dispositivos que hayan iniciado sesión en el tailnet con la cuenta autorizada), sin abrir ningún puerto en el router de casa. Un dispositivo remoto conectado a Tailscale llega a cualquier IP de `192.168.10.0/24` y resuelve `*.404labo.net` exactamente igual que si estuviera en la LAN.
 
 ## Arquitectura
 
@@ -10,16 +10,16 @@ Acceso a todo el clúster desde fuera de la LAN, autenticado (solo dispositivos 
 Dispositivo remoto (móvil/portátil, con Tailscale)
   │  túnel WireGuard cifrado, autenticado por cuenta Tailscale
   ▼
-pi-dns (192.168.1.170) — subnet router
-  ├─ anuncia la ruta 192.168.1.0/24 al resto del tailnet
+pi-dns (192.168.10.2) — subnet router
+  ├─ anuncia la ruta 192.168.10.0/24 al resto del tailnet
   └─ Pi-hole + Unbound (ya existían) — resuelven *.404labo.net
 ```
 
 `pi-dns` hace de único punto de entrada remoto porque ya es el nodo DNS/proxy del clúster (`docs/06-instalacion-pi1-dns.md`) — coherente con "resolver `*.404labo.net`": las consultas DNS del tailnet llegan al mismo nodo que ya las resuelve, sin saltos extra. Nada se instala en el resto de nodos — llegan a través de la ruta anunciada, igual que cualquier otro tráfico de la LAN.
 
-**Split DNS** (configurado en el panel de Tailscale, no en este repo): un nameserver personalizado, restringido al dominio `404labo.net`, apuntando a `192.168.1.170`. Solo las consultas de `*.404labo.net` se enrutan por el tailnet — el resto del tráfico DNS del dispositivo remoto sigue su camino normal (no es "forzar todo el DNS", es "split").
+**Split DNS** (configurado en el panel de Tailscale, no en este repo): un nameserver personalizado, restringido al dominio `404labo.net`, apuntando a `192.168.10.2`. Solo las consultas de `*.404labo.net` se enrutan por el tailnet — el resto del tráfico DNS del dispositivo remoto sigue su camino normal (no es "forzar todo el DNS", es "split").
 
-Desde el cierre de la mejora 41 (2026-08-28, `docs/22-mejoras-futuras.md`), `*.404labo.net` sirve un certificado wildcard real de Let's Encrypt — un dispositivo remoto **no** necesita instalar ninguna CA propia para que las conexiones HTTPS funcionen sin aviso, a diferencia de cuando el clúster usaba `*.home.arpa` con la CA interna (`docs/15-ca-interna.md`). Tailscale resuelve el *acceso*; el *certificado* ya no depende de nada específico de este clúster.
+Desde el cierre de la mejora 41 (2026-08-28, `docs/22-mejoras-futuras.md`), `*.404labo.net` sirve un certificado wildcard real de Let's Encrypt — un dispositivo remoto **no** necesita instalar ninguna CA propia para que las conexiones HTTPS funcionen sin aviso, a diferencia de cuando el clúster usaba `*.404labo.net` con la CA interna (`docs/15-ca-interna.md`). Tailscale resuelve el *acceso*; el *certificado* ya no depende de nada específico de este clúster.
 
 ## Instalación
 
@@ -38,7 +38,7 @@ Variables relevantes (ver comentarios en el propio `docker-compose.yml`):
 | Variable | Valor | Por qué |
 |---|---|---|
 | `TS_USERSPACE` | `false` | Sin esto tailscaled cae a modo userspace, que no puede enrutar tráfico ajeno — inútil para un subnet router. |
-| `TS_EXTRA_ARGS` | `--advertise-routes=192.168.1.0/24 --accept-dns=false` | Anuncia la LAN; `--accept-dns=false` porque este nodo YA es el servidor DNS del clúster — dejar que Tailscale reescriba su propio `resolv.conf` rompería Pi-hole/Unbound. |
+| `TS_EXTRA_ARGS` | `--advertise-routes=192.168.10.0/24 --accept-dns=false` | Anuncia la LAN; `--accept-dns=false` porque este nodo YA es el servidor DNS del clúster — dejar que Tailscale reescriba su propio `resolv.conf` rompería Pi-hole/Unbound. |
 | `TS_STATE_DIR` | `/var/lib/tailscale` (con volumen persistente) | Sin esto, cada reinicio del contenedor genera una identidad de nodo nueva y hay que volver a autenticar. |
 
 ⚠️ **`/dev/net/tun` va en `devices:`, no en `volumes:`** — con `volumes:` el contenedor no ve un nodo TUN real y tailscaled cae solo a `--tun=userspace-networking` (mismo problema que el punto anterior). Pasó de verdad en el primer despliegue.
@@ -85,7 +85,7 @@ Copiar la key generada (`tskey-auth-...`) a `TS_AUTHKEY` en `/srv/homelab/pi-dns
 
 ### 4. Aprobar la subnet route (manual, panel)
 
-`https://login.tailscale.com/admin/machines` → nodo `pi-dns` → `···` → *Edit route settings* → activar `192.168.1.0/24`. Tailscale exige un click humano para aprobar rutas nuevas — no se puede hacer por API/CLI sin un token de administración aparte, es intencional (una ruta aprobada automáticamente sería una forma fácil de que un nodo comprometido se anunciara como gateway de una red que no le corresponde).
+`https://login.tailscale.com/admin/machines` → nodo `pi-dns` → `···` → *Edit route settings* → activar `192.168.10.0/24`. Tailscale exige un click humano para aprobar rutas nuevas — no se puede hacer por API/CLI sin un token de administración aparte, es intencional (una ruta aprobada automáticamente sería una forma fácil de que un nodo comprometido se anunciara como gateway de una red que no le corresponde).
 
 Verificación desde el propio nodo:
 
@@ -93,13 +93,13 @@ Verificación desde el propio nodo:
 docker exec tailscale tailscale status --json | python3 -c "
 import json, sys
 d = json.load(sys.stdin)['Self']
-print('AllowedIPs:', d['AllowedIPs'])   # debe incluir 192.168.1.0/24
+print('AllowedIPs:', d['AllowedIPs'])   # debe incluir 192.168.10.0/24
 "
 ```
 
 ### 5. Split DNS (manual, panel)
 
-`https://login.tailscale.com/admin/dns` → *Nameservers* → *Add nameserver* → *Custom* → `192.168.1.170` → activar **Restrict to domain** → `404labo.net` → guardar. **No** activar "Override local DNS" — el objetivo es que solo `*.404labo.net` vaya por este nameserver, el resto del tráfico DNS del dispositivo remoto sigue su camino normal.
+`https://login.tailscale.com/admin/dns` → *Nameservers* → *Add nameserver* → *Custom* → `192.168.10.2` → activar **Restrict to domain** → `404labo.net` → guardar. **No** activar "Override local DNS" — el objetivo es que solo `*.404labo.net` vaya por este nameserver, el resto del tráfico DNS del dispositivo remoto sigue su camino normal.
 
 ### 6. (Recomendado) Desactivar caducidad de clave del nodo
 
@@ -127,7 +127,7 @@ curl -sk https://home.404labo.net -o /dev/null -w "HTTP %{http_code}\n"
 
 - **Sin ACL personalizada por ahora** — cualquier dispositivo autenticado en el tailnet llega a todo el clúster (comportamiento por defecto de Tailscale). Suficiente para un tailnet personal de un único usuario; si en el futuro se añaden más cuentas/dispositivos al tailnet, revisar si conviene una política de ACL (tags, grupos) para restringir por dispositivo/usuario — no bloqueante, se puede añadir sin rehacer nada de lo anterior.
 - **Tráfico remoto y el firewall `DOCKER-USER`** (`docs/17-firewall-acceso-directo.md`): el tráfico que llega a otros nodos a través de la ruta anunciada por `pi-dns` sale NAT'eado con la IP LAN de `pi-dns` (comportamiento por defecto de Tailscale, `snat=true`) — indistinguible del tráfico legítimo que ya generaba `nginx` proxificando peticiones. Si algún nodo tiene el acceso directo por IP y puerto restringido a "solo pi-dns" (`toggle-direct-access.sh <nodo> off`), el tráfico remoto por Tailscale sigue funcionando igual — es exactamente el comportamiento esperado (que Tailscale se sienta como estar en la LAN, pasando por pi-dns como de costumbre), no una forma de saltarse esa protección.
-- **Sin puerto abierto en el router** — Tailscale usa NAT traversal (UDP 41641 saliente, con retransmisión mediante relés DERP de Tailscale si el tráfico directo no es posible). Si la conexión parece lenta/retransmitida, se puede abrir opcionalmente el puerto UDP 41641 hacia `192.168.1.170` en el router para favorecer conexión directa — no es necesario para que funcione, solo para rendimiento.
+- **Sin puerto abierto en el router** — Tailscale usa NAT traversal (UDP 41641 saliente, con retransmisión mediante relés DERP de Tailscale si el tráfico directo no es posible). Si la conexión parece lenta/retransmitida, se puede abrir opcionalmente el puerto UDP 41641 hacia `192.168.10.2` en el router para favorecer conexión directa — no es necesario para que funcione, solo para rendimiento.
 
 ## Resolución de problemas
 

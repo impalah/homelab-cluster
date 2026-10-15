@@ -2,33 +2,33 @@
 
 ## DNS y resolución de nombres
 
-### Síntoma: `*.home.arpa` no resuelve
+### Síntoma: `*.404labo.net` no resuelve
 
 **Diagnóstico:**
 
 ```bash
-dig openwebui.home.arpa @192.168.1.170
-cat /etc/resolv.conf   # Debe mostrar: nameserver 192.168.1.170
-ssh homelab@192.168.1.170 "docker compose -f /srv/homelab/pi-dns/docker-compose.yml ps pihole"
+dig openwebui.404labo.net @192.168.10.2
+cat /etc/resolv.conf   # Debe mostrar: nameserver 192.168.10.2
+ssh homelab@192.168.10.2 "docker compose -f /srv/homelab/pi-dns/docker-compose.yml ps pihole"
 ```
 
 **Soluciones:**
 
-1. Si `resolv.conf` no apunta a `192.168.1.170`:
+1. Si `resolv.conf` no apunta a `192.168.10.2`:
    ```bash
    sudo tee /etc/resolv.conf <<'EOF'
-   nameserver 192.168.1.170
+   nameserver 192.168.10.2
    nameserver 1.1.1.1
    EOF
    ```
-2. Si Pi-hole no está en marcha: `ssh homelab@192.168.1.170 "cd /srv/homelab/pi-dns && docker compose up -d"`.
-3. Si Pi-hole está en marcha pero no resuelve `.home.arpa`: verificar los registros en **Settings → DNS Records** de Pi-hole.
+2. Si Pi-hole no está en marcha: `ssh homelab@192.168.10.2 "cd /srv/homelab/pi-dns && docker compose up -d"`.
+3. Si Pi-hole está en marcha pero no resuelve `.404labo.net`: verificar los registros en **Settings → DNS Records** de Pi-hole.
 
 ---
 
-### Síntoma: un cliente Linux no resuelve `*.home.arpa` aunque `pi-dns` ya está sano de nuevo
+### Síntoma: un cliente Linux no resuelve `*.404labo.net` aunque `pi-dns` ya está sano de nuevo
 
-Tras un apagón/reinicio/recarga de `pi-dns` (incluso un `nginx -s reload`): el cliente estaba activo en ese instante, `systemd-resolved` marcó `192.168.1.170` como no disponible y pasó al DNS secundario — pero **no reintenta el primario solo**, aunque `pi-dns` ya esté operativo. No es exclusivo de un equipo concreto — se ha observado en varios nodos, incluidos Raspberry Pi.
+Tras un apagón/reinicio/recarga de `pi-dns` (incluso un `nginx -s reload`): el cliente estaba activo en ese instante, `systemd-resolved` marcó `192.168.10.2` como no disponible y pasó al DNS secundario — pero **no reintenta el primario solo**, aunque `pi-dns` ya esté operativo. No es exclusivo de un equipo concreto — se ha observado en varios nodos, incluidos Raspberry Pi.
 
 **Ojo con los contenedores Docker del nodo afectado**: el DNS embebido (`127.0.0.11`) reenvía al resolver del host — si el host tiene este problema, **todos sus contenedores también dejan de resolver**, incluidas apps JVM (SonarQube), que lo manifiestan como `UnknownHostException` y suelen entrar en bucle de reinicio.
 
@@ -36,7 +36,7 @@ Tras un apagón/reinicio/recarga de `pi-dns` (incluso un `nginx -s reload`): el 
 
 ```bash
 resolvectl status enp6s0    # sustituir por la interfaz activa
-resolvectl query grafana.home.arpa
+resolvectl query grafana.404labo.net
 ```
 
 **Solución:**
@@ -56,9 +56,9 @@ Limpia la caché y el estado de selección de servidor. No hace falta tocar `nmc
 **Diagnóstico:**
 
 ```bash
-ssh homelab@192.168.1.170 "docker exec nginx nginx -t"
-ssh homelab@192.168.1.170 "docker compose -f /srv/homelab/pi-dns/docker-compose.yml logs --tail=50 nginx"
-curl -s http://192.168.1.150:8080  # open-webui, por ejemplo
+ssh homelab@192.168.10.2 "docker exec nginx nginx -t"
+ssh homelab@192.168.10.2 "docker compose -f /srv/homelab/pi-dns/docker-compose.yml logs --tail=50 nginx"
+curl -s http://192.168.10.10:8080  # open-webui, por ejemplo
 ```
 
 **Soluciones:**
@@ -74,10 +74,10 @@ curl -s http://192.168.1.150:8080  # open-webui, por ejemplo
 
 ```bash
 # ¿Falta la cabecera, o la key es incorrecta/revocada?
-curl -sk -v https://ollama.home.arpa/api/tags -H "X-Api-Key: <key>" 2>&1 | grep -i "< HTTP"
+curl -sk -v https://ollama.404labo.net/api/tags -H "X-Api-Key: <key>" 2>&1 | grep -i "< HTTP"
 
 # ¿La key existe y está activa?
-curl -sk https://apikey.home.arpa/keys -H "Authorization: Bearer ${APIKEY_ADMIN_TOKEN}" | jq .
+curl -sk https://apikey.404labo.net/keys -H "Authorization: Bearer ${APIKEY_ADMIN_TOKEN}" | jq .
 ```
 
 **Causas comunes:**
@@ -106,7 +106,7 @@ No basta con `reload` ni con `restart` — hace falta recrear el contenedor para
 
 ### Síntoma: el navegador avisa de certificado no confiable
 
-Esperado — certificado firmado por la CA interna del clúster, no una CA pública (`*.home.arpa` no es un dominio público). Añadir excepción en el navegador, `-k`/`--insecure` con `curl`, o instalar la CA (`docs/15-ca-interna.md`).
+Esperado — certificado firmado por la CA interna del clúster, no una CA pública (`*.404labo.net` no es un dominio público). Añadir excepción en el navegador, `-k`/`--insecure` con `curl`, o instalar la CA (`docs/15-ca-interna.md`).
 
 ---
 
@@ -155,19 +155,19 @@ docker exec whisper-service ls /root/.cache/whisper/
 
 ### Síntoma: sonarqube (pi-sonar) no puede conectar a postgres-main (retaco)
 
-`n8n-main` está co-localizado con `postgres-main` (mismo host, `retaco-net`) — `sonarqube` sigue conectando entre nodos mediante `postgresql.home.arpa:5432`, así que a los fallos habituales se suma el alcance de red/DNS entre nodos.
+`n8n-main` está co-localizado con `postgres-main` (mismo host, `retaco-net`) — `sonarqube` sigue conectando entre nodos mediante `postgresql.404labo.net:5432`, así que a los fallos habituales se suma el alcance de red/DNS entre nodos.
 
 **Diagnóstico:**
 
 ```bash
-ping -c1 192.168.1.174
-nc -zv 192.168.1.174 5432
-ssh pi-sonar "resolvectl query postgresql.home.arpa"
+ping -c1 192.168.10.7
+nc -zv 192.168.10.7 5432
+ssh pi-sonar "resolvectl query postgresql.404labo.net"
 ssh retaco "cd /srv/homelab/retaco && docker compose ps postgres-main"
 ssh pi-sonar "docker logs sonarqube --tail=50 2>&1 | grep -i jdbc"
 ```
 
-**Soluciones:** `retaco` apagado → arrancarlo; `postgresql.home.arpa` no resuelve → reiniciar `systemd-resolved` en `pi-sonar`; `postgres-main` no healthy → ver sección siguiente; credenciales desincronizadas → `SONARQUBE_DB_PASSWORD` debe coincidir exactamente (`docs/05-instalacion-retaco.md`).
+**Soluciones:** `retaco` apagado → arrancarlo; `postgresql.404labo.net` no resuelve → reiniciar `systemd-resolved` en `pi-sonar`; `postgres-main` no healthy → ver sección siguiente; credenciales desincronizadas → `SONARQUBE_DB_PASSWORD` debe coincidir exactamente (`docs/05-instalacion-retaco.md`).
 
 ### DNS caído en varios nodos a la vez — `shared/scripts/fix-dns-resolver.sh`
 
@@ -186,7 +186,7 @@ bash shared/scripts/fix-dns-resolver.sh pi-sonar  # uno solo
 
 ### Causa raíz real, identificada en vivo: ráfaga de DNS de un workflow de n8n satura Unbound
 
-**Síntoma**: justo después de ejecutar el workflow **"RSS Fetch & Store"** en `n8n-main` (retaco), `retaco` deja de resolver `postgresql.home.arpa` — `resolvectl status` muestra `Current DNS Server: 1.1.1.1` en vez de `192.168.1.170`, aunque ambos siguen en la lista de `DNS Servers`.
+**Síntoma**: justo después de ejecutar el workflow **"RSS Fetch & Store"** en `n8n-main` (retaco), `retaco` deja de resolver `postgresql.404labo.net` — `resolvectl status` muestra `Current DNS Server: 1.1.1.1` en vez de `192.168.10.2`, aunque ambos siguen en la lista de `DNS Servers`.
 
 **Diagnóstico confirmado** (no es network flakiness aleatoria):
 
@@ -197,7 +197,7 @@ docker logs n8n-main --since 60m 2>&1 | grep -i "host not found\|GetAddrInfoReqW
 # Log de Pi-hole: cuántas consultas llegaron de retaco en el mismo segundo
 # del fallo (ajustar la hora — recordar que el log de Pi-hole va en hora
 # LOCAL y journalctl/docker logs del host suelen ir en UTC)
-docker exec pihole grep 'Aug  1 14:30:58' /var/log/pihole/pihole.log | grep -c '192.168.1.174'
+docker exec pihole grep 'Aug  1 14:30:58' /var/log/pihole/pihole.log | grep -c '192.168.10.7'
 ```
 
 En el incidente real que motivó esto: **353 consultas DNS desde `retaco` en un único segundo** — el workflow resuelve decenas de dominios de feeds RSS (`raw.githubusercontent.com`, `huggingface.co`, `openai.com`, `hackernoon.com`, etc.) prácticamente a la vez. Unbound (`pi-dns`, una Raspberry Pi) tiene que hacer resolución recursiva completa para la mayoría — muchos sin caché la primera vez — y bajo ese pico alguna consulta se retrasa lo suficiente como para que `systemd-resolved` en `retaco` la dé por fallida y pase a `1.1.1.1`, quedándose ahí "pegado" (comportamiento conocido de `systemd-resolved`: no reintenta el servidor preferido solo tras un fallo, hay que forzarlo — de ahí `fix-dns-resolver.sh`).
@@ -206,7 +206,7 @@ En el incidente real que motivó esto: **353 consultas DNS desde `retaco` en un 
 
 **Arreglo real pendiente (fuera de este repo)**: limitar la concurrencia del propio workflow "RSS Fetch & Store" en n8n (batching/throttling del nodo que dispara las peticiones a cada feed), para que no genere cientos de resoluciones DNS en el mismo instante. Es un cambio en la definición del workflow, no en la infraestructura — se gestiona desde la propia interfaz o API de n8n, no desde este repo.
 
-Hace una prueba **funcional** (resuelve un hostname `*.home.arpa` real y compara la IP con la esperada — no lee el campo "Current DNS Server" de `resolvectl status`, que ni siquiera aparece cuando `resolv.conf mode` es `stub`, el habitual en estos nodos, y da falsos positivos de fallo). Si no resuelve correctamente, reinicia `systemd-resolved` en ese nodo y reintenta.
+Hace una prueba **funcional** (resuelve un hostname `*.404labo.net` real y compara la IP con la esperada — no lee el campo "Current DNS Server" de `resolvectl status`, que ni siquiera aparece cuando `resolv.conf mode` es `stub`, el habitual en estos nodos, y da falsos positivos de fallo). Si no resuelve correctamente, reinicia `systemd-resolved` en ese nodo y reintenta.
 
 ### Síntoma: `postgres-main` "healthy" pero consultas fallan con `Permission denied`
 
@@ -286,7 +286,7 @@ La API confirma el cambio al momento, pero la escritura a disco de `pihole.toml`
 
 ```bash
 ssh pi-dns "docker exec pihole grep -A25 'hosts = \[' /etc/pihole/pihole.toml"
-dig +short <hostname>.home.arpa @192.168.1.170
+dig +short <hostname>.404labo.net @192.168.10.2
 ```
 
 Solución: reaplicar (`load-dns-records.sh`) y esperar unos segundos antes de reiniciar el contenedor, verificando en disco.
@@ -322,10 +322,10 @@ El 502 es real — `infisical.404labo.net` no responde, aunque `docker service l
 ```bash
 # 1. Confirmar el 502 real contra Infisical desde otro nodo (evita el falso positivo de
 #    hairpin NAT de Swarm si lo pruebas desde el propio nodo que aloja Infisical)
-ssh u-sonar@192.168.1.172 "curl -sk -o /dev/null -w 'HTTP %{http_code}\n' https://infisical.404labo.net/api/status"
+ssh admin@192.168.10.5 "curl -sk -o /dev/null -w 'HTTP %{http_code}\n' https://infisical.404labo.net/api/status"
 
 # 2. Log de Infisical (vía Loki) -- buscar el bucle de DNS
-curl -s -G 'http://192.168.1.171:3100/loki/api/v1/query_range' \
+curl -s -G 'http://observability.404labo.net:3100/loki/api/v1/query_range' \
   --data-urlencode 'query={swarm_service="infisical_infisical"} |= "ENOTFOUND"' \
   --data-urlencode 'limit=20'
 
@@ -335,7 +335,7 @@ docker exec pihole tail -50 /var/log/pihole/FTL.log | grep -i "rate-limiting"
 # sin parar es la confirmación -- <IP> es el nodo donde corre el contenedor atascado
 
 # 4. Confirmar que valkey resuelve bien desde OTRO nodo (descarta un problema real de DNS)
-ssh u-sonar@192.168.1.172 "dig +short valkey.404labo.net @192.168.1.170"
+ssh admin@192.168.10.5 "dig +short valkey.404labo.net @192.168.10.2"
 ```
 
 **Solución — un simple reinicio NO basta.** El contenedor nuevo repite el mismo bucle en cuanto arranca, porque el DNS del nodo sigue bloqueado por el rate-limit anterior (el bloqueo no expira mientras el nodo siga generando más de 1000 consultas/60s, y un contenedor recién arrancado que reintenta sin backoff vuelve a superar ese umbral en segundos). Hace falta parar el contenedor del todo y dejar pasar una ventana completa sin tráfico para que el contador de Pi-hole decaiga:
@@ -349,7 +349,7 @@ docker exec pihole tail -f /var/log/pihole/FTL.log | grep -i "rate-limiting\|End
 # "Ending rate-limitation of <IP>" confirma que ya se puede seguir
 
 # 3. Confirmar que el DNS del nodo afectado ha vuelto
-ssh u-data@192.168.1.174 "dig +short valkey.404labo.net @192.168.1.170"
+ssh admin@192.168.10.7 "dig +short valkey.404labo.net @192.168.10.2"
 
 # 4. Volver a levantar Infisical
 docker service scale infisical_infisical=1
@@ -388,7 +388,7 @@ vaultwarden:
 ```
 
 ```bash
-ssh u-utils@192.168.1.173
+ssh admin@192.168.10.3
 cd /srv/homelab/pi-utils
 docker compose pull vaultwarden
 docker compose up -d vaultwarden
@@ -399,7 +399,7 @@ Tras el redeploy, cerrar sesión en la extensión del navegador y volver a inici
 **Si tras actualizar el problema persiste:** buscar un cifrado corrupto en la base de datos.
 
 ```bash
-ssh u-utils@192.168.1.173
+ssh admin@192.168.10.3
 sudo apt install -y sqlite3
 cd /srv/homelab/pi-utils && docker compose stop vaultwarden
 
@@ -451,7 +451,7 @@ docker compose up -d
 
 ### 2. nginx no arranca si `pihole` no resuelve en ese instante exacto
 
-Ya corregido de raíz: el upstream de `pihole.home.arpa` usa resolución diferida (`resolver 127.0.0.11` + variable), no falla aunque `pihole` tarde.
+Ya corregido de raíz: el upstream de `pihole.404labo.net` usa resolución diferida (`resolver 127.0.0.11` + variable), no falla aunque `pihole` tarde.
 
 ### 3. Colisión de IP fija en `pi-dns-net`
 
@@ -470,15 +470,15 @@ Ver `docs/06-instalacion-pi1-dns.md` sección 6.1 — paso manual fácil de pasa
 **Diagnóstico:**
 
 ```bash
-ssh u-<x>@192.168.1.17x "sudo systemctl status docker --no-pager -l"
-ssh u-<x>@192.168.1.17x "sudo journalctl -u docker --no-pager | tail -25"
+ssh u-<x>@192.168.10.x "sudo systemctl status docker --no-pager -l"
+ssh u-<x>@192.168.10.x "sudo journalctl -u docker --no-pager | tail -25"
 # Buscar: "failed to start cluster component: could not find local IP address ... network is unreachable"
 ```
 
 **Solución:**
 
 ```bash
-ssh u-<x>@192.168.1.17x "sudo systemctl restart docker"
+ssh u-<x>@192.168.10.x "sudo systemctl restart docker"
 ```
 
 Con la red ya arriba (basta con que hayan pasado unos segundos/minutos desde el boot), el reintento manual funciona a la primera. Repetir en cada nodo afectado — no hay forma de saber cuáles sin comprobar los 5 managers uno a uno tras un reboot completo (`pi-dns` no cuenta, no es manager Swarm). `docker node ls` desde cualquier manager que sí haya arrancado bien confirma qué nodos siguen `Down`/`Unreachable`.
@@ -492,7 +492,7 @@ Tras devolver `docker.service` a los nodos afectados (punto 5 arriba), es normal
 ```bash
 FROM=$(( $(date -u +%s) - 600 ))000000000
 NOW=$(date -u +%s)000000000
-curl -s "http://192.168.1.171:3100/loki/api/v1/query_range" \
+curl -s "http://observability.404labo.net:3100/loki/api/v1/query_range" \
   --data-urlencode 'query={swarm_service="<stack>_<servicio>"}' \
   --data-urlencode "start=$FROM" --data-urlencode "end=$NOW" --data-urlencode "limit=200"
 ```
@@ -503,20 +503,20 @@ curl -s "http://192.168.1.171:3100/loki/api/v1/query_range" \
 
 **Síntoma:** un servicio de Swarm con bind mount contra `/mnt/nfs-data/...` (p. ej. `epub2pdf-service`, `pdf2chunks-service`) queda en bucle de `Rejected` con `invalid mount config for type "bind": bind source path does not exist: /mnt/nfs-data/<...>`.
 
-**Causa confirmada en este clúster** (2026-08-30, en `retaco`): el punto de montaje NFS hacia `ketekasko.404labo.net` (`/etc/fstab`, opción `_netdev`) no llegó a montarse en el arranque porque, en ese instante, `systemd-resolved` ya había caído al DNS secundario del netplan (`1.1.1.1`, público) en vez de `192.168.1.170` (pi-dns) — mismo mecanismo que "DNS caído en varios nodos a la vez" más arriba, pero aquí el síntoma no es un servicio que deja de resolver un hostname en caliente, sino un *mount* que nunca llegó a completarse durante el boot y que `_netdev` no reintenta solo después. `ketekasko.404labo.net` solo resuelve vía Pi-hole (split-horizon) — contra `1.1.1.1` da NXDOMAIN silencioso, sin error visible salvo el propio fallo del mount.
+**Causa confirmada en este clúster** (2026-08-30, en `retaco`): el punto de montaje NFS hacia `ketekasko.404labo.net` (`/etc/fstab`, opción `_netdev`) no llegó a montarse en el arranque porque, en ese instante, `systemd-resolved` ya había caído al DNS secundario del netplan (`1.1.1.1`, público) en vez de `192.168.10.2` (pi-dns) — mismo mecanismo que "DNS caído en varios nodos a la vez" más arriba, pero aquí el síntoma no es un servicio que deja de resolver un hostname en caliente, sino un *mount* que nunca llegó a completarse durante el boot y que `_netdev` no reintenta solo después. `ketekasko.404labo.net` solo resuelve vía Pi-hole (split-horizon) — contra `1.1.1.1` da NXDOMAIN silencioso, sin error visible salvo el propio fallo del mount.
 
 **Diagnóstico:**
 
 ```bash
-ssh u-data@192.168.1.174 "mount | grep nfs; resolvectl status eno1 | grep -A2 'Current DNS'; dig +short ketekasko.404labo.net"
+ssh admin@192.168.10.7 "mount | grep nfs; resolvectl status eno1 | grep -A2 'Current DNS'; dig +short ketekasko.404labo.net"
 ```
 
-Si `dig +short ketekasko.404labo.net` no devuelve nada pese a que `dig +short ketekasko.404labo.net @192.168.1.170` sí responde: es este caso.
+Si `dig +short ketekasko.404labo.net` no devuelve nada pese a que `dig +short ketekasko.404labo.net @192.168.10.2` sí responde: es este caso.
 
 **Solución:**
 
 ```bash
-ssh u-data@192.168.1.174 "sudo systemctl restart systemd-resolved && sudo mount -a"
+ssh admin@192.168.10.7 "sudo systemctl restart systemd-resolved && sudo mount -a"
 ```
 
 El Swarm reprograma la tarea sola en cuanto el mount vuelve a existir — no hace falta forzar el servicio con `docker service update`.
@@ -547,7 +547,7 @@ sudo journalctl -b -1 -u systemd --no-pager | grep -iE 'poweroff|Shutting down|S
 **Revisión periódica:**
 
 ```bash
-for host in "u-dns@192.168.1.170" "u-obs@192.168.1.171" "u-sonar@192.168.1.172" "u-utils@192.168.1.173"; do
+for host in "admin@192.168.10.2" "admin@192.168.10.4" "admin@192.168.10.5" "admin@192.168.10.3"; do
   echo "=== ${host} ==="
   ssh "${host}" "sudo journalctl -b 0 --no-pager | grep -c 'Undervoltage detected'"
 done
@@ -563,7 +563,7 @@ No es lo mismo que `Undervoltage detected!` — dos comprobaciones independiente
 Silenciar solo el punto 2, tras confirmar que no hay avisos de baja tensión activos:
 
 ```bash
-ssh u-dns@192.168.1.170 "sudo mkdir -p /etc/xdg/pemmican && sudo touch /etc/xdg/pemmican/max_current.inhibit"
+ssh admin@192.168.10.2 "sudo mkdir -p /etc/xdg/pemmican && sudo touch /etc/xdg/pemmican/max_current.inhibit"
 ```
 
 Revertir: `sudo rm /etc/xdg/pemmican/max_current.inhibit`.
@@ -576,7 +576,7 @@ Revertir: `sudo rm /etc/xdg/pemmican/max_current.inhibit`.
 docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 docker compose logs --tail=20 2>&1 | grep -E "(ERROR|WARN|error|warn|fatal)"
 docker events --since 1h
-ping -c 3 192.168.1.170
-traceroute 192.168.1.171
-nmap -p 80,443,53,9000,3000,5678 192.168.1.170
+ping -c 3 192.168.10.2
+traceroute 192.168.10.4
+nmap -p 80,443,53,9000,3000,5678 192.168.10.2
 ```
