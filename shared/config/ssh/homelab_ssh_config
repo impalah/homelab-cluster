@@ -1,0 +1,71 @@
+# =============================================================================
+# Configuración SSH del puesto de trabajo (ryzen) para los 8 nodos del clúster.
+# Mejora 52, docs/38-acceso-ssh-nodos.md. Se usa con:
+#
+#   # ~/.ssh/config
+#   Include /home/linus/projects/local-ia/homelab-cluster/shared/config/ssh/homelab_ssh_config
+#
+# Hace que `ssh admin@192.168.10.7` (y `ssh retaco`) elija la clave PROPIA de
+# ese nodo, sin que los scripts de shared/scripts/ tengan que saber de claves.
+# - Las claves viven en Infisical (proyecto ssh-access); la copia local de
+#   ~/claves-temporales/<nodo>-id_ed25519 es el respaldo. Si solo existe el
+#   .pub, ssh usa la clave cargada en el ssh-agent (ssh-node.sh la carga).
+# - El segundo IdentityFile (~/.ssh/id_ed25519) es la clave compartida antigua:
+#   solo sirve para entrar con las cuentas antiguas u-<x> mientras sigan vivas.
+# =============================================================================
+
+Host pi-dns 192.168.10.2
+  HostName 192.168.10.2
+  User admin
+  IdentityFile ~/claves-temporales/pi-dns-id_ed25519
+  IdentityFile ~/.ssh/id_ed25519
+  IdentitiesOnly yes
+
+Host pi-utils 192.168.10.3
+  HostName 192.168.10.3
+  User admin
+  IdentityFile ~/claves-temporales/pi-utils-id_ed25519
+  IdentityFile ~/.ssh/id_ed25519
+  IdentitiesOnly yes
+
+Host pi-obs 192.168.10.4
+  HostName 192.168.10.4
+  User admin
+  IdentityFile ~/claves-temporales/pi-obs-id_ed25519
+  IdentityFile ~/.ssh/id_ed25519
+  IdentitiesOnly yes
+
+Host pi-sonar 192.168.10.5
+  HostName 192.168.10.5
+  User admin
+  IdentityFile ~/claves-temporales/pi-sonar-id_ed25519
+  IdentityFile ~/.ssh/id_ed25519
+  IdentitiesOnly yes
+
+Host retaco 192.168.10.7
+  HostName 192.168.10.7
+  User admin
+  IdentityFile ~/claves-temporales/retaco-id_ed25519
+  IdentityFile ~/.ssh/id_ed25519
+  IdentitiesOnly yes
+
+Host pinchi 192.168.10.8
+  HostName 192.168.10.8
+  User admin
+  IdentityFile ~/claves-temporales/pinchi-id_ed25519
+  IdentityFile ~/.ssh/id_ed25519
+  IdentitiesOnly yes
+
+Host miugarita 192.168.10.9
+  HostName 192.168.10.9
+  User admin
+  IdentityFile ~/claves-temporales/miugarita-id_ed25519
+  IdentityFile ~/.ssh/id_ed25519
+  IdentitiesOnly yes
+
+Host ryzen 192.168.10.10
+  HostName 192.168.10.10
+  User admin
+  IdentityFile ~/claves-temporales/ryzen-id_ed25519
+  IdentityFile ~/.ssh/id_ed25519
+  IdentitiesOnly yes
