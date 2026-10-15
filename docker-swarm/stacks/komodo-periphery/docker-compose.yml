@@ -1,0 +1,80 @@
+# =============================================================================
+# Stack `komodo-periphery` -- agente de Komodo en los nodos MANAGER del Swarm.
+# Mejora 53 de docs/22-mejoras-futuras.md; docs/40-komodo.md.
+#
+# Komodo solo necesita Periphery en los managers: Core enruta las peticiones de
+# Swarm a cualquier manager disponible. Hoy (2026-10-14) solo `retaco` es
+# manager real (docs/31-docker-swarm.md), así que corre una única réplica;
+# `mode: global` con `node.role == manager` hace que, al promover otro nodo,
+# aparezca otra réplica sola.
+#
+# Modo de conexión: ENTRANTE (Core -> Periphery, por el overlay `komodo-net`,
+# con la clave compartida `komodo-passkey`). No se publica ningún puerto en la
+# LAN. Para servidores fuera del Swarm (ryzen, pi-dns, pinchi...) se usará el
+# modo saliente (PERIPHERY_CORE_ADDRESSES + PERIPHERY_ONBOARDING_KEY) a través
+# de Traefik, sin abrir puertos.
+#
+# ⚠️ Periphery monta `docker.sock`: equivale a control total del host (mismo
+# riesgo ya aceptado para portainer-agent). Los terminales de Periphery están
+# deshabilitados; la API de Komodo con permisos de ejecución es control remoto
+# de los nodos: usar service users con permisos mínimos (docs/40-komodo.md).
+#
+# Requisito de Komodo: el directorio raíz de Periphery se monta con la MISMA
+# ruta dentro y fuera del contenedor (/etc/komodo); debe existir en el host.
+#
+# Despliegue SIEMPRE a mano (docker stack deploy), nunca desde Komodo.
+# =============================================================================
+
+services:
+  periphery:
+    image: ghcr.io/moghtech/komodo-periphery:2.3.3
+    environment:
+      PERIPHERY_ROOT_DIRECTORY: /etc/komodo
+      PERIPHERY_PASSKEYS_FILE: /run/secrets/komodo-passkey
+      PERIPHERY_DISABLE_TERMINALS: "true"
+      TZ: Europe/Madrid
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /proc:/proc
+      - /etc/komodo:/etc/komodo
+    secrets:
+      - source: komodo-passkey-v1
+        target: komodo-passkey
+    networks:
+      komodo-net:
+        # Core usa https://periphery:8120 (alias estable aunque cambie el nombre
+        # del servicio o haya varias réplicas globales).
+        aliases:
+          - periphery
+    healthcheck:
+      test: ["CMD-SHELL", "curl -ksS -o /dev/null https://127.0.0.1:8120/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://observability.404labo.net:3100/loki/api/v1/push"
+        mode: non-blocking
+        max-buffer-size: 4m
+    deploy:
+      mode: global
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: any
+        delay: 10s
+      resources:
+        limits:
+          memory: 256M
+
+networks:
+  komodo-net:
+    external: true
+    name: komodo_komodo-net
+
+secrets:
+  komodo-passkey-v1:
+    external: true

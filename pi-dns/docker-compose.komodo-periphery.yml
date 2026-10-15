@@ -1,0 +1,53 @@
+name: komodo-periphery-pi-dns
+
+# =============================================================================
+# Periphery de Komodo en `pi-dns` -- modo SALIENTE (mejora 53, fase 4,
+# docs/40-komodo.md). Fuera del Swarm y único DNS del clúster. Fichero SEPARADO a propósito: no toca pi-dns/docker-compose.yml ni Pi-hole/Unbound.
+#
+# El agente se conecta él a Core por wss:// a través de Traefik
+# (komodo.404labo.net): ningún puerto abierto en este nodo, y Komodo ve los
+# contenedores de `pi-dns` como un servidor más.
+#
+# Alta (una sola vez): crear una clave de onboarding en Core
+# (`CreateOnboardingKey`, con caducidad corta), ponerla en `.env` junto a este
+# fichero como `KOMODO_ONBOARDING_KEY=...` y `docker compose -f docker-compose.komodo-periphery.yml up -d`.
+# Cuando el servidor aparezca en Komodo, BORRAR el `.env` y volver a levantar:
+# desde entonces se autentica con su propio par de claves (persistido en
+# /etc/komodo/keys), no hace falta la clave de onboarding.
+#
+# ⚠️ Monta docker.sock (control total del host, como portainer-agent); los
+# terminales están deshabilitados. Ruta /etc/komodo idéntica dentro y fuera del
+# contenedor (requisito de Komodo).
+# =============================================================================
+
+services:
+  periphery:
+    image: ghcr.io/moghtech/komodo-periphery:2.3.3
+    container_name: komodo-periphery
+    restart: unless-stopped
+    environment:
+      PERIPHERY_ROOT_DIRECTORY: /etc/komodo
+      # Conexión saliente a Core (a través de Traefik) y nombre con el que se
+      # da de alta el servidor.
+      PERIPHERY_CORE_ADDRESSES: wss://komodo.404labo.net
+      PERIPHERY_CONNECT_AS: pi-dns
+      PERIPHERY_SERVER_ENABLED: "false"
+      # Clave pública de Core (no es secreta): el agente solo acepta a ESTE Core.
+      PERIPHERY_CORE_PUBLIC_KEYS: "MCowBQYDK2VuAyEAKZx1rrA7+GUf3xDlCrn5pTc9wL+3GIaxdaB5wD8aGTY="
+      # Par de claves del agente, persistido en el host (sobrevive a recrear el
+      # contenedor; si no, cada recreación sería una identidad nueva).
+      PERIPHERY_PRIVATE_KEY: file:/etc/komodo/keys/periphery.key
+      PERIPHERY_ONBOARDING_KEY: ${KOMODO_ONBOARDING_KEY:-}
+      PERIPHERY_DISABLE_TERMINALS: "true"
+      TZ: Europe/Madrid
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /proc:/proc
+      - /etc/komodo:/etc/komodo
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://observability.404labo.net:3100/loki/api/v1/push"
+        loki-external-labels: "node=pi-dns"
+        mode: non-blocking
+        max-buffer-size: 4m

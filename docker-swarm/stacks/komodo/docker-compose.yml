@@ -1,0 +1,178 @@
+# =============================================================================
+# Stack `komodo` -- Komodo Core (API + UI) y FerretDB sobre `postgres-main`.
+# Mejora 53 de docs/22-mejoras-futuras.md; documentación completa en
+# docs/40-komodo.md.
+#
+# Qué es: Komodo (komo.do) da una UI y una API para ver y operar el clúster
+# (servidores, contenedores, stacks y servicios de Swarm). Core es la API+UI;
+# el agente que habla con Docker es Periphery (stack `komodo-periphery`).
+#
+# Base de datos: Komodo solo habla el protocolo de MongoDB. FerretDB 1.24.2 lo
+# traduce a SQL y guarda TODO en el `postgres-main` existente, en una base y un
+# rol propios (`komodo`, sin superusuario). No hay MongoDB y NO se ha cambiado
+# la imagen de postgres-main: FerretDB 1.x funciona sobre un PostgreSQL
+# corriente (probado el 2026-10-14 sobre postgres:16-alpine, la misma imagen);
+# solo la v2 de FerretDB exige la extensión DocumentDB (Debian/glibc).
+#   Contrapartida aceptada: FerretDB 1.x está en mantenimiento (1.24.2 es la
+#   última). Si una versión futura de Komodo exigiera la v2, ver la mejora 53.
+#
+# Secretos (Swarm secrets externos, creados a mano; los mismos valores están en
+# Infisical, proyecto "Homelab Cluster", carpeta /komodo/):
+#   komodo-database-uri-v1     URI completa de Mongo hacia FerretDB (lleva la
+#                              contraseña del rol `komodo` de Postgres)
+#   komodo-passkey-v1          clave compartida Core <-> Periphery
+#   komodo-jwt-secret-v1       firma de sesiones
+#   komodo-webhook-secret-v1   secreto de webhooks
+#   komodo-admin-password-v1   contraseña del admin inicial
+#   komodo-oidc-client-secret-v1  secreto del cliente OIDC en Authentik
+# FerretDB 1.x NO necesita secreto: las credenciales las pone el cliente Mongo
+# (authMechanism=PLAIN) y se reenvían a Postgres.
+#
+# Traefik: este router NO lleva el middleware `apikey-auth`. Komodo usa la
+# cabecera `X-Api-Key` para SU API; apikey-auth intentaría validarla contra
+# apikey-service y rechazaría todas las llamadas (mismo criterio que registry y
+# ntfy: auth propia).
+#
+# Este stack y `komodo-periphery` se despliegan SIEMPRE a mano con
+# `docker stack deploy`, nunca desde el propio Komodo (si Core cae, la
+# herramienta para levantarlo no puede depender de él). Lo mismo vale para
+# postgres-main.
+# =============================================================================
+
+services:
+  ferretdb:
+    image: ghcr.io/ferretdb/ferretdb:1.24.2
+    environment:
+      # Sin contraseña: la aporta el cliente (ver arriba). Alias de la LAN, la
+      # convención del clúster para llegar a postgres-main desde un overlay.
+      FERRETDB_POSTGRESQL_URL: "postgres://postgresql.404labo.net:5432/komodo"
+      FERRETDB_LISTEN_ADDR: "0.0.0.0:27017"
+      FERRETDB_TELEMETRY: "disable"
+      # Sin fichero de estado: el contenedor no necesita escribir en disco.
+      FERRETDB_STATE_DIR: "-"
+    networks:
+      - komodo-net
+    logging: &loki-logging
+      driver: loki
+      options:
+        loki-url: "http://observability.404labo.net:3100/loki/api/v1/push"
+        mode: non-blocking
+        max-buffer-size: 4m
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 10s
+      resources:
+        limits:
+          memory: 256M
+
+  core:
+    image: ghcr.io/moghtech/komodo-core:2.3.3
+    environment:
+      KOMODO_DATABASE_URI_FILE: /run/secrets/komodo-database-uri
+      KOMODO_HOST: https://komodo.404labo.net
+      KOMODO_TITLE: Homelab
+      KOMODO_PASSKEY_FILE: /run/secrets/komodo-passkey
+      KOMODO_JWT_SECRET_FILE: /run/secrets/komodo-jwt-secret
+      KOMODO_WEBHOOK_SECRET_FILE: /run/secrets/komodo-webhook-secret
+      KOMODO_LOCAL_AUTH: "true"
+      KOMODO_INIT_ADMIN_USERNAME: admin
+      KOMODO_INIT_ADMIN_PASSWORD_FILE: /run/secrets/komodo-admin-password
+      # Registro: sin altas locales (no hay botón de "Sign up" ni se admiten),
+      # solo entran personas por OIDC con Authentik. El control de quién puede
+      # llegar lo hace Authentik (la aplicación `komodo` está limitada al grupo
+      # "authentik Admins"), así que los usuarios nuevos nacen habilitados; sin
+      # permisos sobre ningún recurso hasta que un admin se los dé.
+      KOMODO_DISABLE_USER_REGISTRATION: "false"
+      KOMODO_DISABLE_LOCAL_USER_REGISTRATION: "true"
+      KOMODO_ENABLE_NEW_USERS: "true"
+      # OIDC con Authentik (docs/40-komodo.md). El cliente es confidencial; el
+      # secreto va como docker secret. `local_auth` sigue activo: el admin local
+      # es la cuenta de emergencia si Authentik no está.
+      KOMODO_OIDC_ENABLED: "true"
+      KOMODO_OIDC_PROVIDER: https://authentik.404labo.net/application/o/komodo/
+      KOMODO_OIDC_CLIENT_ID: "TwsWZMNgxIKGqkK-7TRFUQF4FKEUHsTF"
+      KOMODO_OIDC_CLIENT_SECRET_FILE: /run/secrets/komodo-oidc-client-secret
+      TZ: Europe/Madrid
+    volumes:
+      # Par de claves de Core (identidad frente a los Periphery). NFS, patrón
+      # de la mejora 47: Core no está fijado a ningún nodo.
+      - komodo-config:/config
+      - komodo-backups:/backups
+    secrets:
+      - source: komodo-database-uri-v1
+        target: komodo-database-uri
+      - source: komodo-passkey-v1
+        target: komodo-passkey
+      - source: komodo-jwt-secret-v1
+        target: komodo-jwt-secret
+      - source: komodo-webhook-secret-v1
+        target: komodo-webhook-secret
+      - source: komodo-admin-password-v1
+        target: komodo-admin-password
+      - source: komodo-oidc-client-secret-v1
+        target: komodo-oidc-client-secret
+    networks:
+      - komodo-net
+      - traefik-public
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://127.0.0.1:9120/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    logging: *loki-logging
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 10s
+      resources:
+        limits:
+          memory: 512M
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.komodo-404labo-net.rule=Host(`komodo.404labo.net`)"
+        - "traefik.http.routers.komodo-404labo-net.entrypoints=websecure"
+        - "traefik.http.routers.komodo-404labo-net.tls=true"
+        - "traefik.http.routers.komodo-404labo-net.service=komodo"
+        - "traefik.http.services.komodo.loadbalancer.server.port=9120"
+
+networks:
+  # Compartida con `komodo-periphery` (Core llega a Periphery por el overlay;
+  # ningún nodo publica el puerto 8120 en la LAN).
+  komodo-net:
+    driver: overlay
+    attachable: true
+  traefik-public:
+    external: true
+    name: traefik_traefik-public
+
+secrets:
+  komodo-database-uri-v1:
+    external: true
+  komodo-passkey-v1:
+    external: true
+  komodo-jwt-secret-v1:
+    external: true
+  komodo-webhook-secret-v1:
+    external: true
+  komodo-admin-password-v1:
+    external: true
+  komodo-oidc-client-secret-v1:
+    external: true
+
+volumes:
+  komodo-config:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: "addr=192.168.10.6,rw,vers=3"
+      device: ":/volume1/nfs-data/komodo/config"
+  komodo-backups:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: "addr=192.168.10.6,rw,vers=3"
+      device: ":/volume1/nfs-data/komodo/backups"
